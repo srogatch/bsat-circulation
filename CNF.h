@@ -17,6 +17,7 @@ template <typename T> constexpr int Signum(const T val) {
 struct Formula {
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> clause2var_;
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> var2clause_;
+  int64_t nVars_ = 0, nClauses_ = 0;
 
   void Add(const uint64_t iClause, const int64_t iVar) {
     clause2var_[iClause].emplace(iVar);
@@ -27,7 +28,6 @@ struct Formula {
     std::ifstream ifs(filePath);
     std::string line;
     bool probDefRead = false;
-    int64_t nVars = 0, nClauses = 0;
     int64_t iClause = 0;
     while(std::getline(ifs, line)) {
       std::istringstream iss(line);
@@ -47,7 +47,7 @@ struct Formula {
         if(type != "cnf") {
           throw std::runtime_error("Unsupported problem type");
         }
-        iss >> nVars >> nClauses;
+        iss >> nVars_ >> nClauses_;
         probDefRead = true;
         continue;
       }
@@ -55,11 +55,14 @@ struct Formula {
         throw std::runtime_error("Data starts without a problem definition coming first.");
       }
       iClause++;
-      if(iClause > nClauses) {
+      if(iClause > nClauses_) {
         throw std::runtime_error("Too many clauses");
       }
       do {
         int64_t iVar = std::stoll(cmd);
+        if(iVar == 0) {
+          break;
+        }
         Add(iClause, iVar);
       } while(iss >> cmd);
     }
