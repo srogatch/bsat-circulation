@@ -7,8 +7,8 @@
 static constexpr const int64_t kInfFlow = 1LL << 61;
 
 struct Arc {
-  int64_t from_ = -1;
-  int64_t to_ = -1;
+  int64_t from_ = 0;
+  int64_t to_ = 0;
   int64_t low_ = 0;
   int64_t high_ = kInfFlow;
   int64_t flow_ = 0;
