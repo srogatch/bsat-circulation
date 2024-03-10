@@ -9,6 +9,7 @@
 #include <fstream>
 #include <sstream>
 #include <exception>
+#include <vector>
 
 template <typename T> constexpr int Signum(const T val) {
   return (T(0) < val) - (val < T(0));
