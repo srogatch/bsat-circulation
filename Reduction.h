@@ -25,8 +25,8 @@ struct Reduction {
     // Edges between variables/negations, and the clauses
     for(const auto& clause : formula_.clause2var_) {
       for(const int64_t iVar : clause.second) {
-        fGraph_.AddReplace(Arc(iVar, -formula_.nVars_ - clause.first, 1, formula_.nVars_));
-        fGraph_.AddReplace(Arc(formula_.nVars_ + clause.first, -iVar, 1, formula_.nVars_));
+        fGraph_.AddReplace(Arc(iVar, -formula_.nVars_ - clause.first, 0, 1));
+        fGraph_.AddReplace(Arc(formula_.nVars_ + clause.first, -iVar, 0, 1));
       }
     }
   }
