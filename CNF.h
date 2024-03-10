@@ -21,7 +21,7 @@ struct Formula {
 
   void Add(const uint64_t iClause, const int64_t iVar) {
     clause2var_[iClause].emplace(iVar);
-    var2clause_[abs(iVar)].emplace(int64_t(iClause) * Signum(iVar));
+    var2clause_[llabs(iVar)].emplace(int64_t(iClause) * Signum(iVar));
   }
 
   void Load(const std::string& filePath) {

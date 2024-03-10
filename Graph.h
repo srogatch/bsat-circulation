@@ -23,10 +23,12 @@ struct Arc {
 using Linkage = std::unordered_map<int64_t, std::unordered_map<int64_t, std::shared_ptr<Arc>>>;
 
 struct Graph {
+  static constexpr const int64_t INVALID_VERTEX = 0;
   Linkage links_;
+  Linkage backlinks_;
 
   std::shared_ptr<Arc> AddReplace(const Arc& arc) {
-    links_[arc.from_][arc.to_] = std::make_shared<Arc>(arc);
+    return links_[arc.from_][arc.to_] = backlinks_[arc.to_][arc.from_] = std::make_shared<Arc>(arc);
   }
   std::shared_ptr<Arc> Get(const int64_t from, const int64_t to) {
     auto it = links_.find(from);
@@ -39,6 +41,19 @@ struct Graph {
     }
     return jt->second;
   }
+
+  std::shared_ptr<Arc> BackGet(const int64_t to, const int64_t from) {
+    auto it = backlinks_.find(to);
+    if(it == links_.end()) {
+      return nullptr;
+    }
+    auto jt = it->second.find(from);
+    if(jt == it->second.end()) {
+      return nullptr;
+    }
+    return jt->second;
+  }
+
   // Returns true if the arc (and maybe the source vertex) was removed, or false if the edge didn't exist
   bool Remove(const int64_t from, const int64_t to) {
     auto it = links_.find(from);
@@ -54,6 +69,12 @@ struct Graph {
     if(it->second.empty()) {
       // Remove the source vertex if it doesn't have any more outgoing arcs
       links_.erase(it);
+    }
+    // Erase backlinks
+    it = backlinks_.find(to);
+    it->second.erase(from);
+    if(it->second.empty()) {
+      backlinks_.erase(it);
     }
     return true;
   }
