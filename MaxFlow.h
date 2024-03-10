@@ -110,7 +110,7 @@ public:
             }
             if(augFlow == 0) {
               for(int64_t i=0; i<path.size(); i++) {
-                prev.erase(path[i]);
+                prev[path[i]] = Graph::INVALID_VERTEX;
               }
               continue;
             }
@@ -140,7 +140,7 @@ public:
               }
             }
             for(int64_t i=0; i<=iWeak; i++) {
-              prev.erase(path[i]);
+              prev[path[i]] = Graph::INVALID_VERTEX;
             }
             augmented = true;
             continue;
