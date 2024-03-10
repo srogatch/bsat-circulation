@@ -53,6 +53,33 @@ struct Reduction {
       return false; // unsatisfiable
     }
     assert(mf.result_ == necessaryFlow_);
-    
+    return true; // there is a circulation, but maybe the formula is still unsatisfiable if there are contradictions
+  }
+
+  std::vector<bool> AssignVars() {
+    std::vector<bool> ans(formula_.nVars_ + 1);
+    bool certain = true;
+    for(int64_t i=1; i<=formula_.nVars_; i++) {
+      const int64_t nTrue = fGraph_.Get(-i, i)->flow_;
+      const int64_t nFalse = fGraph_.Get(i, -i)->flow_;
+      if(nTrue > nFalse) {
+        ans[i] = true;
+      } else if(nFalse > nTrue) {
+        ans[i] = false;
+      } else {
+        // arbitrary assignment, then testing
+        certain = false;
+        ans[i] = false; // maximize the number of zeroes
+      }
+    }
+    ans[0] = certain;
+    if(formula_.SolWorks(ans)) {
+      return ans;
+    }
+    if(certain) {
+      throw std::runtime_error("FAIL: certain solution doesn't satisfy the formula.");
+    }
+    // Unsatisfiable
+    return {};
   }
 };
