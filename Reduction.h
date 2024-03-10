@@ -8,6 +8,7 @@ struct Reduction {
   Formula formula_;
   Graph fGraph_; // formula graph
   int64_t iST_; // -iST_=s: source vertex; +iST_=t: sink vertex
+  int64_t necessaryFlow_;
 
   explicit Reduction(const Formula& src) : formula_(src) {
     iST_ = formula_.nVars_ + formula_.nClauses_ + 1;
@@ -37,14 +38,21 @@ struct Reduction {
 
   bool Circulate() {
     // Reduce the circulation problem to the max flow problem
+    necessaryFlow_ = 0;
     for(const auto& src : fGraph_.links_) {
       for(const auto& dst : src.second) {
+        necessaryFlow_ += dst.second->low_;
         fGraph_.AddMerge(Arc(GetVSource(), dst.first, 0, dst.second->low_));
         fGraph_.AddMerge(Arc(src.first, GetVSink(), 0, dst.second->low_));
         dst.second->high_ -= dst.second->low_;
         dst.second->low_ = 0;
       }
     }
+    MaxFlow mf(fGraph_, GetVSource(), GetVSink());
+    if(mf.result_ < necessaryFlow_) {
+      return false; // unsatisfiable
+    }
+    assert(mf.result_ == necessaryFlow_);
     
   }
 };
