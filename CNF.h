@@ -10,6 +10,7 @@
 #include <sstream>
 #include <exception>
 #include <vector>
+#include <iostream>
 
 template <typename T> constexpr int Signum(const T val) {
   return (T(0) < val) - (val < T(0));
@@ -57,7 +58,8 @@ struct Formula {
       }
       iClause++;
       if(iClause > nClauses_) {
-        throw std::runtime_error("Too many clauses");
+        std::cerr << "Too many clauses: check the input DIMACS." << std::endl;
+        break;
       }
       do {
         int64_t iVar = std::stoll(cmd);
