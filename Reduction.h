@@ -41,6 +41,8 @@ struct Reduction {
       for(const auto& dst : src.second) {
         fGraph_.AddMerge(Arc(GetVSource(), dst.first, 0, dst.second->low_));
         fGraph_.AddMerge(Arc(src.first, GetVSink(), 0, dst.second->low_));
+        dst.second->high_ -= dst.second->low_;
+        dst.second->low_ = 0;
       }
     }
     
