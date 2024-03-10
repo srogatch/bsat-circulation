@@ -80,6 +80,7 @@ struct Reduction {
       throw std::runtime_error("FAIL: certain solution doesn't satisfy the formula.");
     }
     // Unsatisfiable
-    return {};
+    ans.resize(1);
+    return ans;
   }
 };
