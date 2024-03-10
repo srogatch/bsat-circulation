@@ -27,7 +27,20 @@ struct Graph {
   Linkage links_;
   Linkage backlinks_;
 
-  std::shared_ptr<Arc> AddReplace(const Arc& arc) {
+  std::shared_ptr<Arc> AddMerge(const Arc& arc) {
+    auto it = links_.find(arc.from_);
+    if(it != links_.end()) {
+      auto jt = it->second.find(arc.to_);
+      if(jt != it->second.end()) {
+        // Merge
+        std::shared_ptr<Arc> ans = jt->second;
+        ans->flow_ += arc.flow_;
+        ans->low_ += arc.low_;
+        ans->high_ += arc.high_;
+        return ans;
+      }
+    }
+    // Add
     return links_[arc.from_][arc.to_] = backlinks_[arc.to_][arc.from_] = std::make_shared<Arc>(arc);
   }
   std::shared_ptr<Arc> Get(const int64_t from, const int64_t to) {

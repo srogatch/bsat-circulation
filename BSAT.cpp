@@ -1,5 +1,3 @@
-#include "Circulation.h"
-#include "MaxFlow.h"
 #include "Reduction.h"
 
 #include <iostream>
