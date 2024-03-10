@@ -9,6 +9,7 @@
 #include <cassert>
 #include <cstdlib>
 #include <stdexcept>
+#include <algorithm>
 
 struct MaxFlow {
   Graph* pG_;
@@ -62,6 +63,14 @@ public:
             }
           }
         }
+        // Sort the units of the frontier in the decreasing order of their augmenting flow, i.e. llabs(unit.first)
+        std::sort(frontier.begin(), frontier.end(), [](
+          const std::pair<int64_t, int64_t>& a, const std::pair<int64_t, int64_t>& b)
+          {
+            return llabs(a.first) > llabs(b.first);
+          }
+        );
+        // TODO: check that the items are sorted properly
         for(const auto& unit : frontier) {
           if(unit.second == vT) {
             int64_t augFlow = llabs(unit.first);
@@ -136,6 +145,12 @@ public:
             augmented = true;
             continue;
           }
+          // Check whether the vertex has been already added to the queue within the same frontier
+          if(prev.find(unit.second) != prev.end()) {
+            continue;
+          }
+          prev[unit.second] = vCur;
+          qu.push(unit.second);
         }
       }
     }
