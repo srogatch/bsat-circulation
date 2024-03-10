@@ -67,4 +67,20 @@ struct Formula {
       } while(iss >> cmd);
     }
   }
+
+  bool SolWorks(const std::vector<bool>& varVals) {
+    for(const auto& dj : clause2var_) {
+      bool satisfied = false;
+      for(const int64_t iVar : dj.second) {
+        if( (iVar > 0 && varVals[iVar]) || (iVar < 0 && !varVals[-iVar]) ) {
+          satisfied = true;
+          break;
+        }
+      }
+      if(!satisfied) {
+        return false;
+      }
+    }
+    return true;
+  }
 };
