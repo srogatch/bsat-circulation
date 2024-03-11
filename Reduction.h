@@ -14,19 +14,22 @@ struct Reduction {
     iST_ = formula_.nVars_ + formula_.nClauses_ + 1;
 
     // Undirected edges between variables and their negations
-    for(int64_t i=1; i<=formula_.nVars_; i++) {
-      fGraph_.AddMerge(Arc(-i, i, 0, formula_.nClauses_));
-      fGraph_.AddMerge(Arc(i, -i, 0, formula_.nClauses_));
-    }
+    // for(int64_t i=1; i<=formula_.nVars_; i++) {
+    //   fGraph_.AddMerge(Arc(-i, i, 0, formula_.nClauses_));
+    //   fGraph_.AddMerge(Arc(i, -i, 0, formula_.nClauses_));
+    // }
 
-    // Directed clause edges
     for(int64_t i=1; i<=formula_.nClauses_; i++) {
       fGraph_.AddMerge(Arc(-formula_.nVars_ - i, formula_.nVars_ + i, 1, formula_.nVars_));
     }
 
-    // Edges between variables/negations, and the clauses
     for(const auto& clause : formula_.clause2var_) {
+      // Directed clause edges
+      fGraph_.AddMerge(Arc(
+        -formula_.nVars_ - clause.first, formula_.nVars_ + clause.first,
+        clause.second.size(), formula_.nVars_));
       for(const int64_t iVar : clause.second) {
+        // Edges between variables/negations, and the clauses
         fGraph_.AddMerge(Arc(iVar, -formula_.nVars_ - clause.first, 0, 1));
         fGraph_.AddMerge(Arc(formula_.nVars_ + clause.first, -iVar, 0, 1));
       }
@@ -60,29 +63,29 @@ struct Reduction {
 
   std::vector<bool> AssignVars() {
     std::vector<bool> ans(formula_.nVars_ + 1);
-    bool certain = true;
-    for(int64_t i=1; i<=formula_.nVars_; i++) {
-      const int64_t nTrue = fGraph_.Get(-i, i)->flow_;
-      const int64_t nFalse = fGraph_.Get(i, -i)->flow_;
-      if(nTrue > nFalse) {
-        ans[i] = true;
-      } else if(nFalse > nTrue) {
-        ans[i] = false;
-      } else {
-        // arbitrary assignment, then testing
-        certain = false;
-        ans[i] = false; // maximize the number of zeroes
+    std::vector<bool> known(formula_.nVars_ + 1);
+    ans[0] = true;
+    for(const auto& clause : formula_.clause2var_) {
+      for(const auto& iVar : clause.second) {
+        const bool flowsTrue = fGraph_.Get(iVar, -clause.first-formula_.nVars_)->flow_ > 0;
+        const bool flowsFalse = fGraph_.Get(formula_.nVars_ + clause.first, -iVar)->flow_ > 0;
+        assert((flowsTrue && flowsFalse) || (!flowsTrue && !flowsFalse));
+        if(flowsTrue) {
+          const bool varVal = (iVar < 0) ? false : true;
+          if(known[llabs(iVar)]) {
+            if(ans[llabs(iVar)] != varVal) {
+              // Unsatisfiable? Broken invariant?
+              ans.resize(1);
+              return ans;
+            }
+          } else {
+            known[llabs(iVar)] = true;
+            ans[llabs(iVar)] = varVal;
+          }
+        }
       }
     }
-    ans[0] = certain;
-    if(formula_.SolWorks(ans)) {
-      return ans;
-    }
-    if(certain) {
-      throw std::runtime_error("FAIL: certain solution doesn't satisfy the formula.");
-    }
-    // Unsatisfiable
-    ans.resize(1);
+    assert(formula_.SolWorks(ans));
     return ans;
   }
 };
