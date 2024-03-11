@@ -14,10 +14,10 @@ struct Reduction {
     iST_ = formula_.nVars_ + formula_.nClauses_ + 1;
 
     // Undirected edges between variables and their negations
-    // for(int64_t i=1; i<=formula_.nVars_; i++) {
-    //   fGraph_.AddMerge(Arc(-i, i, 0, formula_.nClauses_));
-    //   fGraph_.AddMerge(Arc(i, -i, 0, formula_.nClauses_));
-    // }
+    for(int64_t i=1; i<=formula_.nVars_; i++) {
+      fGraph_.AddMerge(Arc(-i, i, 0, formula_.nClauses_));
+      fGraph_.AddMerge(Arc(i, -i, 0, formula_.nClauses_));
+    }
 
     // for(int64_t i=1; i<=formula_.nClauses_; i++) {
     //   fGraph_.AddMerge(Arc(-formula_.nVars_ - i, formula_.nVars_ + i, 1, formula_.nVars_));
@@ -26,8 +26,7 @@ struct Reduction {
     for(const auto& clause : formula_.clause2var_) {
       // Directed clause edges
       fGraph_.AddMerge(Arc(
-        -formula_.nVars_ - clause.first, formula_.nVars_ + clause.first,
-        clause.second.size(), formula_.nVars_));
+        -formula_.nVars_ - clause.first, formula_.nVars_ + clause.first, 1, 1));
       for(const int64_t iVar : clause.second) {
         // Edges between variables/negations, and the clauses
         fGraph_.AddMerge(Arc(iVar, -formula_.nVars_ - clause.first, 0, 1));
@@ -82,65 +81,37 @@ struct Reduction {
     return true; // there is a circulation, but maybe the formula is still unsatisfiable if there are contradictions
   }
 
-  int64_t vStart_;
-  
-  void DfsRemoveFlow(const int64_t eSrc, const int64_t eDst) {
-    std::shared_ptr<Arc> arc = fGraph_.Get(eSrc, eDst);
-    assert(arc->flow_ > 0);
-    arc->flow_--;
-    if(arc->flow_ == 0) {
-      // Reduce the computational complexity of the further loop searches
-      fGraph_.Remove(eSrc, eDst);
-    }
-    if(eDst == vStart_) { // closed loop
-      return;
-    }
-    for(const auto& vAfter : fGraph_.links_[eDst]) {
-      if(vAfter.second->flow_ == 0) {
-        continue;
-      }
-      DfsRemoveFlow(eDst, vAfter.first);
-      return;
-    }
-    assert(false); // loop not closed
-  }
+  std::vector<bool> ans_;
+  std::vector<bool> known_;
 
   std::vector<bool> AssignVars() {
-    std::vector<bool> ans(formula_.nVars_ + 1);
-    std::vector<bool> known(formula_.nVars_ + 1);
-    ans[0] = true;
+    ans_.resize(formula_.nVars_ + 1);
+    known_.resize(formula_.nVars_ + 1);
+    ans_[0] = true;
     for(const auto& clause : formula_.clause2var_) {
       for(const auto& iVar : clause.second) {
-        //std::shared_ptr<Arc> aTrue = fGraph_.Get(iVar, -clause.first-formula_.nVars_);
-        std::shared_ptr<Arc> aFalse = fGraph_.Get(formula_.nVars_ + clause.first, -iVar);
-        //assert( (aTrue == nullptr && aFalse == nullptr) || (aTrue != nullptr && aFalse != nullptr) );
-        if(aFalse == nullptr) {
-          continue; // Removed in a previous DFS
-        }
-        if(aFalse->flow_ > 0) {
-          const bool varVal = (iVar < 0) ? false : true;
-          if(known[llabs(iVar)]) {
-            if(ans[llabs(iVar)] != varVal) {
-              // Unsatisfiable? Broken invariant?
-              ans.resize(1);
-              return ans;
+        std::shared_ptr<Arc> aTrue = fGraph_.Get(iVar, -clause.first-formula_.nVars_);
+        if(aTrue->flow_ > 0) {
+          const bool varVal = (iVar > 0) ? true : false;
+          if(known_[llabs(iVar)]) {
+            if(ans_[llabs(iVar)] != varVal) {
+              ans_.resize(1);
+              return ans_;
             }
           } else {
-            known[llabs(iVar)] = true;
-            ans[llabs(iVar)] = varVal;
+            known_[llabs(iVar)] = true;
+            ans_[llabs(iVar)] = varVal;
           }
-          vStart_ = formula_.nVars_ + clause.first;
-          DfsRemoveFlow(formula_.nVars_ + clause.first, -iVar);
-          break;
         }
       }
     }
-    for(int64_t i=1; i<known.size(); i++) {
-      if(!known[i]) {
-        ans[0] = false; // Uncertain
+    for(int64_t i=1; i<known_.size(); i++) {
+      if(!known_[i]) {
+        ans_[0] = false; // Uncertain
+        break;
       }
     }
-    assert(formula_.SolWorks(ans));
-    return ans;
+    assert(formula_.SolWorks(ans_));
+    return ans_;
   }
 };
