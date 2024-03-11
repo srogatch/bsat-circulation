@@ -58,7 +58,51 @@ struct Reduction {
       return false; // unsatisfiable
     }
     assert(mf.result_ == necessaryFlow_);
+
+    // Fix the circulation - add minimal flows and remove source and sink
+    for(const auto& clause : formula_.clause2var_) {
+      // Directed clause edges
+      fGraph_.Get(
+        -formula_.nVars_ - clause.first, formula_.nVars_ + clause.first)
+        ->flow_ += clause.second.size();
+    }
+    std::vector<std::pair<int64_t, int64_t>> toRemove;
+    for(const auto& src : fGraph_.links_) {
+      for(const auto& dst : src.second) {
+        if(src.first == GetVSource() || src.first == GetVSink()
+          || dst.first == GetVSource() || dst.first == GetVSink())
+        {
+          toRemove.emplace_back(src.first, dst.first);
+        }
+      }
+    }
+    for(const auto& curArc : toRemove) {
+      fGraph_.Remove(curArc.first, curArc.second);
+    }
     return true; // there is a circulation, but maybe the formula is still unsatisfiable if there are contradictions
+  }
+
+  int64_t vStart_;
+  
+  void DfsRemoveFlow(const int64_t eSrc, const int64_t eDst) {
+    std::shared_ptr<Arc> arc = fGraph_.Get(eSrc, eDst);
+    assert(arc->flow_ > 0);
+    arc->flow_--;
+    if(arc->flow_ == 0) {
+      // Reduce the computational complexity of the further loop searches
+      fGraph_.Remove(eSrc, eDst);
+    }
+    if(eDst == vStart_) { // closed loop
+      return;
+    }
+    for(const auto& vAfter : fGraph_.links_[eDst]) {
+      if(vAfter.second->flow_ == 0) {
+        continue;
+      }
+      DfsRemoveFlow(eDst, vAfter.first);
+      return;
+    }
+    assert(false); // loop not closed
   }
 
   std::vector<bool> AssignVars() {
@@ -67,10 +111,13 @@ struct Reduction {
     ans[0] = true;
     for(const auto& clause : formula_.clause2var_) {
       for(const auto& iVar : clause.second) {
-        const bool flowsTrue = fGraph_.Get(iVar, -clause.first-formula_.nVars_)->flow_ > 0;
-        const bool flowsFalse = fGraph_.Get(formula_.nVars_ + clause.first, -iVar)->flow_ > 0;
-        assert((flowsTrue && flowsFalse) || (!flowsTrue && !flowsFalse));
-        if(flowsTrue) {
+        //std::shared_ptr<Arc> aTrue = fGraph_.Get(iVar, -clause.first-formula_.nVars_);
+        std::shared_ptr<Arc> aFalse = fGraph_.Get(formula_.nVars_ + clause.first, -iVar);
+        //assert( (aTrue == nullptr && aFalse == nullptr) || (aTrue != nullptr && aFalse != nullptr) );
+        if(aFalse == nullptr) {
+          continue; // Removed in a previous DFS
+        }
+        if(aFalse->flow_ > 0) {
           const bool varVal = (iVar < 0) ? false : true;
           if(known[llabs(iVar)]) {
             if(ans[llabs(iVar)] != varVal) {
@@ -82,7 +129,15 @@ struct Reduction {
             known[llabs(iVar)] = true;
             ans[llabs(iVar)] = varVal;
           }
+          vStart_ = formula_.nVars_ + clause.first;
+          DfsRemoveFlow(formula_.nVars_ + clause.first, -iVar);
+          break;
         }
+      }
+    }
+    for(int64_t i=1; i<known.size(); i++) {
+      if(!known[i]) {
+        ans[0] = false; // Uncertain
       }
     }
     assert(formula_.SolWorks(ans));
