@@ -19,9 +19,9 @@ struct Reduction {
     //   fGraph_.AddMerge(Arc(i, -i, 0, formula_.nClauses_));
     // }
 
-    for(int64_t i=1; i<=formula_.nClauses_; i++) {
-      fGraph_.AddMerge(Arc(-formula_.nVars_ - i, formula_.nVars_ + i, 1, formula_.nVars_));
-    }
+    // for(int64_t i=1; i<=formula_.nClauses_; i++) {
+    //   fGraph_.AddMerge(Arc(-formula_.nVars_ - i, formula_.nVars_ + i, 1, formula_.nVars_));
+    // }
 
     for(const auto& clause : formula_.clause2var_) {
       // Directed clause edges
