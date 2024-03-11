@@ -43,7 +43,8 @@ public:
       std::queue<int64_t> qu;
       qu.push(vS);
       prev[vS] = Graph::INVALID_VERTEX;
-      while(!qu.empty()) {
+      bool finished = false;
+      while(!qu.empty() && !finished) {
         const int64_t vCur = qu.front();
         qu.pop();
         frontier.clear();
@@ -108,6 +109,7 @@ public:
               }
               vNext = vPrev;
             }
+            assert(augFlow >= 0);
             if(augFlow == 0) {
               for(int64_t i=0; i<path.size(); i++) {
                 prev[path[i]] = Graph::INVALID_VERTEX;
@@ -143,7 +145,14 @@ public:
               prev[path[i]] = Graph::INVALID_VERTEX;
             }
             augmented = true;
+            if(iWeak == path.size()-1) {
+              finished = true;
+              break;
+            }
             continue;
+          }
+          if(finished) {
+            break;
           }
           // Check whether the vertex has been already added to the queue within the same frontier
           if(prev.find(unit.second) != prev.end()) {

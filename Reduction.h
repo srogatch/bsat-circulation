@@ -41,11 +41,13 @@ struct Reduction {
     necessaryFlow_ = 0;
     for(const auto& src : fGraph_.links_) {
       for(const auto& dst : src.second) {
-        necessaryFlow_ += dst.second->low_;
-        fGraph_.AddMerge(Arc(GetVSource(), dst.first, 0, dst.second->low_));
-        fGraph_.AddMerge(Arc(src.first, GetVSink(), 0, dst.second->low_));
-        dst.second->high_ -= dst.second->low_;
-        dst.second->low_ = 0;
+        if(dst.second->low_ > 0) {
+          necessaryFlow_ += dst.second->low_;
+          fGraph_.AddMerge(Arc(GetVSource(), dst.first, 0, dst.second->low_));
+          fGraph_.AddMerge(Arc(src.first, GetVSink(), 0, dst.second->low_));
+          dst.second->high_ -= dst.second->low_;
+          dst.second->low_ = 0;
+        }
       }
     }
     MaxFlow mf(fGraph_, GetVSource(), GetVSink());

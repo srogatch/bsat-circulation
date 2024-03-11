@@ -9,7 +9,7 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/bin/BSAT-Circulation",
-      "args": ["uf20-01.cnf", "solution.dimacs"],
+      "args": ["xor.inp", "xor.sol"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}/bin",
       "environment": [],
