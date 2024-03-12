@@ -88,13 +88,59 @@ struct Reduction {
     ans_.resize(formula_.nVars_ + 1);
     known_.resize(formula_.nVars_ + 1);
     ans_[0] = true;
+    // Traverse the unambiguous and contradicting flows
+    for(int64_t i=1; i<=formula_.nVars_; i++) {
+      std::shared_ptr<Arc> aTrue = fGraph_.Get(-i, i);
+      std::shared_ptr<Arc> aFalse = fGraph_.Get(i, -i);
+      const int64_t contradiction = std::min(aTrue->flow_, aFalse->flow_);
+      if(contradiction > 0) {
+        ans_.resize(1);
+        return ans_;
+      }
+      if(aTrue->flow_) {
+        known_[i] = true;
+        ans_[i] = true;
+        continue;
+      }
+      if(aFalse->flow_) {
+        known_[i] = true;
+        ans_[i] = false;
+        continue;
+      }
+    }
+    // Determine if more than one solution exist
+    for(int64_t i=1; i<known_.size(); i++) {
+      if(!known_[i]) {
+        ans_[0] = false; // Uncertain
+        break;
+      }
+    }
+    // Reflow
     for(const auto& clause : formula_.clause2var_) {
+      std::shared_ptr<Arc> aClause = fGraph_.Get(-clause.first-formula_.nVars_, clause.first+formula_.nVars_);
+      if(aClause->flow_ == 0) {
+        continue; // Everything is assigned for this clause
+      }
       for(const auto& iVar : clause.second) {
+        if(known_[llabs(iVar)]) {
+          continue;
+        }
+        std::shared_ptr<Arc> aVarTrue = fGraph_.Get(-iVar, iVar);
+        std::shared_ptr<Arc> aVarFalse = fGraph_.Get(iVar, -iVar);
         std::shared_ptr<Arc> aTrue = fGraph_.Get(iVar, -clause.first-formula_.nVars_);
-        if(aTrue->flow_ > 0) {
+        std::shared_ptr<Arc> aFalse = fGraph_.Get(clause.first+formula_.nVars_, -iVar);
+        if(aTrue->flow_ > 0 && aFalse->flow_ > 0) {
           const bool varVal = (iVar > 0) ? true : false;
+          if( (aVarTrue->flow_ > 0 && !varVal) || (aVarFalse->flow_ && varVal) ) {
+            continue; // An assignment here would be contradicting
+          }
+          aTrue->flow_--;
+          aFalse->flow_--;
+          aClause->flow_--;
+          aVarTrue->flow_++;
           if(known_[llabs(iVar)]) {
             if(ans_[llabs(iVar)] != varVal) {
+              std::cerr << "Contradiction in non-contradicting construction." << std::endl;
               ans_.resize(1);
               return ans_;
             }
@@ -102,13 +148,8 @@ struct Reduction {
             known_[llabs(iVar)] = true;
             ans_[llabs(iVar)] = varVal;
           }
+          break;
         }
-      }
-    }
-    for(int64_t i=1; i<known_.size(); i++) {
-      if(!known_[i]) {
-        ans_[0] = false; // Uncertain
-        break;
       }
     }
     assert(formula_.SolWorks(ans_));
