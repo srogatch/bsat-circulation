@@ -26,7 +26,7 @@ struct Reduction {
     for(const auto& clause : formula_.clause2var_) {
       // Directed clause edges
       fGraph_.AddMerge(Arc(
-        -formula_.nVars_ - clause.first, formula_.nVars_ + clause.first, 1, 1));
+        -formula_.nVars_ - clause.first, formula_.nVars_ + clause.first, clause.second.size(), clause.second.size()));
       for(const int64_t iVar : clause.second) {
         // Edges between variables/negations, and the clauses
         fGraph_.AddMerge(Arc(iVar, -formula_.nVars_ - clause.first, 0, 1));
@@ -48,7 +48,7 @@ struct Reduction {
           fGraph_.AddMerge(Arc(GetVSource(), dst.first, 0, dst.second->low_));
           fGraph_.AddMerge(Arc(src.first, GetVSink(), 0, dst.second->low_));
           dst.second->high_ -= dst.second->low_;
-          dst.second->low_ = 0;
+          // Use it later when restoring the flow: dst.second->low_ = 0;
         }
       }
     }
@@ -61,9 +61,9 @@ struct Reduction {
     // Fix the circulation - add minimal flows and remove source and sink
     for(const auto& clause : formula_.clause2var_) {
       // Directed clause edges
-      fGraph_.Get(
-        -formula_.nVars_ - clause.first, formula_.nVars_ + clause.first)
-        ->flow_ += clause.second.size();
+      auto pArc = fGraph_.Get(
+        -formula_.nVars_ - clause.first, formula_.nVars_ + clause.first);
+      pArc->flow_ += pArc->low_;
     }
     std::vector<std::pair<int64_t, int64_t>> toRemove;
     for(const auto& src : fGraph_.links_) {
