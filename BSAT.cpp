@@ -12,7 +12,7 @@ int main(int argc, char* argv[]) {
   bool satisfiable = true;
   do {
     Reduction red(task);
-    satisfiable &= red.Circulate();
+    satisfiable &= red.SendFlow();
     if(!satisfiable) {
       std::cout << "No circulation." << std::endl;
       break;

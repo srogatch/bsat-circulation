@@ -7,29 +7,37 @@
 struct Reduction {
   Formula& formula_;
   Graph fGraph_; // formula graph
-  int64_t iRoot_;
-  int64_t iST_; // -iST_=s: source vertex; +iST_=t: sink vertex
+  int64_t iST_; // new -iST_=s: source vertex; +iST_=t: sink vertex (for the graph without minimal flows)
+  int64_t iSoTo_; // old source (-iSoTo_) and sink (+iSoTo_) (for the graph with minimal flows)
   int64_t necessaryFlow_;
 
   explicit Reduction(Formula& src) : formula_(src) {
-    iRoot_ = formula_.nVars_ + formula_.nClauses_ + 1;
-    iST_ = iRoot_ + 1;
+    iSoTo_ = formula_.nVars_ + formula_.nClauses_ + 1;
+    iST_ = iSoTo_ + 1;
 
+    necessaryFlow_ = formula_.nClauses_;
+    // for(int64_t i=1; i<=formula_.nVars_; i++) {
+    //   fGraph_.AddMerge(Arc(-i, i, 0, 1));
+    // }
     for(auto& clause : formula_.clause2var_) {
-      std::vector<int64_t> unsatVars;
       int64_t nSat = 0;
       for(int64_t iVar : clause.second) {
         if( (iVar < 0 && !formula_.ans_[-iVar]) || (iVar > 0 && formula_.ans_[iVar]) ) {
           nSat++;
-          fGraph_.AddMerge(Arc(formula_.nVars_+clause.first, llabs(iVar), 0, 1));
+          // TODO: the high flow can be lower here - equal to the number of unsatisfied clauses for this vertex
+          fGraph_.AddMerge(Arc(formula_.nVars_+clause.first, llabs(iVar), 0, formula_.nClauses_));
         } else {
           fGraph_.AddMerge(Arc(llabs(iVar), formula_.nVars_+clause.first, 0, 1));
         }
       }
-      if(nSat >= 2) {
-        fGraph_.AddMerge(Arc(iRoot_, formula_.nVars_+clause.first, 0, nSat-1));
-      } else if(nSat == 0) {
-        fGraph_.AddMerge(Arc(formula_.nVars_+clause.first, iRoot_, 1, formula_.nVars_));
+      if(nSat >= 1) {
+        fGraph_.AddMerge(Arc(-iSoTo_, formula_.nVars_+clause.first, 1, clause.second.size()));
+        for(int64_t iVar : clause.second) {
+          fGraph_.AddMerge(Arc(llabs(iVar), -formula_.nVars_-clause.first));
+        }
+        fGraph_.AddMerge(Arc(-formula_.nVars_-clause.first, iSoTo_, 1, formula_.nClauses_));
+      } else {
+        fGraph_.AddMerge(Arc(formula_.nVars_+clause.first, iSoTo_, 1, clause.second.size()));
       }
     }
   }
@@ -37,29 +45,28 @@ struct Reduction {
   int64_t GetVSource() const { return -iST_; }
   int64_t GetVSink() const { return iST_; }
 
-  bool Circulate() {
-    // Reduce the circulation problem to the max flow problem
-    necessaryFlow_ = 0;
+  bool SendFlow() {
+    // Reduce to the max flow problem
     for(const auto& src : fGraph_.links_) {
       for(const auto& dst : src.second) {
         if(dst.second->low_ > 0) {
-          necessaryFlow_ += dst.second->low_;
           fGraph_.AddMerge(Arc(GetVSource(), dst.first, 0, dst.second->low_));
           fGraph_.AddMerge(Arc(src.first, GetVSink(), 0, dst.second->low_));
           dst.second->high_ -= dst.second->low_;
-          // Use it later when restoring the flow: dst.second->low_ = 0;
         }
       }
     }
+    // An arc from the old sink to the old source
+    fGraph_.AddMerge(Arc(iSoTo_, -iSoTo_));
+
     MaxFlow mf(fGraph_, GetVSource(), GetVSink());
     if(mf.result_ < necessaryFlow_) {
-      std::cerr << "No circulation" << std::endl;
+      std::cerr << "Not enough flow." << std::endl;
       return false; // unsatisfiable
     }
-    assert(mf.result_ == necessaryFlow_);
-    assert(fGraph_.CheckFlow(formula_.nVars_ + formula_.nClauses_));
+    assert(fGraph_.CheckFlow(formula_.nVars_ + formula_.nClauses_ + 1));
 
-    // Fix the circulation - add minimal flows and remove source and sink
+    // Fix the graph - add minimal flows and remove new source and sink
     for(const auto& src : fGraph_.links_) {
       for(const auto& dst : src.second) {
         dst.second->flow_ += dst.second->low_;
@@ -79,11 +86,13 @@ struct Reduction {
     for(const auto& curArc : toRemove) {
       fGraph_.Remove(curArc.first, curArc.second);
     }
+    fGraph_.Remove(iSoTo_, -iSoTo_);
     assert(fGraph_.CheckFlow(formula_.nVars_ + formula_.nClauses_));
     return true; // there is a circulation, but maybe the formula is still unsatisfiable if there are contradictions
   }
 
   bool AssignVars(int64_t& nAssigned) {
+
     for(int64_t i=1; i<=formula_.nVars_; i++) {
       for(const auto& dst : fGraph_.links_[i]) {
         if(dst.second->flow_ > 0) {
