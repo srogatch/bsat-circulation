@@ -9,24 +9,59 @@ int main(int argc, char* argv[]) {
   }
   Formula task;
   task.Load(argv[1]);
-  Reduction red(task);
-  bool maybeSat = red.Circulate();
-  std::ofstream ofs(argv[2]);
-  if(maybeSat) {
-    std::vector<bool> varVals = red.AssignVars();
-    if(!varVals[0]) {
-      ofs << "c UNCERTAIN" << std::endl;
+  bool satisfiable = true;
+  for(;;) {
+    Reduction red(task);
+    satisfiable &= red.Circulate();
+    if(!satisfiable) {
+      std::cout << "No circulation." << std::endl;
+      break;
     }
-    if(varVals.size() > 1) {
-      ofs << "s SATISFIABLE" << std::endl;
-      ofs << "v ";
-      for(int64_t i=1; i<varVals.size(); i++) {
-        ofs << (varVals[i] ? i : -i) << " ";
+    int64_t nAssigned = 0;
+    satisfiable &= red.AssignVars(nAssigned);
+    if(!satisfiable) {
+      std::cout << "Can't assign variable values." << std::endl;
+      break;
+    }
+    // Assign one unknown variable arbitrarily
+    int64_t nUnknown = 0;
+    int64_t iToAssign = 0;
+    for(int64_t i=1; i<=task.nVars_; i++) {
+      if(!task.known_[i]) {
+        nUnknown++;
+        if(nUnknown == 1) {
+          iToAssign = i;
+        }
       }
-      ofs << "0" << std::endl;
-      return 0;
+    }
+    if(nAssigned == 0 && iToAssign != 0) {
+      std::cout << "\t" << nUnknown << " variables are still unknown. Assigning var #"
+        << iToAssign << " arbitrarily." << std::endl;
+      task.known_[iToAssign] = true;
+      task.ans_[iToAssign] = false;
+      nUnknown--;
+    }
+    satisfiable &= task.RemoveKnown();
+    if(!satisfiable) {
+      std::cout << "After removing known variable values, the formula is not satisfiable." << std::endl;
+      break;
+    }
+    if(nUnknown == 0) {
+      break;
     }
   }
-  ofs << "s UNSATISFIABLE" << std::endl;
+  std::ofstream ofs(argv[2]);
+  if(!satisfiable) {
+    ofs << "s UNSATISFIABLE" << std::endl;
+    return 0;
+  }
+
+  assert(task.SolWorks());
+  ofs << "s SATISFIABLE" << std::endl;
+  ofs << "v ";
+  for(int64_t i=1; i<task.ans_.size(); i++) {
+    ofs << (task.ans_[i] ? i : -i) << " ";
+  }
+  ofs << "0" << std::endl;
   return 0;
 }

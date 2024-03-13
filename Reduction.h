@@ -5,12 +5,12 @@
 #include "MaxFlow.h"
 
 struct Reduction {
-  Formula formula_;
+  Formula& formula_;
   Graph fGraph_; // formula graph
   int64_t iST_; // -iST_=s: source vertex; +iST_=t: sink vertex
   int64_t necessaryFlow_;
 
-  explicit Reduction(const Formula& src) : formula_(src) {
+  explicit Reduction(Formula& src) : formula_(src) {
     iST_ = formula_.nVars_ + formula_.nClauses_ + 1;
 
     // Undirected edges between variables and their negations
@@ -85,19 +85,12 @@ struct Reduction {
     return true; // there is a circulation, but maybe the formula is still unsatisfiable if there are contradictions
   }
 
-  std::vector<bool> ans_;
-  std::vector<bool> known_;
-
-  std::vector<bool> AssignVars() {
-    ans_.resize(formula_.nVars_ + 1);
-    known_.resize(formula_.nVars_ + 1);
-    ans_[0] = true;
-
+  bool AssignVars(int64_t& nAssigned) {
     // Reflow through the variable<->negation edges
     for(const auto& clause : formula_.clause2var_) {
       std::shared_ptr<Arc> aClause = fGraph_.Get(-clause.first-formula_.nVars_, clause.first+formula_.nVars_);
       for(const auto& iVar : clause.second) {
-        if(aClause->flow_ == 0) {
+        if(aClause->flow_ <= 1) {
           break; // Everything is assigned for this clause
         }
         std::shared_ptr<Arc> aVarTrue = fGraph_.Get(-iVar, iVar);
@@ -117,6 +110,7 @@ struct Reduction {
       }
     }
 
+    nAssigned = 0;
     // Traverse the unambiguous and contradicting flows
     for(int64_t i=1; i<=formula_.nVars_; i++) {
       std::shared_ptr<Arc> aTrue = fGraph_.Get(-i, i);
@@ -124,28 +118,22 @@ struct Reduction {
       const int64_t contradiction = std::min(aTrue->flow_, aFalse->flow_);
       if(contradiction > 0) {
         std::cerr << "Contradiction in within-var flows." << std::endl;
-        ans_.resize(1);
-        return ans_;
+        return false;
       }
       if(aTrue->flow_) {
-        known_[i] = true;
-        ans_[i] = true;
+        formula_.known_[i] = true;
+        formula_.ans_[i] = true;
+        nAssigned++;
         continue;
       }
       if(aFalse->flow_) {
-        known_[i] = true;
-        ans_[i] = false;
+        formula_.known_[i] = true;
+        formula_.ans_[i] = false;
+        nAssigned++;
         continue;
       }
     }
-    // Determine if more than one solution exist
-    for(int64_t i=1; i<known_.size(); i++) {
-      if(!known_[i]) {
-        ans_[0] = false; // Uncertain
-        break;
-      }
-    }
-    assert(formula_.SolWorks(ans_));
-    return ans_;
+
+    return true;
   }
 };
