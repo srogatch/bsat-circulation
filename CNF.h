@@ -20,7 +20,7 @@ struct Formula {
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> clause2var_;
   //std::unordered_map<uint64_t, std::unordered_set<int64_t>> var2clause_;
   int64_t nVars_ = 0, nClauses_ = 0;
-  std::vector<bool> ans_, known_;
+  std::vector<bool> ans_;
 
   void Add(const uint64_t iClause, const int64_t iVar) {
     clause2var_[iClause].emplace(iVar);
@@ -52,7 +52,6 @@ struct Formula {
         }
         iss >> nVars_ >> nClauses_;
         ans_.resize(nVars_+1);
-        known_.resize(nVars_+1);
         probDefRead = true;
         continue;
       }
@@ -90,14 +89,14 @@ struct Formula {
     return true;
   }
 
-  bool RemoveKnown() {
+  bool RemoveKnown(const std::vector<bool>& known) {
     std::vector<uint64_t> satClauses;
     for(auto& clause : clause2var_) {
       std::vector<int64_t> unsatVars;
       bool hasUnknowns = false;
       bool satisfied = false;
       for(int64_t iVar : clause.second) {
-        if(!known_[llabs(iVar)]) {
+        if(!known[llabs(iVar)]) {
           hasUnknowns = true;
           continue;
         }

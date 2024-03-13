@@ -10,7 +10,7 @@ int main(int argc, char* argv[]) {
   Formula task;
   task.Load(argv[1]);
   bool satisfiable = true;
-  for(;;) {
+  do {
     Reduction red(task);
     satisfiable &= red.Circulate();
     if(!satisfiable) {
@@ -23,33 +23,10 @@ int main(int argc, char* argv[]) {
       std::cout << "Can't assign variable values." << std::endl;
       break;
     }
-    // Assign one unknown variable arbitrarily
-    int64_t nUnknown = 0;
-    int64_t iToAssign = 0;
-    for(int64_t i=1; i<=task.nVars_; i++) {
-      if(!task.known_[i]) {
-        nUnknown++;
-        if(nUnknown == 1) {
-          iToAssign = i;
-        }
-      }
-    }
-    if(nAssigned == 0 && iToAssign != 0) {
-      std::cout << "\t" << nUnknown << " variables are still unknown. Assigning var #"
-        << iToAssign << " arbitrarily." << std::endl;
-      task.known_[iToAssign] = true;
-      task.ans_[iToAssign] = false;
-      nUnknown--;
-    }
-    satisfiable &= task.RemoveKnown();
-    if(!satisfiable) {
-      std::cout << "After removing known variable values, the formula is not satisfiable." << std::endl;
-      break;
-    }
-    if(nUnknown == 0) {
-      break;
-    }
+    std::cout << "Reflow succeeded." << std::endl;
   }
+  while(false);
+
   std::ofstream ofs(argv[2]);
   if(!satisfiable) {
     ofs << "s UNSATISFIABLE" << std::endl;

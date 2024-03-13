@@ -9,7 +9,7 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/bin/BSAT-Circulation",
-      "args": ["single-sol.inp", "single-sol.sol"],
+      "args": ["uf20-01.cnf", "uf20-01.sol"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}/bin",
       "environment": [],
