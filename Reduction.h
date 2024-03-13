@@ -92,6 +92,31 @@ struct Reduction {
     ans_.resize(formula_.nVars_ + 1);
     known_.resize(formula_.nVars_ + 1);
     ans_[0] = true;
+
+    // Reflow through the variable<->negation edges
+    for(const auto& clause : formula_.clause2var_) {
+      std::shared_ptr<Arc> aClause = fGraph_.Get(-clause.first-formula_.nVars_, clause.first+formula_.nVars_);
+      for(const auto& iVar : clause.second) {
+        if(aClause->flow_ == 0) {
+          break; // Everything is assigned for this clause
+        }
+        std::shared_ptr<Arc> aVarTrue = fGraph_.Get(-iVar, iVar);
+        std::shared_ptr<Arc> aVarFalse = fGraph_.Get(iVar, -iVar);
+        std::shared_ptr<Arc> aTrue = fGraph_.Get(iVar, -clause.first-formula_.nVars_);
+        std::shared_ptr<Arc> aFalse = fGraph_.Get(clause.first+formula_.nVars_, -iVar);
+        if(aTrue->flow_ > 0 && aFalse->flow_ > 0) {
+          aTrue->flow_--;
+          aFalse->flow_--;
+          aClause->flow_--;
+          if( aVarTrue->flow_ > 0 ) {
+            aVarTrue->flow_--;
+          } else {
+            aVarFalse->flow_++;
+          }
+        }
+      }
+    }
+
     // Traverse the unambiguous and contradicting flows
     for(int64_t i=1; i<=formula_.nVars_; i++) {
       std::shared_ptr<Arc> aTrue = fGraph_.Get(-i, i);
@@ -118,45 +143,6 @@ struct Reduction {
       if(!known_[i]) {
         ans_[0] = false; // Uncertain
         break;
-      }
-    }
-    // Reflow
-    for(const auto& clause : formula_.clause2var_) {
-      std::shared_ptr<Arc> aClause = fGraph_.Get(-clause.first-formula_.nVars_, clause.first+formula_.nVars_);
-      if(aClause->flow_ == 0) {
-        continue; // Everything is assigned for this clause
-      }
-      for(const auto& iVar : clause.second) {
-        // if(known_[llabs(iVar)]) {
-        //   continue;
-        // }
-        std::shared_ptr<Arc> aVarTrue = fGraph_.Get(-iVar, iVar);
-        std::shared_ptr<Arc> aVarFalse = fGraph_.Get(iVar, -iVar);
-        std::shared_ptr<Arc> aTrue = fGraph_.Get(iVar, -clause.first-formula_.nVars_);
-        std::shared_ptr<Arc> aFalse = fGraph_.Get(clause.first+formula_.nVars_, -iVar);
-        if(aTrue->flow_ > 0 && aFalse->flow_ > 0) {
-          const bool varVal = (iVar > 0) ? true : false;
-          if( (aVarTrue->flow_ > 0 && !varVal) || (aVarFalse->flow_ && varVal) ) {
-            std::cerr << "Different clauses assign opposite flows." << std::endl;
-            ans_.resize(1);
-            return ans_;
-          }
-          aTrue->flow_--;
-          aFalse->flow_--;
-          aClause->flow_--;
-          aVarTrue->flow_++;
-          if(known_[llabs(iVar)]) {
-            if(ans_[llabs(iVar)] != varVal) {
-              std::cerr << "Contradiction in clause var rerouting." << std::endl;
-              ans_.resize(1);
-              return ans_;
-            }
-          } else {
-            known_[llabs(iVar)] = true;
-            ans_[llabs(iVar)] = varVal;
-          }
-          break;
-        }
       }
     }
     assert(formula_.SolWorks(ans_));
