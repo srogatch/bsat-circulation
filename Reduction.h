@@ -58,7 +58,7 @@ struct Reduction {
       return false; // unsatisfiable
     }
     assert(mf.result_ == necessaryFlow_);
-    assert(fGraph_.CheckFlow());
+    assert(fGraph_.CheckFlow(formula_.nVars_ + formula_.nClauses_));
 
     // Fix the circulation - add minimal flows and remove source and sink
     for(const auto& clause : formula_.clause2var_) {
@@ -66,6 +66,7 @@ struct Reduction {
       auto pArc = fGraph_.Get(
         -formula_.nVars_ - clause.first, formula_.nVars_ + clause.first);
       pArc->flow_ += pArc->low_;
+      pArc->high_ += pArc->low_;
     }
     std::vector<std::pair<int64_t, int64_t>> toRemove;
     for(const auto& src : fGraph_.links_) {
@@ -80,7 +81,7 @@ struct Reduction {
     for(const auto& curArc : toRemove) {
       fGraph_.Remove(curArc.first, curArc.second);
     }
-    assert(fGraph_.CheckFlow());
+    assert(fGraph_.CheckFlow(formula_.nVars_ + formula_.nClauses_));
     return true; // there is a circulation, but maybe the formula is still unsatisfiable if there are contradictions
   }
 

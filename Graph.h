@@ -92,7 +92,22 @@ struct Graph {
     return true;
   }
 
-  bool CheckFlow() {
+  bool CheckFlow(const int64_t nVertices) {
+    for(int64_t v=-nVertices; v<=nVertices; v++) {
+      if(v == 0) {
+        continue;
+      }
+      int64_t inFlow = 0, outFlow = 0;
+      for(const auto& bl : backlinks_[v]) {
+        inFlow += bl.second->flow_;
+      }
+      for(const auto& fl : links_[v]) {
+        outFlow += fl.second->flow_;
+      }
+      if(inFlow != outFlow) {
+        return false;
+      }
+    }
     for(const auto& src : links_) {
       for(const auto& dst : src.second) {
         std::shared_ptr<Arc> arc = dst.second;
@@ -100,20 +115,6 @@ struct Graph {
           return false;
         }
         if(arc->flow_ > arc->high_) {
-          return false;
-        }
-        int64_t inFlow = 0;
-        for(const auto& bl : backlinks_[src.first]) {
-          inFlow += bl.second->flow_;
-        }
-        if(inFlow != arc->flow_) {
-          return false;
-        }
-        int64_t outFlow = 0;
-        for(const auto& fl : links_[dst.first]) {
-          outFlow += fl.second->flow_;
-        }
-        if(outFlow != arc->flow_) {
           return false;
         }
       }
