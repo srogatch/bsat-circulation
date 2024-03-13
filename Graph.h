@@ -91,5 +91,34 @@ struct Graph {
     }
     return true;
   }
+
+  bool CheckFlow() {
+    for(const auto& src : links_) {
+      for(const auto& dst : src.second) {
+        std::shared_ptr<Arc> arc = dst.second;
+        if(arc->flow_ < 0) {
+          return false;
+        }
+        if(arc->flow_ > arc->high_) {
+          return false;
+        }
+        int64_t inFlow = 0;
+        for(const auto& bl : backlinks_[src.first]) {
+          inFlow += bl.second->flow_;
+        }
+        if(inFlow != arc->flow_) {
+          return false;
+        }
+        int64_t outFlow = 0;
+        for(const auto& fl : links_[dst.first]) {
+          outFlow += fl.second->flow_;
+        }
+        if(outFlow != arc->flow_) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
 };
 

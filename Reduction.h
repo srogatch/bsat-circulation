@@ -54,9 +54,11 @@ struct Reduction {
     }
     MaxFlow mf(fGraph_, GetVSource(), GetVSink());
     if(mf.result_ < necessaryFlow_) {
+      std::cerr << "No circulation" << std::endl;
       return false; // unsatisfiable
     }
     assert(mf.result_ == necessaryFlow_);
+    assert(fGraph_.CheckFlow());
 
     // Fix the circulation - add minimal flows and remove source and sink
     for(const auto& clause : formula_.clause2var_) {
@@ -78,6 +80,7 @@ struct Reduction {
     for(const auto& curArc : toRemove) {
       fGraph_.Remove(curArc.first, curArc.second);
     }
+    assert(fGraph_.CheckFlow());
     return true; // there is a circulation, but maybe the formula is still unsatisfiable if there are contradictions
   }
 
@@ -94,6 +97,7 @@ struct Reduction {
       std::shared_ptr<Arc> aFalse = fGraph_.Get(i, -i);
       const int64_t contradiction = std::min(aTrue->flow_, aFalse->flow_);
       if(contradiction > 0) {
+        std::cerr << "Contradiction in within-var flows." << std::endl;
         ans_.resize(1);
         return ans_;
       }
@@ -122,9 +126,9 @@ struct Reduction {
         continue; // Everything is assigned for this clause
       }
       for(const auto& iVar : clause.second) {
-        if(known_[llabs(iVar)]) {
-          continue;
-        }
+        // if(known_[llabs(iVar)]) {
+        //   continue;
+        // }
         std::shared_ptr<Arc> aVarTrue = fGraph_.Get(-iVar, iVar);
         std::shared_ptr<Arc> aVarFalse = fGraph_.Get(iVar, -iVar);
         std::shared_ptr<Arc> aTrue = fGraph_.Get(iVar, -clause.first-formula_.nVars_);
@@ -132,7 +136,9 @@ struct Reduction {
         if(aTrue->flow_ > 0 && aFalse->flow_ > 0) {
           const bool varVal = (iVar > 0) ? true : false;
           if( (aVarTrue->flow_ > 0 && !varVal) || (aVarFalse->flow_ && varVal) ) {
-            continue; // An assignment here would be contradicting
+            std::cerr << "Different clauses assign opposite flows." << std::endl;
+            ans_.resize(1);
+            return ans_;
           }
           aTrue->flow_--;
           aFalse->flow_--;
@@ -140,7 +146,7 @@ struct Reduction {
           aVarTrue->flow_++;
           if(known_[llabs(iVar)]) {
             if(ans_[llabs(iVar)] != varVal) {
-              std::cerr << "Contradiction in non-contradicting construction." << std::endl;
+              std::cerr << "Contradiction in clause var rerouting." << std::endl;
               ans_.resize(1);
               return ans_;
             }
