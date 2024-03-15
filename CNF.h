@@ -21,6 +21,7 @@ struct Formula {
   //std::unordered_map<uint64_t, std::unordered_set<int64_t>> var2clause_;
   int64_t nVars_ = 0, nClauses_ = 0;
   std::vector<bool> ans_;
+  std::vector<bool> dummySat_;
 
   void Add(const uint64_t iClause, const int64_t iVar) {
     clause2var_[iClause].emplace(iVar);
@@ -52,6 +53,7 @@ struct Formula {
         }
         iss >> nVars_ >> nClauses_;
         ans_.resize(nVars_+1);
+        dummySat_.resize(nClauses_+1);
         probDefRead = true;
         continue;
       }
@@ -70,6 +72,15 @@ struct Formula {
         }
         Add(iClause, iVar);
       } while(iss >> cmd);
+    }
+    for(int64_t i=1; i<=nClauses_; i++) {
+      for(int64_t iVar : clause2var_[i]) {
+        if(clause2var_[i].find(-iVar) != clause2var_[i].end()) {
+          dummySat_[i] = true;
+          clause2var_.erase(i);
+          break;
+        }
+      }
     }
   }
 

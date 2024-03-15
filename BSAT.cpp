@@ -16,6 +16,9 @@ int main(int argc, char* argv[]) {
     Reduction red(formula);
     std::unordered_set<int64_t> unsatClauses;
     for(int64_t i=1; i<=formula.nClauses_; i++) {
+      if(formula.dummySat_[i]) {
+        continue; // the clause contains a variable and its negation
+      }
       if(red.fGraph_.backlinks_[formula.nVars_ + i].empty()) {
         unsatClauses.emplace(i);  
       }
@@ -25,11 +28,14 @@ int main(int argc, char* argv[]) {
       std::cout << "Satisfied" << std::endl;
       break;
     }
+    std::cout << "Unsatisfied clauses: " << nStartUnsat << std::endl;
     while(unsatClauses.size() >= nStartUnsat) {
       bool reversed = false;
       for(const int64_t originClause : unsatClauses) {
         for(const auto& clauseDst : red.fGraph_.links_[formula.nVars_ + originClause]) {
           const int64_t revVertex = clauseDst.first;
+          assert(clauseDst.first == clauseDst.second->to_);
+          assert(formula.nVars_ + originClause == clauseDst.second->from_);
           std::vector<bool> next = formula.ans_;
           next[revVertex] = ! next[revVertex];
           if(seen.find(next) != seen.end()) {
@@ -44,13 +50,15 @@ int main(int argc, char* argv[]) {
           for(const auto& varSrc : red.fGraph_.backlinks_[revVertex]) {
             oldBackward.emplace_back(varSrc.first);
           }
-          red.fGraph_.links_[revVertex].clear();
-          red.fGraph_.backlinks_[revVertex].clear();
+          for(const int64_t c : oldForward) {
+            red.fGraph_.Remove(revVertex, c);
+          }
+          for(const int64_t c : oldBackward) {
+            red.fGraph_.Remove(c, revVertex);
+          }
           for(const int64_t c : oldBackward) {
             red.fGraph_.AddMerge(Arc(revVertex, c, 0, 1));
-            if(unsatClauses.find(c - formula.nVars_) != unsatClauses.end()) {
-              unsatClauses.erase(c - formula.nVars_);
-            }
+            unsatClauses.erase(c - formula.nVars_);
           }
           for(const int64_t c : oldForward) {
             red.fGraph_.AddMerge(Arc(c, revVertex, 0, 1));
@@ -74,6 +82,8 @@ int main(int argc, char* argv[]) {
       }
     }
   }
+
+  std::cout << "Search size: " << seen.size() << std::endl;
 
   std::ofstream ofs(argv[2]);
   if(!maybeSat) {

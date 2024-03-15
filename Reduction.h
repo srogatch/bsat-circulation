@@ -15,7 +15,7 @@ struct Reduction {
     iRoot_ = formula_.nVars_ + formula_.nClauses_ + 1;
     iST_ = iRoot_ + 1;
 
-    for(auto& clause : formula_.clause2var_) {;
+    for(auto& clause : formula_.clause2var_) {
       for(int64_t iVar : clause.second) {
         if( (iVar < 0 && !formula_.ans_[-iVar]) || (iVar > 0 && formula_.ans_[iVar]) ) {
           // The value assigned to this variable satisfies the clause:
