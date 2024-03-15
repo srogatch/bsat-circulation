@@ -29,8 +29,10 @@ int main(int argc, char* argv[]) {
   seen.emplace(formula.ans_);
   while(maybeSat) {
     std::unordered_set<int64_t> unsatClauses;
+    #pragma omp parallel for num_threads(nCpus)
     for(int64_t i=1; i<=formula.nClauses_; i++) {
       if(!formula.IsSatisfied(i, formula.ans_)) {
+        #pragma omp critical
         unsatClauses.emplace(i);
       }
     }
@@ -47,10 +49,14 @@ int main(int argc, char* argv[]) {
         front = unsatClauses;
       }
       std::unordered_set<int64_t> candVs;
-      for(const int64_t originClause : front) {
+      std::vector<int64_t> vFront(front.begin(), front.end());
+      #pragma omp parallel for num_threads(nCpus)
+      for(int64_t i=0; i<vFront.size(); i++) {
+        const int64_t originClause = vFront[i];
         for(const int64_t iVar : formula.clause2var_[originClause]) {
           if( (iVar < 0 && formula.ans_[-iVar]) || (iVar > 0 && !formula.ans_[iVar]) ) {
             // A dissatisfying arc
+            #pragma omp critical
             candVs.emplace(llabs(iVar));
           }
         }
@@ -129,27 +135,28 @@ int main(int argc, char* argv[]) {
 
       seen.emplace(bestNext);
       front.clear();
-      #pragma omp parallel for num_threads(nCpus)
+      //#pragma omp parallel for num_threads(nCpus)
       for(int64_t i=0; i<revVertices.size(); i++) {
-        const int64_t revVertex = revVertices[i];
-        for(const int64_t iClause : formula.var2clause_[revVertex]) {
-          const uint64_t absClause = llabs(iClause);
+        const std::vector<int64_t>& clauses = formula.listVar2Clause_[revVertices[i]];
+        #pragma omp parallel for num_threads(nCpus)
+        for(int64_t j=0; j<clauses.size(); j++) {
+          const uint64_t absClause = llabs(clauses[j]);
           const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
           const bool newSat = formula.IsSatisfied(absClause, bestNext);
-          if(oldSat == newSat) {
-            continue;
-          }
           if(newSat) {
-            std::unique_lock<std::mutex> lock(muUnsatClauses);
-            unsatClauses.erase(absClause);
-          } else {
-            {
+            if(!oldSat) {
               std::unique_lock<std::mutex> lock(muUnsatClauses);
-              unsatClauses.emplace(absClause);
+              unsatClauses.erase(absClause);
             }
+          } else {
             {
               std::unique_lock<std::mutex> lock(muFront);
               front.emplace(absClause);
+            }
+            if(oldSat)
+            {
+              std::unique_lock<std::mutex> lock(muUnsatClauses);
+              unsatClauses.emplace(absClause);
             }
           }
         }

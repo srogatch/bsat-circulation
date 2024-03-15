@@ -22,6 +22,7 @@ template <typename T> constexpr int Signum(const T val) {
 struct Formula {
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> clause2var_;
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> var2clause_;
+  std::unordered_map<uint64_t, std::vector<int64_t>> listVar2Clause_;
   int64_t nVars_ = 0, nClauses_ = 0;
   std::vector<bool> ans_;
   std::vector<bool> dummySat_;
@@ -84,6 +85,9 @@ struct Formula {
           break;
         }
       }
+    }
+    for(int64_t i=1; i<=nVars_; i++) {
+      listVar2Clause_[i].assign(var2clause_[i].begin(), var2clause_[i].end());
     }
   }
 
