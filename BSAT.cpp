@@ -46,58 +46,99 @@ int main(int argc, char* argv[]) {
       if(front.empty()) {
         front = unsatClauses;
       }
-      int64_t revVertex = Graph::INVALID_VERTEX;
+      std::unordered_set<int64_t> candVs;
       for(const int64_t originClause : front) {
         for(const auto& clauseDst : red.fGraph_.links_[formula.nVars_ + originClause]) {
-          revVertex = clauseDst.first;
           assert(clauseDst.first == clauseDst.second->to_);
           assert(formula.nVars_ + originClause == clauseDst.second->from_);
+          candVs.emplace(clauseDst.first);
+        }
+      }
+      std::unordered_set<int64_t> revVertices;
+      std::vector<int64_t> combs(candVs.begin(), candVs.end());
+      std::vector<int64_t> incl;
+      uint64_t nCombs = 0;
+      for(int64_t nIncl=1; nIncl<combs.size(); nIncl++) {
+        if(nIncl >= 3) {
+          std::cout << "Combining " << nIncl << " variables to reverse." << std::endl;
+        }
+        incl.clear();
+        for(int64_t j=0; j<nIncl; j++) {
+          incl.push_back(j);
+        }
+        for(;;) {
           next = formula.ans_;
-          next[revVertex] = !next[revVertex];
+          revVertices.clear();
+          nCombs++;
+          for(int64_t j=0; j<nIncl; j++) {
+            const int64_t revV = combs[incl[j]];
+            revVertices.emplace(revV);
+            next[revV] = !next[revV];
+          }
           if(seen.find(next) == seen.end()) {
             break;
           }
-          revVertex = Graph::INVALID_VERTEX;
+          int64_t j;
+          for(j=nIncl-1; j>=0; j--) {
+            if(incl[j]+(nIncl-j) >= combs.size()) {
+              continue;
+            }
+            break;
+          }
+          if(j < 0) {
+            // All combinations with nIncl elements exhausted
+            break;
+          }
+          incl[j]++;
+          for(int64_t k=j+1; k<nIncl; k++) {
+            incl[k] = incl[k-1] + 1;
+          }
         }
-        if(revVertex != Graph::INVALID_VERTEX) {
+        if(!revVertices.empty()) {
           break;
         }
       }
-      if(revVertex == Graph::INVALID_VERTEX) {
+      if(nCombs > formula.nVars_ * formula.nVars_) {
+        std::cout << "Combinations to next: " << nCombs << std::endl;
+      }
+
+      if(revVertices.empty()) {
         // Unsatisfiable
         std::cout << "Nothing reversed - unsatisfiable" << std::endl;
         maybeSat = false;
         break;
       }
 
-      seen.emplace(std::move(next));
+      seen.emplace(next);
       front.clear();
-      // Reverse the incoming and outgoing arcs for this variable
-      std::vector<int64_t> oldForward, oldBackward;
-      for(const auto& varDst : red.fGraph_.links_[revVertex]) {
-        oldForward.emplace_back(varDst.first);
-      }
-      for(const auto& varSrc : red.fGraph_.backlinks_[revVertex]) {
-        oldBackward.emplace_back(varSrc.first);
-      }
-      for(const int64_t c : oldForward) {
-        red.fGraph_.Remove(revVertex, c);
-      }
-      for(const int64_t c : oldBackward) {
-        red.fGraph_.Remove(c, revVertex);
-      }
-      for(const int64_t c : oldBackward) {
-        red.fGraph_.AddMerge(Arc(revVertex, c, 0, 1));
-        unsatClauses.erase(c - formula.nVars_);
-      }
-      for(const int64_t c : oldForward) {
-        red.fGraph_.AddMerge(Arc(c, revVertex, 0, 1));
-        if(red.fGraph_.backlinks_[c].empty()) {
-          unsatClauses.emplace(c - formula.nVars_);
-          front.emplace(c - formula.nVars_);
+      for(const int64_t revVertex : revVertices) {
+        // Reverse the incoming and outgoing arcs for this variable
+        std::vector<int64_t> oldForward, oldBackward;
+        for(const auto& varDst : red.fGraph_.links_[revVertex]) {
+          oldForward.emplace_back(varDst.first);
+        }
+        for(const auto& varSrc : red.fGraph_.backlinks_[revVertex]) {
+          oldBackward.emplace_back(varSrc.first);
+        }
+        for(const int64_t c : oldForward) {
+          red.fGraph_.Remove(revVertex, c);
+        }
+        for(const int64_t c : oldBackward) {
+          red.fGraph_.Remove(c, revVertex);
+        }
+        for(const int64_t c : oldBackward) {
+          red.fGraph_.AddMerge(Arc(revVertex, c, 0, 1));
+          unsatClauses.erase(c - formula.nVars_);
+        }
+        for(const int64_t c : oldForward) {
+          red.fGraph_.AddMerge(Arc(c, revVertex, 0, 1));
+          if(red.fGraph_.backlinks_[c].empty()) {
+            unsatClauses.emplace(c - formula.nVars_);
+            front.emplace(c - formula.nVars_);
+          }
         }
       }
-      formula.ans_[revVertex] = !formula.ans_[revVertex];
+      formula.ans_ = next;
     }
     std::cout << "Search size: " << seen.size() << std::endl;
   }
