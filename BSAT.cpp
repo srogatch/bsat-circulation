@@ -2,6 +2,13 @@
 
 #include <iostream>
 
+struct seen_hash {
+  inline std::size_t operator()(const std::pair<int64_t, int64_t> & v) const {
+    return (std::hash<int64_t>()(v.first) * 37)
+        ^ (std::hash<int64_t>()(v.second) * 17);
+  }
+};
+
 int main(int argc, char* argv[]) {
   if(argc < 3) {
     std::cerr << "Usage: " << argv[0] << " <input.dimacs> <output.dimacs>" << std::endl;
@@ -9,8 +16,6 @@ int main(int argc, char* argv[]) {
   }
   Formula formula;
   formula.Load(argv[1]);
-  std::unordered_set<std::vector<bool>> seen;
-  seen.emplace(formula.ans_);
   bool maybeSat = true;
   while(maybeSat) {
     Reduction red(formula);
@@ -29,6 +34,7 @@ int main(int argc, char* argv[]) {
       break;
     }
     std::cout << "Unsatisfied clauses: " << nStartUnsat << std::endl;
+    std::unordered_set<std::pair<int64_t, int64_t>, seen_hash> seen;
     while(unsatClauses.size() >= nStartUnsat) {
       bool reversed = false;
       for(const int64_t originClause : unsatClauses) {
@@ -36,12 +42,11 @@ int main(int argc, char* argv[]) {
           const int64_t revVertex = clauseDst.first;
           assert(clauseDst.first == clauseDst.second->to_);
           assert(formula.nVars_ + originClause == clauseDst.second->from_);
-          std::vector<bool> next = formula.ans_;
-          next[revVertex] = ! next[revVertex];
-          if(seen.find(next) != seen.end()) {
+          if(seen.find({originClause, revVertex}) != seen.end()) {
             continue;
           }
-          seen.emplace(next);
+          seen.emplace(originClause, revVertex);
+
           // Reverse the incoming and outgoing arcs for this variable
           std::vector<int64_t> oldForward, oldBackward;
           for(const auto& varDst : red.fGraph_.links_[revVertex]) {
@@ -66,7 +71,7 @@ int main(int argc, char* argv[]) {
               unsatClauses.emplace(c - formula.nVars_);
             }
           }
-          formula.ans_ = next;
+          formula.ans_[revVertex] = !formula.ans_[revVertex];
           reversed = true;
           break;
         }
@@ -81,9 +86,8 @@ int main(int argc, char* argv[]) {
         break;
       }
     }
+    std::cout << "Search size: " << seen.size() << std::endl;
   }
-
-  std::cout << "Search size: " << seen.size() << std::endl;
 
   std::ofstream ofs(argv[2]);
   if(!maybeSat) {
