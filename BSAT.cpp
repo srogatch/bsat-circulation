@@ -44,6 +44,7 @@ int main(int argc, char* argv[]) {
     while(unsatClauses.size() >= nStartUnsat) {
       std::vector<bool> next;
       if(front.empty()) {
+        //std::cout << "Empty front" << std::endl;
         front = unsatClauses;
       }
       std::unordered_set<int64_t> candVs;
