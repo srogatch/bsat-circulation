@@ -83,6 +83,9 @@ int main(int argc, char* argv[]) {
               bestUnsat = stepUnsat;
               revVertices = stepRevs;
               bestNext = next;
+              if(bestUnsat < nStartUnsat) {
+                break;
+              }
             }
           }
           stepRevs.clear();
@@ -111,6 +114,12 @@ int main(int argc, char* argv[]) {
       }
 
       if(revVertices.empty()) {
+        //std::cout << "The front of " << front.size() << " clauses doesn't lead anywhere." << std::endl;
+        if(front != unsatClauses) {
+          // Retry with full front
+          front = unsatClauses;
+          continue;
+        }
         // Unsatisfiable
         std::cout << "Nothing reversed - unsatisfiable" << std::endl;
         maybeSat = false;
