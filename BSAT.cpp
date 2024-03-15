@@ -36,7 +36,7 @@ int main(int argc, char* argv[]) {
             continue;
           }
           seen.emplace(next);
-          // TODO: Reverse the incoming and outgoing arcs for this variable
+          // Reverse the incoming and outgoing arcs for this variable
           std::vector<int64_t> oldForward, oldBackward;
           for(const auto& varDst : red.fGraph_.links_[revVertex]) {
             oldForward.emplace_back(varDst.first);
@@ -58,6 +58,7 @@ int main(int argc, char* argv[]) {
               unsatClauses.emplace(c - formula.nVars_);
             }
           }
+          formula.ans_ = next;
           reversed = true;
           break;
         }
