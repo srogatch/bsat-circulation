@@ -1,6 +1,7 @@
 #include "Reduction.h"
 
 #include <iostream>
+#include <mutex>
 
 struct seen_hash {
   inline std::size_t operator()(const std::pair<std::pair<int64_t, int64_t>, std::unordered_set<int64_t>> & v) const {
@@ -18,20 +19,19 @@ int main(int argc, char* argv[]) {
     std::cerr << "Usage: " << argv[0] << " <input.dimacs> <output.dimacs>" << std::endl;
     return 1;
   }
+  const uint32_t nCpus = std::thread::hardware_concurrency();
+  std::mutex muUnsatClauses;
+  std::mutex muFront;
   Formula formula;
   formula.Load(argv[1]);
   bool maybeSat = true;
   std::unordered_set<std::vector<bool>> seen;
   seen.emplace(formula.ans_);
   while(maybeSat) {
-    Reduction red(formula);
     std::unordered_set<int64_t> unsatClauses;
     for(int64_t i=1; i<=formula.nClauses_; i++) {
-      if(formula.dummySat_[i]) {
-        continue; // the clause contains a variable and its negation
-      }
-      if(red.fGraph_.backlinks_[formula.nVars_ + i].empty()) {
-        unsatClauses.emplace(i);  
+      if(!formula.IsSatisfied(i, formula.ans_)) {
+        unsatClauses.emplace(i);
       }
     }
     const int64_t nStartUnsat = unsatClauses.size();
@@ -48,16 +48,16 @@ int main(int argc, char* argv[]) {
       }
       std::unordered_set<int64_t> candVs;
       for(const int64_t originClause : front) {
-        for(const auto& clauseDst : red.fGraph_.links_[formula.nVars_ + originClause]) {
-          assert(clauseDst.first == clauseDst.second->to_);
-          assert(formula.nVars_ + originClause == clauseDst.second->from_);
-          candVs.emplace(clauseDst.first);
+        for(const int64_t iVar : formula.clause2var_[originClause]) {
+          if( (iVar < 0 && formula.ans_[-iVar]) || (iVar > 0 && !formula.ans_[iVar]) ) {
+            // A dissatisfying arc
+            candVs.emplace(llabs(iVar));
+          }
         }
       }
       int64_t bestUnsat = formula.nClauses_+1;
-      std::unordered_set<int64_t> revVertices;
+      std::vector<int64_t> revVertices;
       std::vector<bool> bestNext;
-      std::unordered_set<int64_t> stepRevs;
       std::vector<int64_t> combs(candVs.begin(), candVs.end());
       std::vector<int64_t> incl;
       uint64_t nCombs = 0;
@@ -71,24 +71,25 @@ int main(int argc, char* argv[]) {
         }
         for(;;) {
           std::vector<bool> next = formula.ans_;
+          std::unordered_set<int64_t> stepRevs;
           nCombs++;
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[incl[j]];
             stepRevs.emplace(revV);
             next[revV] = !next[revV];
           }
-          int64_t stepUnsat = formula.CountUnsat(next);
+
+          const int64_t stepUnsat = formula.CountUnsat(next);
           if(stepUnsat < bestUnsat) {
             if(seen.find(next) == seen.end()) {
               bestUnsat = stepUnsat;
-              revVertices = stepRevs;
+              revVertices.assign(stepRevs.begin(), stepRevs.end());
               bestNext = next;
               if(bestUnsat < nStartUnsat) {
                 break;
               }
             }
           }
-          stepRevs.clear();
           int64_t j;
           for(j=nIncl-1; j>=0; j--) {
             if(incl[j]+(nIncl-j) >= combs.size()) {
@@ -128,30 +129,28 @@ int main(int argc, char* argv[]) {
 
       seen.emplace(bestNext);
       front.clear();
-      for(const int64_t revVertex : revVertices) {
-        // Reverse the incoming and outgoing arcs for this variable
-        std::vector<int64_t> oldForward, oldBackward;
-        for(const auto& varDst : red.fGraph_.links_[revVertex]) {
-          oldForward.emplace_back(varDst.first);
-        }
-        for(const auto& varSrc : red.fGraph_.backlinks_[revVertex]) {
-          oldBackward.emplace_back(varSrc.first);
-        }
-        for(const int64_t c : oldForward) {
-          red.fGraph_.Remove(revVertex, c);
-        }
-        for(const int64_t c : oldBackward) {
-          red.fGraph_.Remove(c, revVertex);
-        }
-        for(const int64_t c : oldBackward) {
-          red.fGraph_.AddMerge(Arc(revVertex, c, 0, 1));
-          unsatClauses.erase(c - formula.nVars_);
-        }
-        for(const int64_t c : oldForward) {
-          red.fGraph_.AddMerge(Arc(c, revVertex, 0, 1));
-          if(red.fGraph_.backlinks_[c].empty()) {
-            unsatClauses.emplace(c - formula.nVars_);
-            front.emplace(c - formula.nVars_);
+      #pragma omp parallel for num_threads(nCpus)
+      for(int64_t i=0; i<revVertices.size(); i++) {
+        const int64_t revVertex = revVertices[i];
+        for(const int64_t iClause : formula.var2clause_[revVertex]) {
+          const uint64_t absClause = llabs(iClause);
+          const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
+          const bool newSat = formula.IsSatisfied(absClause, bestNext);
+          if(oldSat == newSat) {
+            continue;
+          }
+          if(newSat) {
+            std::unique_lock<std::mutex> lock(muUnsatClauses);
+            unsatClauses.erase(absClause);
+          } else {
+            {
+              std::unique_lock<std::mutex> lock(muUnsatClauses);
+              unsatClauses.emplace(absClause);
+            }
+            {
+              std::unique_lock<std::mutex> lock(muFront);
+              front.emplace(absClause);
+            }
           }
         }
       }
