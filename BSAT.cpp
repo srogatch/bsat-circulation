@@ -42,7 +42,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Unsatisfied clauses: " << nStartUnsat << std::endl;
     std::unordered_set<int64_t> front;
     while(unsatClauses.size() >= nStartUnsat) {
-      std::vector<bool> next;
       if(front.empty()) {
         //std::cout << "Empty front" << std::endl;
         front = unsatClauses;
@@ -55,7 +54,10 @@ int main(int argc, char* argv[]) {
           candVs.emplace(clauseDst.first);
         }
       }
+      int64_t bestUnsat = formula.nClauses_+1;
       std::unordered_set<int64_t> revVertices;
+      std::vector<bool> bestNext;
+      std::unordered_set<int64_t> stepRevs;
       std::vector<int64_t> combs(candVs.begin(), candVs.end());
       std::vector<int64_t> incl;
       uint64_t nCombs = 0;
@@ -68,17 +70,22 @@ int main(int argc, char* argv[]) {
           incl.push_back(j);
         }
         for(;;) {
-          next = formula.ans_;
-          revVertices.clear();
+          std::vector<bool> next = formula.ans_;
           nCombs++;
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[incl[j]];
-            revVertices.emplace(revV);
+            stepRevs.emplace(revV);
             next[revV] = !next[revV];
           }
-          if(seen.find(next) == seen.end()) {
-            break;
+          int64_t stepUnsat = formula.CountUnsat(next);
+          if(stepUnsat < bestUnsat) {
+            if(seen.find(next) == seen.end()) {
+              bestUnsat = stepUnsat;
+              revVertices = stepRevs;
+              bestNext = next;
+            }
           }
+          stepRevs.clear();
           int64_t j;
           for(j=nIncl-1; j>=0; j--) {
             if(incl[j]+(nIncl-j) >= combs.size()) {
@@ -110,7 +117,7 @@ int main(int argc, char* argv[]) {
         break;
       }
 
-      seen.emplace(next);
+      seen.emplace(bestNext);
       front.clear();
       for(const int64_t revVertex : revVertices) {
         // Reverse the incoming and outgoing arcs for this variable
@@ -139,7 +146,7 @@ int main(int argc, char* argv[]) {
           }
         }
       }
-      formula.ans_ = next;
+      formula.ans_ = bestNext;
     }
     std::cout << "Search size: " << seen.size() << std::endl;
   }

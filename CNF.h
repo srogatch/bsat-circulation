@@ -136,4 +136,24 @@ struct Formula {
     }
     return true;
   }
+
+  int64_t CountUnsat(const std::vector<bool>& assignment) {
+    int64_t nUnsat = 0;
+    for(int64_t i=1; i<=nClauses_; i++) {
+      if(dummySat_[i]) {
+        continue;
+      }
+      bool satisfied = false;
+      for(const int64_t iVar : clause2var_[i]) {
+        if( (iVar < 0 && !assignment[-iVar]) || (iVar > 0 && assignment[iVar]) ) {
+          satisfied = true;
+          break;
+        }
+      }
+      if(!satisfied) {
+        nUnsat++;
+      }
+    }
+    return nUnsat;
+  }
 };
