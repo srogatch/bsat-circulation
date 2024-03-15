@@ -15,21 +15,17 @@ struct Reduction {
     iRoot_ = formula_.nVars_ + formula_.nClauses_ + 1;
     iST_ = iRoot_ + 1;
 
-    for(auto& clause : formula_.clause2var_) {
-      std::vector<int64_t> unsatVars;
-      int64_t nSat = 0;
+    for(auto& clause : formula_.clause2var_) {;
       for(int64_t iVar : clause.second) {
         if( (iVar < 0 && !formula_.ans_[-iVar]) || (iVar > 0 && formula_.ans_[iVar]) ) {
-          nSat++;
-          fGraph_.AddMerge(Arc(formula_.nVars_+clause.first, llabs(iVar), 0, 1));
-        } else {
+          // The value assigned to this variable satisfies the clause:
+          // An arc from the variable to the clause.
           fGraph_.AddMerge(Arc(llabs(iVar), formula_.nVars_+clause.first, 0, 1));
+        } else {
+          // Unsatisfying assignment:
+          // An arc from the clause to the variable.
+          fGraph_.AddMerge(Arc(formula_.nVars_+clause.first, llabs(iVar), 0, 1));
         }
-      }
-      if(nSat >= 2) {
-        fGraph_.AddMerge(Arc(iRoot_, formula_.nVars_+clause.first, 0, nSat-1));
-      } else if(nSat == 0) {
-        fGraph_.AddMerge(Arc(formula_.nVars_+clause.first, iRoot_, 1, formula_.nVars_));
       }
     }
   }
