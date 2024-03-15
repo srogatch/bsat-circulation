@@ -1,5 +1,7 @@
 #pragma once
 
+#include "BitVector.h"
+
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -24,8 +26,8 @@ struct Formula {
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> var2clause_;
   std::unordered_map<uint64_t, std::vector<int64_t>> listVar2Clause_;
   int64_t nVars_ = 0, nClauses_ = 0;
-  std::vector<bool> ans_;
-  std::vector<bool> dummySat_;
+  BitVector ans_;
+  BitVector dummySat_;
 
   void Add(const uint64_t iClause, const int64_t iVar) {
     clause2var_[iClause].emplace(iVar);
@@ -56,8 +58,8 @@ struct Formula {
           throw std::runtime_error("Unsupported problem type");
         }
         iss >> nVars_ >> nClauses_;
-        ans_.resize(nVars_+1);
-        dummySat_.resize(nClauses_+1);
+        ans_ = BitVector(nVars_+1);
+        dummySat_ = BitVector(nClauses_+1);
         probDefRead = true;
         continue;
       }
@@ -80,8 +82,10 @@ struct Formula {
     for(int64_t i=1; i<=nClauses_; i++) {
       for(int64_t iVar : clause2var_[i]) {
         if(clause2var_[i].find(-iVar) != clause2var_[i].end()) {
-          dummySat_[i] = true;
+          dummySat_.Flip(i);
           clause2var_.erase(i);
+          var2clause_[llabs(iVar)].erase(i);
+          var2clause_[llabs(iVar)].erase(-i);
           break;
         }
       }
@@ -145,7 +149,7 @@ struct Formula {
   //   return true;
   // }
 
-  int64_t CountUnsat(const std::vector<bool>& assignment) {
+  int64_t CountUnsat(const BitVector& assignment) {
     static const uint32_t nCpus = std::thread::hardware_concurrency();
     std::atomic<int64_t> nUnsat = 0;
     #pragma omp parrallel for num_threads(nCpus)
@@ -157,7 +161,7 @@ struct Formula {
     return nUnsat;
   }
 
-  bool IsSatisfied(const uint64_t iClause, const std::vector<bool>& assignment) {
+  bool IsSatisfied(const uint64_t iClause, const BitVector& assignment) {
     if(dummySat_[iClause]) {
       return true;
     }

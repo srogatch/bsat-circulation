@@ -86,7 +86,7 @@ struct Reduction {
     for(int64_t i=1; i<=formula_.nVars_; i++) {
       for(const auto& dst : fGraph_.links_[i]) {
         if(dst.second->flow_ > 0) {
-          formula_.ans_[i] = !formula_.ans_[i];
+          formula_.ans_.Flip(i);
           break;
         }
       }

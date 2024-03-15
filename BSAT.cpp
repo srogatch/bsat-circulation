@@ -4,11 +4,12 @@
 #include <mutex>
 
 struct seen_hash {
-  inline std::size_t operator()(const std::pair<std::pair<int64_t, int64_t>, std::unordered_set<int64_t>> & v) const {
-    std::size_t ans = (std::hash<int64_t>()(v.first.first) * 37)
-        ^ (std::hash<int64_t>()(v.first.second) * 17);
-    for(int64_t x : v.second) {
-      ans ^= x * 18446744073709551557ULL;
+  inline std::size_t operator()(const BitVector &bv) const {
+    std::size_t ans = 0;
+    uint64_t mul = 7;
+    for(int64_t i=0; i<bv.nQwords_; i++) {
+      ans ^= mul * bv.bits_[i];
+      mul *= 18446744073709551557ULL;
     }
     return ans;
   }
@@ -25,7 +26,7 @@ int main(int argc, char* argv[]) {
   Formula formula;
   formula.Load(argv[1]);
   bool maybeSat = true;
-  std::unordered_set<std::vector<bool>> seen;
+  std::unordered_set<BitVector, seen_hash> seen;
   seen.emplace(formula.ans_);
   while(maybeSat) {
     std::unordered_set<int64_t> unsatClauses;
@@ -63,7 +64,7 @@ int main(int argc, char* argv[]) {
       }
       int64_t bestUnsat = formula.nClauses_+1;
       std::vector<int64_t> revVertices;
-      std::vector<bool> bestNext;
+      BitVector bestNext;
       std::vector<int64_t> combs(candVs.begin(), candVs.end());
       std::vector<int64_t> incl;
       uint64_t nCombs = 0;
@@ -76,13 +77,13 @@ int main(int argc, char* argv[]) {
           incl.push_back(j);
         }
         for(;;) {
-          std::vector<bool> next = formula.ans_;
+          BitVector next = formula.ans_;
           std::unordered_set<int64_t> stepRevs;
           nCombs++;
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[incl[j]];
             stepRevs.emplace(revV);
-            next[revV] = !next[revV];
+            next.Flip(revV);
           }
 
           const int64_t stepUnsat = formula.CountUnsat(next);
@@ -90,7 +91,7 @@ int main(int argc, char* argv[]) {
             if(seen.find(next) == seen.end()) {
               bestUnsat = stepUnsat;
               revVertices.assign(stepRevs.begin(), stepRevs.end());
-              bestNext = next;
+              bestNext = std::move(next);
               if(bestUnsat < nStartUnsat) {
                 break;
               }
@@ -161,7 +162,7 @@ int main(int argc, char* argv[]) {
           }
         }
       }
-      formula.ans_ = bestNext;
+      formula.ans_ = std::move(bestNext);
     }
     std::cout << "Search size: " << seen.size() << std::endl;
   }
@@ -176,7 +177,7 @@ int main(int argc, char* argv[]) {
     assert(formula.SolWorks());
     ofs << "s SATISFIABLE" << std::endl;
     ofs << "v ";
-    for(int64_t i=1; i<formula.ans_.size(); i++) {
+    for(int64_t i=1; i<=formula.nVars_; i++) {
       ofs << (formula.ans_[i] ? i : -i) << " ";
     }
     ofs << "0" << std::endl;
