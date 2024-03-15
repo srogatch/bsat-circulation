@@ -3,9 +3,13 @@
 #include <iostream>
 
 struct seen_hash {
-  inline std::size_t operator()(const std::pair<int64_t, int64_t> & v) const {
-    return (std::hash<int64_t>()(v.first) * 37)
-        ^ (std::hash<int64_t>()(v.second) * 17);
+  inline std::size_t operator()(const std::pair<std::pair<int64_t, int64_t>, std::unordered_set<int64_t>> & v) const {
+    std::size_t ans = (std::hash<int64_t>()(v.first.first) * 37)
+        ^ (std::hash<int64_t>()(v.first.second) * 17);
+    for(int64_t x : v.second) {
+      ans ^= x * 18446744073709551557ULL;
+    }
+    return ans;
   }
 };
 
@@ -34,7 +38,7 @@ int main(int argc, char* argv[]) {
       break;
     }
     std::cout << "Unsatisfied clauses: " << nStartUnsat << std::endl;
-    std::unordered_set<std::pair<int64_t, int64_t>, seen_hash> seen;
+    std::unordered_set<std::pair<std::pair<int64_t, int64_t>, std::unordered_set<int64_t>>, seen_hash> seen;
     while(unsatClauses.size() >= nStartUnsat) {
       bool reversed = false;
       for(const int64_t originClause : unsatClauses) {
@@ -42,10 +46,11 @@ int main(int argc, char* argv[]) {
           const int64_t revVertex = clauseDst.first;
           assert(clauseDst.first == clauseDst.second->to_);
           assert(formula.nVars_ + originClause == clauseDst.second->from_);
-          if(seen.find({originClause, revVertex}) != seen.end()) {
+          std::pair<std::pair<int64_t, int64_t>, std::unordered_set<int64_t>> point{{originClause, revVertex}, unsatClauses};
+          if(seen.find(point) != seen.end()) {
             continue;
           }
-          seen.emplace(originClause, revVertex);
+          seen.emplace(std::move(point));
 
           // Reverse the incoming and outgoing arcs for this variable
           std::vector<int64_t> oldForward, oldBackward;
