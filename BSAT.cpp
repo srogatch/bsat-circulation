@@ -59,7 +59,7 @@ int main(int argc, char* argv[]) {
       std::vector<int64_t> incl;
       uint64_t nCombs = 0;
       for(int64_t nIncl=1; nIncl<combs.size(); nIncl++) {
-        if(nIncl >= 3) {
+        if(nIncl >= 2) {
           std::cout << "Combining " << nIncl << " variables to reverse." << std::endl;
         }
         incl.clear();
@@ -98,7 +98,7 @@ int main(int argc, char* argv[]) {
           break;
         }
       }
-      if(nCombs > formula.nVars_ * formula.nVars_) {
+      if(nCombs > formula.nVars_) {
         std::cout << "Combinations to next: " << nCombs << std::endl;
       }
 
@@ -143,18 +143,20 @@ int main(int argc, char* argv[]) {
     std::cout << "Search size: " << seen.size() << std::endl;
   }
 
-  std::ofstream ofs(argv[2]);
-  if(!maybeSat) {
-    ofs << "s UNSATISFIABLE" << std::endl;
-    return 0;
-  }
+  {
+    std::ofstream ofs(argv[2]);
+    if(!maybeSat) {
+      ofs << "s UNSATISFIABLE" << std::endl;
+      return 0;
+    }
 
-  assert(formula.SolWorks());
-  ofs << "s SATISFIABLE" << std::endl;
-  ofs << "v ";
-  for(int64_t i=1; i<formula.ans_.size(); i++) {
-    ofs << (formula.ans_[i] ? i : -i) << " ";
+    assert(formula.SolWorks());
+    ofs << "s SATISFIABLE" << std::endl;
+    ofs << "v ";
+    for(int64_t i=1; i<formula.ans_.size(); i++) {
+      ofs << (formula.ans_[i] ? i : -i) << " ";
+    }
+    ofs << "0" << std::endl;
   }
-  ofs << "0" << std::endl;
   return 0;
 }
