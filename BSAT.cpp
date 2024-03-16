@@ -160,7 +160,7 @@ int main(int argc, char* argv[]) {
             incl[k] = incl[k-1] + 1;
           }
         }
-        if(bestUnsat < formula.nClauses_) {
+        if(bestUnsat <= std::min<int64_t>(unsatClauses.set_.size() * 2, formula.nClauses_)) {
           break;
         }
       }
