@@ -80,12 +80,26 @@ struct MoveHash {
   }
 };
 
+struct Point {
+  BitVector assignment_;
+  int64_t nUnsat_;
+
+  Point(const BitVector& assignment, const int64_t nUnsat)
+  : assignment_(assignment), nUnsat_(nUnsat)
+  { }
+
+  bool operator<(const Point& fellow) const {
+    return nUnsat_ > fellow.nUnsat_;
+  }
+};
+
+const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
+
 int main(int argc, char* argv[]) {
   if(argc < 3) {
     std::cerr << "Usage: " << argv[0] << " <input.dimacs> <output.dimacs>" << std::endl;
     return 1;
   }
-  const uint32_t nCpus = std::thread::hardware_concurrency();
   std::mutex muUnsatClauses;
   std::mutex muFront;
   Formula formula;
@@ -96,14 +110,7 @@ int main(int argc, char* argv[]) {
   std::mt19937_64 rng;
   int64_t lastFlush = formula.nClauses_ + 1;
   while(maybeSat) {
-    TrackingSet unsatClauses;
-    #pragma omp parallel for num_threads(nCpus)
-    for(int64_t i=1; i<=formula.nClauses_; i++) {
-      if(!formula.IsSatisfied(i, formula.ans_)) {
-        #pragma omp critical
-        unsatClauses.Add(i);
-      }
-    }
+    TrackingSet unsatClauses = formula.ComputeUnsatClauses();
     const int64_t nStartUnsat = unsatClauses.set_.size();
     if(nStartUnsat == 0) {
       std::cout << "Satisfied" << std::endl;
@@ -115,6 +122,8 @@ int main(int argc, char* argv[]) {
     // avoid reallocations
     vClauses.reserve(unsatClauses.set_.size() * 4);
     bool allowDuplicateFront = false;
+    bool enablePQ = false;
+    std::priority_queue<Point> pq;
     while(unsatClauses.set_.size() >= nStartUnsat) {
       if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
         //std::cout << "Empty front" << std::endl;
@@ -122,7 +131,7 @@ int main(int argc, char* argv[]) {
       }
       std::unordered_set<int64_t> candVs;
       std::vector<int64_t> vFront(front.set_.begin(), front.set_.end());
-      #pragma omp parallel for num_threads(nCpus)
+      #pragma omp parallel for num_threads(Formula::nCpus_)
       for(int64_t i=0; i<vFront.size(); i++) {
         const int64_t originClause = vFront[i];
         for(const int64_t iVar : formula.clause2var_[originClause]) {
@@ -179,7 +188,7 @@ int main(int argc, char* argv[]) {
               }
             }
             std::sort(std::execution::par, vClauses.begin(), vClauses.end());
-            #pragma omp parallel for num_threads(nCpus)
+            #pragma omp parallel for num_threads(Formula::nCpus_)
             for(int64_t j=0; j<vClauses.size(); j++) {
               const uint64_t absClause = vClauses[j];
               if(j > 0 && absClause == vClauses[j-1]) {
@@ -207,14 +216,17 @@ int main(int argc, char* argv[]) {
             if(allowDuplicateFront || seenFront.find(newFront) == seenFront.end()) {
               // UNSAT counting is a heavy and parallelized operation
               const int64_t stepUnsat = newUnsatClauses.set_.size();
+              if(enablePQ) {
+                pq.emplace(next, stepUnsat);
+              }
               if(stepUnsat < bestUnsat) {
                 bestUnsat = stepUnsat;
                 bestFront = std::move(newFront);
                 bestUnsatClauses = std::move(newUnsatClauses);
                 bestRevVertices = stepRevs;
-                if(bestUnsat < nStartUnsat) {
-                  break;
-                }
+              }
+              if(bestUnsat < nStartUnsat) {
+                break;
               }
             }
           }
@@ -264,13 +276,25 @@ int main(int argc, char* argv[]) {
           front = unsatClauses;
           continue;
         }
+        if(!enablePQ) {
+          enablePQ = true;
+          std::cout << "...Enabling priority queue..." << std::endl;
+          continue;
+        }
+        if(!pq.empty()) {
+          formula.ans_ = std::move(pq.top().assignment_);
+          pq.pop();
+          unsatClauses = formula.ComputeUnsatClauses();
+          front.Clear();
+          continue;
+        }
         if(!allowDuplicateFront) {
-          std::cout << "Unsatisfiability suspected: allowing duplicate fronts." << std::endl;
+          std::cout << "...Unsatisfiability suspected: allowing duplicate fronts..." << std::endl;
           allowDuplicateFront = true;
           continue;
         }
         if(nStartUnsat < lastFlush) {
-          std::cout << "Last chance: flushing the memorization." << std::endl;
+          std::cout << "...Last chance: flushing the memorization..." << std::endl;
           lastFlush = nStartUnsat;
           seenFront.clear();
           seenMove.clear();

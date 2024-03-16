@@ -19,6 +19,7 @@ struct BitVector {
     nBits_ = nBits;
     nQwords_ = DivUp(nBits, 64);
     bits_.reset(new uint64_t[nQwords_]);
+    // TODO: parallelize
     memset(bits_.get(), 0, sizeof(uint64_t) * nQwords_);
   }
 
@@ -26,6 +27,7 @@ struct BitVector {
     nBits_ = fellow.nBits_;
     nQwords_ = fellow.nQwords_;
     bits_.reset(new uint64_t[nQwords_]);
+    // TODO: parallelize
     memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
   }
   BitVector& operator=(const BitVector& fellow) {
@@ -35,6 +37,7 @@ struct BitVector {
         nQwords_ = fellow.nQwords_;
         bits_.reset(new uint64_t[nQwords_]);
       }
+      // TODO: parallelize
       memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
     }
     return *this;
@@ -56,6 +59,7 @@ struct BitVector {
     if(nBits_ != fellow.nBits_) {
       return false;
     }
+    // TODO: parallelize
     return memcmp(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_) == 0;
   }
 

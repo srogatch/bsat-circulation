@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BitVector.h"
+#include "TrackingSet.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -16,12 +17,14 @@
 #include <omp.h>
 #include <thread>
 #include <atomic>
+#include <cassert>
 
 template <typename T> constexpr int Signum(const T val) {
   return (T(0) < val) - (val < T(0));
 }
 
 struct Formula {
+  static const uint32_t nCpus_;
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> clause2var_;
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> var2clause_;
   std::unordered_map<uint64_t, std::vector<int64_t>> listVar2Clause_;
@@ -150,9 +153,8 @@ struct Formula {
   // }
 
   int64_t CountUnsat(const BitVector& assignment) {
-    static const uint32_t nCpus = std::thread::hardware_concurrency();
     std::atomic<int64_t> nUnsat = 0;
-    #pragma omp parrallel for num_threads(nCpus)
+    #pragma omp parrallel for num_threads(nCpus_)
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, assignment)) {
         nUnsat.fetch_add(1, std::memory_order_relaxed);
@@ -161,15 +163,29 @@ struct Formula {
     return nUnsat;
   }
 
-  bool IsSatisfied(const uint64_t iClause, const BitVector& assignment) {
+  bool IsSatisfied(const uint64_t iClause, const BitVector& assignment) const {
     if(dummySat_[iClause]) {
       return true;
     }
-    for(const int64_t iVar : clause2var_[iClause]) {
+    auto it = clause2var_.find(iClause);
+    assert(it != clause2var_.end());
+    for(const int64_t iVar : it->second) {
       if( (iVar < 0 && !assignment[-iVar]) || (iVar > 0 && assignment[iVar]) ) {
         return true;
       }
     }
     return false;
+  }
+
+  TrackingSet ComputeUnsatClauses() const {
+    TrackingSet ans;
+    #pragma omp parallel for num_threads(nCpus_)
+    for(int64_t i=1; i<=nClauses_; i++) {
+      if(!IsSatisfied(i, ans_)) {
+        #pragma omp critical
+        ans.Add(i);
+      }
+    }
+    return ans;
   }
 };
