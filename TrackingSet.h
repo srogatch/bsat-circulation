@@ -33,7 +33,7 @@ struct TrackingSet {
   }
 
   bool operator!=(const TrackingSet& fellow) const {
-    return !(*this == fellow);
+    return hash_ != fellow.hash_ || set_ != fellow.set_;
   }
 };
 
