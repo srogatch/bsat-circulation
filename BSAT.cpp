@@ -125,6 +125,7 @@ int main(int argc, char* argv[]) {
     bool enablePQ = false;
     std::priority_queue<Point> pq;
     while(unsatClauses.set_.size() >= nStartUnsat) {
+      assert(formula.ComputeUnsatClauses() == unsatClauses);
       if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
         //std::cout << "Empty front" << std::endl;
         front = unsatClauses;
@@ -259,7 +260,9 @@ int main(int argc, char* argv[]) {
 
       if(bestUnsat >= formula.nClauses_) {
         //std::cout << "The front of " << front.size() << " clauses doesn't lead anywhere." << std::endl;
-        seenFront.emplace(front);
+        if(!allowDuplicateFront) {
+          seenFront.emplace(front);
+        }
         // // TODO: a data structure with smaller algorithmic complexity
         // std::vector<std::pair<TrackingSet, TrackingSet>> toRemove;
         // for(const auto& p : seenMove) {
@@ -276,6 +279,13 @@ int main(int argc, char* argv[]) {
           front = unsatClauses;
           continue;
         }
+
+        if(nStartUnsat < lastFlush) {
+          std::cout << "...Flushing the memorization..." << std::endl;
+          lastFlush = nStartUnsat;
+          seenFront.clear();
+          seenMove.clear();
+        }
         if(!enablePQ) {
           enablePQ = true;
           std::cout << "...Enabling priority queue..." << std::endl;
@@ -291,17 +301,13 @@ int main(int argc, char* argv[]) {
         if(!allowDuplicateFront) {
           std::cout << "...Unsatisfiability suspected: allowing duplicate fronts..." << std::endl;
           allowDuplicateFront = true;
-          continue;
-        }
-        if(nStartUnsat < lastFlush) {
-          std::cout << "...Last chance: flushing the memorization..." << std::endl;
           lastFlush = nStartUnsat;
           seenFront.clear();
           seenMove.clear();
           continue;
         }
         // Unsatisfiable
-        std::cout << "Nothing reversed - unsatisfiable" << std::endl;
+        std::cout << "...Nothing reversed - unsatisfiable..." << std::endl;
         maybeSat = false;
         break;
       }

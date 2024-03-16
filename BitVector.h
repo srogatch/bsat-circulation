@@ -47,6 +47,8 @@ struct BitVector {
       nBits_ = src.nBits_;
       nQwords_ = src.nQwords_;
       bits_ = std::move(src.bits_);
+      src.nBits_ = 0;
+      src.nQwords_ = 0;
     }
     return *this;
   }
