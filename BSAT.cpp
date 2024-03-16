@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <execution>
 #include <cmath>
+#include <random>
 
 namespace detail {
 
@@ -92,6 +93,7 @@ int main(int argc, char* argv[]) {
   bool maybeSat = true;
   std::unordered_set<std::pair<TrackingSet, TrackingSet>, MoveHash> seenMove;
   std::unordered_set<TrackingSet> seenFront;
+  std::mt19937_64 rng;
   while(maybeSat) {
     TrackingSet unsatClauses;
     #pragma omp parallel for num_threads(nCpus)
@@ -133,6 +135,7 @@ int main(int argc, char* argv[]) {
       TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
 
       std::vector<int64_t> combs(candVs.begin(), candVs.end());
+      std::shuffle(combs.begin(), combs.end(), rng);
       std::vector<int64_t> incl;
       uint64_t nCombs = 0;
       // It may be slow to instantiate the bit vector in each combination
@@ -229,7 +232,10 @@ int main(int argc, char* argv[]) {
             incl[k] = incl[k-1] + 1;
           }
         }
-        if(bestUnsat < std::min<int64_t>(unsatClauses.set_.size() * 2, formula.nClauses_)) {
+        if(bestUnsat < std::min<int64_t>(
+            std::max(nStartUnsat + nCombs - 1, unsatClauses.set_.size()*2),
+            formula.nClauses_))
+        {
           break;
         }
       }
@@ -268,6 +274,7 @@ int main(int argc, char* argv[]) {
       seenMove.emplace(front, bestRevVertices);
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
+      std::cout << "$"; // Indicate a DFS step
     }
     std::cout << "Search size: " << seenMove.size() << std::endl;
   }
