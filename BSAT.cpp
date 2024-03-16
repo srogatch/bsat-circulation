@@ -5,6 +5,73 @@
 #include <mutex>
 #include <algorithm>
 #include <execution>
+#include <cmath>
+
+namespace detail {
+
+template <typename F>
+struct FinalAction {
+  FinalAction(F f) : clean_{f} {}
+  ~FinalAction() { if(enabled_) clean_(); }
+  void disable() { enabled_ = false; };
+private:
+  F clean_;
+  bool enabled_{true};
+};
+
+}
+template <typename F>
+detail::FinalAction<F> finally(F f) {
+  return detail::FinalAction<F>(f); 
+}
+
+std::vector<std::vector<uint64_t>> memComb;
+uint64_t Comb(const int64_t n, const int64_t k) {
+  if(k < 0 || k > n) {
+    return 0;
+  }
+  if(n <= 0) {
+    return 0;
+  }
+  if(n == k) {
+    return 1;
+  }
+  if(k == 1) {
+    return n;
+  }
+  while(memComb.size()+1 < n) {
+    memComb.emplace_back(k-1);
+  }
+  uint64_t& mc = memComb[n-2][k-2];
+  if(mc == 0) {
+    mc = Comb(n, k-1) * (n-k+1);
+  }
+  return mc;
+}
+
+std::vector<std::vector<uint64_t>> memAccComb;
+uint64_t AccComb(const int64_t n, const int64_t k) {
+  if(n <= 0 || k <= 0 || k > n) {
+    return 0;
+  }
+  if(n == k) {
+    return 1;
+  }
+  if(k == 1) {
+    return n;
+  }
+  if(n == 1) {
+    return 0;
+  }
+  while(memAccComb.size()+1 < n) {
+    memAccComb.emplace_back(k-1);
+  }
+  uint64_t& mac = memAccComb[n-2][k-2];
+  if(mac == 0) {
+    mac = AccComb(n, k-1) + Comb(n, k);
+  }
+  return mac;
+}
 
 struct MoveHash {
   bool operator()(const std::pair<TrackingSet, TrackingSet>& v) const {
@@ -81,6 +148,7 @@ int main(int argc, char* argv[]) {
         for(;;) {
           TrackingSet stepRevs;
           nCombs++;
+          assert(next == formula.ans_);
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[incl[j]];
             // Avoid flipping bits more than once
@@ -88,6 +156,12 @@ int main(int argc, char* argv[]) {
             stepRevs.Add(revV);
             next.Flip(revV);
           }
+          auto unflip = finally([&]() {
+            // Flip bits back
+            for(int64_t revV : stepRevs.set_) {
+              next.Flip(revV);
+            }
+          });
 
           if(seenMove.find({front, stepRevs}) == seenMove.end()) {
             TrackingSet newFront;
@@ -139,11 +213,6 @@ int main(int argc, char* argv[]) {
               }
             }
           }
-          // Flip bits back
-          for(int64_t revV : stepRevs.set_) {
-            next.Flip(revV);
-          }
-          assert(next == formula.ans_);
           int64_t j;
           for(j=nIncl-1; j>=0; j--) {
             if(incl[j]+(nIncl-j) >= combs.size()) {
@@ -160,7 +229,7 @@ int main(int argc, char* argv[]) {
             incl[k] = incl[k-1] + 1;
           }
         }
-        if(bestUnsat <= std::min<int64_t>(unsatClauses.set_.size() * 2, formula.nClauses_)) {
+        if(bestUnsat < std::min<int64_t>(unsatClauses.set_.size() * 2, formula.nClauses_)) {
           break;
         }
       }
