@@ -94,6 +94,7 @@ struct Point {
 };
 
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
+const uint32_t BitVector::nCpus_ = std::thread::hardware_concurrency();
 
 int main(int argc, char* argv[]) {
   if(argc < 3) {
@@ -203,14 +204,16 @@ int main(int argc, char* argv[]) {
                   newUnsatClauses.Remove(absClause);
                 }
               } else {
-                {
-                  std::unique_lock<std::mutex> lock(muFront);
-                  newFront.Add(absClause);
-                }
                 if(oldSat)
                 {
-                  std::unique_lock<std::mutex> lock(muUnsatClauses);
-                  newUnsatClauses.Add(absClause);
+                  {
+                    std::unique_lock<std::mutex> lock(muUnsatClauses);
+                    newUnsatClauses.Add(absClause);
+                  }
+                  {
+                    std::unique_lock<std::mutex> lock(muFront);
+                    newFront.Add(absClause);
+                  }
                 }
               }
             }

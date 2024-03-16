@@ -3,12 +3,14 @@
 #include <memory>
 #include <cstdint>
 #include <cstring>
+#include <atomic>
 
 template<typename T, typename U> constexpr T DivUp(const T a, const U b) {
   return (a + T(b) - 1) / T(b);
 }
 
 struct BitVector {
+  static const uint32_t nCpus_;
   std::unique_ptr<uint64_t[]> bits_;
   int64_t nQwords_ = 0;
   int64_t nBits_ = 0;
@@ -19,16 +21,23 @@ struct BitVector {
     nBits_ = nBits;
     nQwords_ = DivUp(nBits, 64);
     bits_.reset(new uint64_t[nQwords_]);
-    // TODO: parallelize
-    memset(bits_.get(), 0, sizeof(uint64_t) * nQwords_);
+
+    //memset(bits_.get(), 0, sizeof(uint64_t) * nQwords_);
+    #pragma omp parallel for num_threads(nCpus_)
+    for(int64_t i=0; i<nQwords_; i++) {
+      bits_.get()[i] = 0;
+    }
   }
 
   BitVector(const BitVector& fellow) {
     nBits_ = fellow.nBits_;
     nQwords_ = fellow.nQwords_;
     bits_.reset(new uint64_t[nQwords_]);
-    // TODO: parallelize
-    memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
+    // memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
+    #pragma omp parallel for num_threads(nCpus_)
+    for(int64_t i=0; i<nQwords_; i++) {
+      bits_.get()[i] = fellow.bits_.get()[i];
+    }
   }
   BitVector& operator=(const BitVector& fellow) {
     if(this != &fellow) {
@@ -37,8 +46,11 @@ struct BitVector {
         nQwords_ = fellow.nQwords_;
         bits_.reset(new uint64_t[nQwords_]);
       }
-      // TODO: parallelize
-      memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
+      // memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
+      #pragma omp parallel for num_threads(nCpus_)
+      for(int64_t i=0; i<nQwords_; i++) {
+        bits_.get()[i] = fellow.bits_.get()[i];
+      }
     }
     return *this;
   }
@@ -61,8 +73,17 @@ struct BitVector {
     if(nBits_ != fellow.nBits_) {
       return false;
     }
-    // TODO: parallelize
-    return memcmp(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_) == 0;
+    // return memcmp(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_) == 0;
+    std::atomic<bool> equals{true};
+    #pragma omp parallel for num_threads(nCpus_)
+    for(int64_t i=0; i<nQwords_; i++) {
+      if(bits_.get()[i] != fellow.bits_.get()[i]) {
+        equals.store(false, std::memory_order_relaxed);
+        #pragma omp cancel for
+      }
+      #pragma omp cancellation point for
+    }
+    return equals;
   }
 
   void Flip(const int64_t index) {
