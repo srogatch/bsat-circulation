@@ -3,6 +3,8 @@
 
 #include <iostream>
 #include <mutex>
+#include <algorithm>
+#include <execution>
 
 struct MoveHash {
   bool operator()(const std::pair<TrackingSet, TrackingSet>& v) const {
@@ -39,6 +41,9 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "Unsatisfied clauses: " << nStartUnsat << std::endl;
     TrackingSet front;
+    std::vector<int64_t> vClauses;
+    // avoid reallocations
+    vClauses.reserve(unsatClauses.set_.size() * 4);
     while(unsatClauses.set_.size() >= nStartUnsat) {
       if(front.set_.empty() || seenFront.find(front) != seenFront.end()) {
         //std::cout << "Empty front" << std::endl;
@@ -64,20 +69,23 @@ int main(int argc, char* argv[]) {
       std::vector<int64_t> combs(candVs.begin(), candVs.end());
       std::vector<int64_t> incl;
       uint64_t nCombs = 0;
+      // It may be slow to instantiate the bit vector in each combination
+      BitVector next = formula.ans_;
       for(int64_t nIncl=1; nIncl<combs.size(); nIncl++) {
         if(nIncl >= 3) {
-          std::cout << "Combining " << nIncl << " variables to reverse." << std::endl;
+          std::cout << " C" << combs.size() << "," << nIncl << " ";
         }
         incl.clear();
         for(int64_t j=0; j<nIncl; j++) {
           incl.push_back(j);
         }
         for(;;) {
-          BitVector next = formula.ans_;
           TrackingSet stepRevs;
           nCombs++;
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[incl[j]];
+            // Avoid flipping bits more than once
+            assert(stepRevs.set_.find(revV) == stepRevs.set_.end());
             stepRevs.Add(revV);
             next.Flip(revV);
           }
@@ -85,28 +93,36 @@ int main(int argc, char* argv[]) {
           if(seenMove.find({front, stepRevs}) == seenMove.end()) {
             TrackingSet newFront;
             TrackingSet newUnsatClauses = unsatClauses;
+            vClauses.clear();
             for(const int64_t revV : stepRevs.set_) {
-              const std::vector<int64_t>& clauses = formula.listVar2Clause_[revV];
-              #pragma omp parallel for num_threads(nCpus)
-              for(int64_t j=0; j<clauses.size(); j++) {
-                const uint64_t absClause = llabs(clauses[j]);
-                const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
-                const bool newSat = formula.IsSatisfied(absClause, next);
-                if(newSat) {
-                  if(!oldSat) {
-                    std::unique_lock<std::mutex> lock(muUnsatClauses);
-                    newUnsatClauses.Remove(absClause);
-                  }
-                } else {
-                  {
-                    std::unique_lock<std::mutex> lock(muFront);
-                    newFront.Add(absClause);
-                  }
-                  if(oldSat)
-                  {
-                    std::unique_lock<std::mutex> lock(muUnsatClauses);
-                    newUnsatClauses.Add(absClause);
-                  }
+              const std::vector<int64_t>& srcClauses = formula.listVar2Clause_[revV];
+              for(const int64_t iClause : srcClauses) {
+                vClauses.emplace_back(llabs(iClause));
+              }
+            }
+            std::sort(std::execution::par, vClauses.begin(), vClauses.end());
+            #pragma omp parallel for num_threads(nCpus)
+            for(int64_t j=0; j<vClauses.size(); j++) {
+              const uint64_t absClause = vClauses[j];
+              if(j > 0 && absClause == vClauses[j-1]) {
+                continue;
+              }
+              const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
+              const bool newSat = formula.IsSatisfied(absClause, next);
+              if(newSat) {
+                if(!oldSat) {
+                  std::unique_lock<std::mutex> lock(muUnsatClauses);
+                  newUnsatClauses.Remove(absClause);
+                }
+              } else {
+                {
+                  std::unique_lock<std::mutex> lock(muFront);
+                  newFront.Add(absClause);
+                }
+                if(oldSat)
+                {
+                  std::unique_lock<std::mutex> lock(muUnsatClauses);
+                  newUnsatClauses.Add(absClause);
                 }
               }
             }
@@ -115,16 +131,21 @@ int main(int argc, char* argv[]) {
               const int64_t stepUnsat = newUnsatClauses.set_.size();
               if(stepUnsat < bestUnsat) {
                 bestUnsat = stepUnsat;
-                bestNext = std::move(next);
+                bestNext = next;
                 bestFront = std::move(newFront);
                 bestUnsatClauses = std::move(newUnsatClauses);
-                bestRevVertices = std::move(stepRevs);
+                bestRevVertices = stepRevs;
                 if(bestUnsat < nStartUnsat) {
                   break;
                 }
               }
             }
           }
+          // Flip bits back
+          for(int64_t revV : stepRevs.set_) {
+            next.Flip(revV);
+          }
+          assert(next == formula.ans_);
           int64_t j;
           for(j=nIncl-1; j>=0; j--) {
             if(incl[j]+(nIncl-j) >= combs.size()) {

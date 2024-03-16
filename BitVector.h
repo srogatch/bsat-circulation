@@ -28,6 +28,17 @@ struct BitVector {
     bits_.reset(new uint64_t[nQwords_]);
     memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
   }
+  BitVector& operator=(const BitVector& fellow) {
+    if(this != &fellow) {
+      if(nBits_ != fellow.nBits_) {
+        nBits_ = fellow.nBits_;
+        nQwords_ = fellow.nQwords_;
+        bits_.reset(new uint64_t[nQwords_]);
+      }
+      memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
+    }
+    return *this;
+  }
   BitVector& operator=(BitVector&& src) = default;
 
   bool operator[](const int64_t index) const {
