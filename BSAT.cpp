@@ -94,6 +94,7 @@ int main(int argc, char* argv[]) {
   std::unordered_set<std::pair<TrackingSet, TrackingSet>, MoveHash> seenMove;
   std::unordered_set<TrackingSet> seenFront;
   std::mt19937_64 rng;
+  int64_t lastFlush = formula.nClauses_ + 1;
   while(maybeSat) {
     TrackingSet unsatClauses;
     #pragma omp parallel for num_threads(nCpus)
@@ -264,7 +265,15 @@ int main(int argc, char* argv[]) {
           continue;
         }
         if(!allowDuplicateFront) {
+          std::cout << "Unsatisfiability suspected: allowing duplicate fronts." << std::endl;
           allowDuplicateFront = true;
+          continue;
+        }
+        if(nStartUnsat < lastFlush) {
+          std::cout << "Last chance: flushing the memorization." << std::endl;
+          lastFlush = nStartUnsat;
+          seenFront.clear();
+          seenMove.clear();
           continue;
         }
         // Unsatisfiable
