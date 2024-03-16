@@ -22,7 +22,6 @@ int main(int argc, char* argv[]) {
   formula.Load(argv[1]);
   bool maybeSat = true;
   std::unordered_set<std::pair<TrackingSet, TrackingSet>, MoveHash> seenMove;
-  std::unordered_set<TrackingSet> seenFront;
   while(maybeSat) {
     TrackingSet unsatClauses;
     #pragma omp parallel for num_threads(nCpus)
@@ -40,7 +39,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Unsatisfied clauses: " << nStartUnsat << std::endl;
     TrackingSet front;
     while(unsatClauses.set_.size() >= nStartUnsat) {
-      if(front.set_.empty() || seenFront.find(front) != seenFront.end()) {
+      if(front.set_.empty()) {
         //std::cout << "Empty front" << std::endl;
         front = unsatClauses;
       }
@@ -82,7 +81,7 @@ int main(int argc, char* argv[]) {
             next.Flip(revV);
           }
 
-          if(seenMove.find({front, stepRevs}) == seenMove.end()) {
+          if(seenMove.find({unsatClauses, stepRevs}) == seenMove.end()) {
             TrackingSet newFront;
             TrackingSet newUnsatClauses = unsatClauses;
             for(const int64_t revV : stepRevs.set_) {
@@ -110,18 +109,15 @@ int main(int argc, char* argv[]) {
                 }
               }
             }
-            if(seenFront.find(newFront) == seenFront.end()) {
-              // UNSAT counting is a heavy and parallelized operation
-              const int64_t stepUnsat = formula.CountUnsat(next);
-              if(stepUnsat < bestUnsat) {
-                bestUnsat = stepUnsat;
-                bestNext = std::move(next);
-                bestFront = std::move(newFront);
-                bestUnsatClauses = std::move(newUnsatClauses);
-                bestRevVertices = std::move(stepRevs);
-                if(bestUnsat < nStartUnsat) {
-                  break;
-                }
+            const int64_t stepUnsat = newUnsatClauses.set_.size();
+            if(stepUnsat < bestUnsat) {
+              bestUnsat = stepUnsat;
+              bestNext = std::move(next);
+              bestFront = std::move(newFront);
+              bestUnsatClauses = std::move(newUnsatClauses);
+              bestRevVertices = std::move(stepRevs);
+              if(bestUnsat < nStartUnsat) {
+                break;
               }
             }
           }
@@ -150,19 +146,6 @@ int main(int argc, char* argv[]) {
       }
 
       if(bestUnsat >= formula.nClauses_) {
-        //std::cout << "The front of " << front.size() << " clauses doesn't lead anywhere." << std::endl;
-        seenFront.emplace(front);
-        // TODO: a data structure with smaller algorithmic complexity
-        std::vector<std::pair<TrackingSet, TrackingSet>> toRemove;
-        for(const auto& p : seenMove) {
-          if(p.first == front) {
-            toRemove.emplace_back(p);
-          }
-        }
-        // Release some memory - the moves from this front are no more needed
-        for(const auto& p : toRemove) {
-          seenMove.erase(p);
-        }
         if(front != unsatClauses) {
           // Retry with full front
           front = unsatClauses;
@@ -174,7 +157,7 @@ int main(int argc, char* argv[]) {
         break;
       }
 
-      seenMove.emplace(front, bestRevVertices);
+      seenMove.emplace(unsatClauses, bestRevVertices);
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
       formula.ans_ = std::move(bestNext);
