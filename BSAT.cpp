@@ -63,7 +63,6 @@ int main(int argc, char* argv[]) {
         }
       }
       int64_t bestUnsat = formula.nClauses_+1;
-      BitVector bestNext;
       TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
 
       std::vector<int64_t> combs(candVs.begin(), candVs.end());
@@ -131,7 +130,6 @@ int main(int argc, char* argv[]) {
               const int64_t stepUnsat = newUnsatClauses.set_.size();
               if(stepUnsat < bestUnsat) {
                 bestUnsat = stepUnsat;
-                bestNext = next;
                 bestFront = std::move(newFront);
                 bestUnsatClauses = std::move(newUnsatClauses);
                 bestRevVertices = stepRevs;
@@ -173,17 +171,17 @@ int main(int argc, char* argv[]) {
       if(bestUnsat >= formula.nClauses_) {
         //std::cout << "The front of " << front.size() << " clauses doesn't lead anywhere." << std::endl;
         seenFront.emplace(front);
-        // TODO: a data structure with smaller algorithmic complexity
-        std::vector<std::pair<TrackingSet, TrackingSet>> toRemove;
-        for(const auto& p : seenMove) {
-          if(p.first == front) {
-            toRemove.emplace_back(p);
-          }
-        }
-        // Release some memory - the moves from this front are no more needed
-        for(const auto& p : toRemove) {
-          seenMove.erase(p);
-        }
+        // // TODO: a data structure with smaller algorithmic complexity
+        // std::vector<std::pair<TrackingSet, TrackingSet>> toRemove;
+        // for(const auto& p : seenMove) {
+        //   if(p.first == front) {
+        //     toRemove.emplace_back(p);
+        //   }
+        // }
+        // // Release some memory - the moves from this front are no more needed
+        // for(const auto& p : toRemove) {
+        //   seenMove.erase(p);
+        // }
         if(front != unsatClauses) {
           // Retry with full front
           front = unsatClauses;
@@ -195,10 +193,12 @@ int main(int argc, char* argv[]) {
         break;
       }
 
+      for(int64_t revV : bestRevVertices.set_) {
+        formula.ans_.Flip(revV);
+      }
       seenMove.emplace(front, bestRevVertices);
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
-      formula.ans_ = std::move(bestNext);
     }
     std::cout << "Search size: " << seenMove.size() << std::endl;
   }
