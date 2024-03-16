@@ -9,7 +9,7 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/bin/BSAT-Debug",
-      "args": ["BMS_k3_n100_m429_0.cnf", "BMS_k3_n100_m429_0.sol"],
+      "args": ["ewddr2-10-by-5-8.cnf", "ewddr2-10-by-5-8.sol"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}/bin",
       "environment": [],
