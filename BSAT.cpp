@@ -222,6 +222,7 @@ int main(int argc, char* argv[]) {
               const int64_t stepUnsat = newUnsatClauses.set_.size();
               if(enablePQ) {
                 pq.emplace(next, stepUnsat);
+                seenMove.emplace(front, stepRevs);
               }
               if(stepUnsat < bestUnsat) {
                 bestUnsat = stepUnsat;
@@ -318,7 +319,9 @@ int main(int argc, char* argv[]) {
       for(int64_t revV : bestRevVertices.set_) {
         formula.ans_.Flip(revV);
       }
-      seenMove.emplace(front, bestRevVertices);
+      if(!enablePQ) {
+        seenMove.emplace(front, bestRevVertices);
+      }
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
       std::cout << "$"; // Indicate a DFS step
