@@ -83,6 +83,10 @@ struct Formula {
       } while(iss >> cmd);
     }
     for(int64_t i=1; i<=nClauses_; i++) {
+      if(clause2var_[i].size() == 0) {
+        dummySat_.Flip(i);
+        continue;
+      }
       for(int64_t iVar : clause2var_[i]) {
         if(clause2var_[i].find(-iVar) != clause2var_[i].end()) {
           dummySat_.Flip(i);
