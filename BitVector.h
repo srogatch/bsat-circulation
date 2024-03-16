@@ -45,3 +45,19 @@ struct BitVector {
     bits_[index/64] ^= (1ULL<<(index&63));
   }
 };
+
+namespace std {
+
+template<> struct hash<BitVector> {
+  inline std::size_t operator()(const BitVector &bv) const {
+    std::size_t ans = 0;
+    uint64_t mul = 7;
+    for(int64_t i=0; i<bv.nQwords_; i++) {
+      ans ^= mul * bv.bits_[i];
+      mul *= 18446744073709551557ULL;
+    }
+    return ans;
+  }
+};
+
+} // namespace std

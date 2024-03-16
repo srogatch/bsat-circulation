@@ -1,17 +1,12 @@
 #include "Reduction.h"
+#include "TrackingSet.h"
 
 #include <iostream>
 #include <mutex>
 
-struct seen_hash {
-  inline std::size_t operator()(const BitVector &bv) const {
-    std::size_t ans = 0;
-    uint64_t mul = 7;
-    for(int64_t i=0; i<bv.nQwords_; i++) {
-      ans ^= mul * bv.bits_[i];
-      mul *= 18446744073709551557ULL;
-    }
-    return ans;
+struct MoveHash {
+  bool operator()(const std::pair<TrackingSet, TrackingSet>& v) const {
+    return v.first.hash_ * 1949 + v.second.hash_ * 2011;
   }
 };
 
@@ -26,31 +21,31 @@ int main(int argc, char* argv[]) {
   Formula formula;
   formula.Load(argv[1]);
   bool maybeSat = true;
-  std::unordered_set<BitVector, seen_hash> seen;
-  seen.emplace(formula.ans_);
+  std::unordered_set<std::pair<TrackingSet, TrackingSet>, MoveHash> seenMove;
+  std::unordered_set<TrackingSet> seenFront;
   while(maybeSat) {
-    std::unordered_set<int64_t> unsatClauses;
+    TrackingSet unsatClauses;
     #pragma omp parallel for num_threads(nCpus)
     for(int64_t i=1; i<=formula.nClauses_; i++) {
       if(!formula.IsSatisfied(i, formula.ans_)) {
         #pragma omp critical
-        unsatClauses.emplace(i);
+        unsatClauses.Add(i);
       }
     }
-    const int64_t nStartUnsat = unsatClauses.size();
+    const int64_t nStartUnsat = unsatClauses.set_.size();
     if(nStartUnsat == 0) {
       std::cout << "Satisfied" << std::endl;
       break;
     }
     std::cout << "Unsatisfied clauses: " << nStartUnsat << std::endl;
-    std::unordered_set<int64_t> front;
-    while(unsatClauses.size() >= nStartUnsat) {
-      if(front.empty()) {
+    TrackingSet front;
+    while(unsatClauses.set_.size() >= nStartUnsat) {
+      if(front.set_.empty() || seenFront.find(front) != seenFront.end()) {
         //std::cout << "Empty front" << std::endl;
         front = unsatClauses;
       }
       std::unordered_set<int64_t> candVs;
-      std::vector<int64_t> vFront(front.begin(), front.end());
+      std::vector<int64_t> vFront(front.set_.begin(), front.set_.end());
       #pragma omp parallel for num_threads(nCpus)
       for(int64_t i=0; i<vFront.size(); i++) {
         const int64_t originClause = vFront[i];
@@ -63,13 +58,14 @@ int main(int argc, char* argv[]) {
         }
       }
       int64_t bestUnsat = formula.nClauses_+1;
-      std::vector<int64_t> revVertices;
       BitVector bestNext;
+      TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
+
       std::vector<int64_t> combs(candVs.begin(), candVs.end());
       std::vector<int64_t> incl;
       uint64_t nCombs = 0;
       for(int64_t nIncl=1; nIncl<combs.size(); nIncl++) {
-        if(nIncl >= 2) {
+        if(nIncl >= 3) {
           std::cout << "Combining " << nIncl << " variables to reverse." << std::endl;
         }
         incl.clear();
@@ -78,22 +74,54 @@ int main(int argc, char* argv[]) {
         }
         for(;;) {
           BitVector next = formula.ans_;
-          std::unordered_set<int64_t> stepRevs;
+          TrackingSet stepRevs;
           nCombs++;
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[incl[j]];
-            stepRevs.emplace(revV);
+            stepRevs.Add(revV);
             next.Flip(revV);
           }
 
-          const int64_t stepUnsat = formula.CountUnsat(next);
-          if(stepUnsat < bestUnsat) {
-            if(seen.find(next) == seen.end()) {
-              bestUnsat = stepUnsat;
-              revVertices.assign(stepRevs.begin(), stepRevs.end());
-              bestNext = std::move(next);
-              if(bestUnsat < nStartUnsat) {
-                break;
+          if(seenMove.find({front, stepRevs}) == seenMove.end()) {
+            TrackingSet newFront;
+            TrackingSet newUnsatClauses = unsatClauses;
+            for(const int64_t revV : stepRevs.set_) {
+              const std::vector<int64_t>& clauses = formula.listVar2Clause_[revV];
+              #pragma omp parallel for num_threads(nCpus)
+              for(int64_t j=0; j<clauses.size(); j++) {
+                const uint64_t absClause = llabs(clauses[j]);
+                const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
+                const bool newSat = formula.IsSatisfied(absClause, next);
+                if(newSat) {
+                  if(!oldSat) {
+                    std::unique_lock<std::mutex> lock(muUnsatClauses);
+                    newUnsatClauses.Remove(absClause);
+                  }
+                } else {
+                  {
+                    std::unique_lock<std::mutex> lock(muFront);
+                    newFront.Add(absClause);
+                  }
+                  if(oldSat)
+                  {
+                    std::unique_lock<std::mutex> lock(muUnsatClauses);
+                    newUnsatClauses.Add(absClause);
+                  }
+                }
+              }
+            }
+            if(seenFront.find(newFront) == seenFront.end()) {
+              // UNSAT counting is a heavy and parallelized operation
+              const int64_t stepUnsat = formula.CountUnsat(next);
+              if(stepUnsat < bestUnsat) {
+                bestUnsat = stepUnsat;
+                bestNext = std::move(next);
+                bestFront = std::move(newFront);
+                bestUnsatClauses = std::move(newUnsatClauses);
+                bestRevVertices = std::move(stepRevs);
+                if(bestUnsat < nStartUnsat) {
+                  break;
+                }
               }
             }
           }
@@ -113,7 +141,7 @@ int main(int argc, char* argv[]) {
             incl[k] = incl[k-1] + 1;
           }
         }
-        if(!revVertices.empty()) {
+        if(bestUnsat < formula.nClauses_) {
           break;
         }
       }
@@ -121,8 +149,20 @@ int main(int argc, char* argv[]) {
         std::cout << "Combinations to next: " << nCombs << std::endl;
       }
 
-      if(revVertices.empty()) {
+      if(bestUnsat >= formula.nClauses_) {
         //std::cout << "The front of " << front.size() << " clauses doesn't lead anywhere." << std::endl;
+        seenFront.emplace(front);
+        // TODO: a data structure with smaller algorithmic complexity
+        std::vector<std::pair<TrackingSet, TrackingSet>> toRemove;
+        for(const auto& p : seenMove) {
+          if(p.first == front) {
+            toRemove.emplace_back(p);
+          }
+        }
+        // Release some memory - the moves from this front are no more needed
+        for(const auto& p : toRemove) {
+          seenMove.erase(p);
+        }
         if(front != unsatClauses) {
           // Retry with full front
           front = unsatClauses;
@@ -134,37 +174,12 @@ int main(int argc, char* argv[]) {
         break;
       }
 
-      seen.emplace(bestNext);
-      front.clear();
-      //#pragma omp parallel for num_threads(nCpus)
-      for(int64_t i=0; i<revVertices.size(); i++) {
-        const std::vector<int64_t>& clauses = formula.listVar2Clause_[revVertices[i]];
-        #pragma omp parallel for num_threads(nCpus)
-        for(int64_t j=0; j<clauses.size(); j++) {
-          const uint64_t absClause = llabs(clauses[j]);
-          const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
-          const bool newSat = formula.IsSatisfied(absClause, bestNext);
-          if(newSat) {
-            if(!oldSat) {
-              std::unique_lock<std::mutex> lock(muUnsatClauses);
-              unsatClauses.erase(absClause);
-            }
-          } else {
-            {
-              std::unique_lock<std::mutex> lock(muFront);
-              front.emplace(absClause);
-            }
-            if(oldSat)
-            {
-              std::unique_lock<std::mutex> lock(muUnsatClauses);
-              unsatClauses.emplace(absClause);
-            }
-          }
-        }
-      }
+      seenMove.emplace(front, bestRevVertices);
+      front = std::move(bestFront);
+      unsatClauses = std::move(bestUnsatClauses);
       formula.ans_ = std::move(bestNext);
     }
-    std::cout << "Search size: " << seen.size() << std::endl;
+    std::cout << "Search size: " << seenMove.size() << std::endl;
   }
 
   {
