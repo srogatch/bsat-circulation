@@ -39,6 +39,10 @@ struct Formula {
 
   void Load(const std::string& filePath) {
     std::ifstream ifs(filePath);
+    if(!ifs) {
+      std::cerr << "Cannot open the file to load the formula from: " << filePath << std::endl;
+      throw std::runtime_error("Cannot open input file.");
+    }
     std::string line;
     bool probDefRead = false;
     int64_t iClause = 0;
