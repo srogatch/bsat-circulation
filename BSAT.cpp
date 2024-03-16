@@ -112,7 +112,7 @@ int main(int argc, char* argv[]) {
             }
             if(seenFront.find(newFront) == seenFront.end()) {
               // UNSAT counting is a heavy and parallelized operation
-              const int64_t stepUnsat = formula.CountUnsat(next);
+              const int64_t stepUnsat = newUnsatClauses.set_.size();
               if(stepUnsat < bestUnsat) {
                 bestUnsat = stepUnsat;
                 bestNext = std::move(next);
