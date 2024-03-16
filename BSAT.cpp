@@ -110,6 +110,7 @@ int main(int argc, char* argv[]) {
   std::unordered_set<TrackingSet> seenFront;
   std::mt19937_64 rng;
   int64_t lastFlush = formula.nClauses_ + 1;
+  bool enablePQ = false;
   while(maybeSat) {
     TrackingSet unsatClauses = formula.ComputeUnsatClauses();
     const int64_t nStartUnsat = unsatClauses.set_.size();
@@ -123,7 +124,6 @@ int main(int argc, char* argv[]) {
     // avoid reallocations
     vClauses.reserve(unsatClauses.set_.size() * 4);
     bool allowDuplicateFront = false;
-    bool enablePQ = false;
     std::priority_queue<Point> pq;
     while(unsatClauses.set_.size() >= nStartUnsat) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
@@ -153,7 +153,7 @@ int main(int argc, char* argv[]) {
       uint64_t nCombs = 0;
       // It may be slow to instantiate the bit vector in each combination
       BitVector next = formula.ans_;
-      for(int64_t nIncl=1; nIncl<combs.size(); nIncl++) {
+      for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
         if(nIncl >= 3) {
           std::cout << " C" << combs.size() << "," << nIncl << " ";
         }
