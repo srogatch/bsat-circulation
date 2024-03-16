@@ -113,8 +113,9 @@ int main(int argc, char* argv[]) {
     std::vector<int64_t> vClauses;
     // avoid reallocations
     vClauses.reserve(unsatClauses.set_.size() * 4);
+    bool allowDuplicateFront = false;
     while(unsatClauses.set_.size() >= nStartUnsat) {
-      if(front.set_.empty() || seenFront.find(front) != seenFront.end()) {
+      if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
         //std::cout << "Empty front" << std::endl;
         front = unsatClauses;
       }
@@ -202,7 +203,7 @@ int main(int argc, char* argv[]) {
                 }
               }
             }
-            if(seenFront.find(newFront) == seenFront.end()) {
+            if(allowDuplicateFront || seenFront.find(newFront) == seenFront.end()) {
               // UNSAT counting is a heavy and parallelized operation
               const int64_t stepUnsat = newUnsatClauses.set_.size();
               if(stepUnsat < bestUnsat) {
@@ -260,6 +261,10 @@ int main(int argc, char* argv[]) {
         if(front != unsatClauses) {
           // Retry with full front
           front = unsatClauses;
+          continue;
+        }
+        if(!allowDuplicateFront) {
+          allowDuplicateFront = true;
           continue;
         }
         // Unsatisfiable
