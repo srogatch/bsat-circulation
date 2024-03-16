@@ -11,7 +11,7 @@ struct TrackingSet {
     auto it = set_.find(item);
     if(it == set_.end()) {
       set_.emplace(item);
-      hash_ ^= std::hash<int64_t>()(item);
+      hash_ ^= std::hash<int64_t>()(item) * 18446744073709551557ULL;
     }
   }
 
@@ -19,7 +19,7 @@ struct TrackingSet {
     auto it = set_.find(item);
     if(it != set_.end()) {
       set_.erase(it);
-      hash_ ^= std::hash<int64_t>()(item);
+      hash_ ^= std::hash<int64_t>()(item) * 18446744073709551557ULL;
     }
   }
 

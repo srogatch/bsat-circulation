@@ -39,7 +39,14 @@ struct BitVector {
     }
     return *this;
   }
-  BitVector& operator=(BitVector&& src) = default;
+  BitVector& operator=(BitVector&& src) {
+    if(this != &src) {
+      nBits_ = src.nBits_;
+      nQwords_ = src.nQwords_;
+      bits_ = std::move(src.bits_);
+    }
+    return *this;
+  }
 
   bool operator[](const int64_t index) const {
     return bits_[index/64] & (1ULL<<(index&63));
