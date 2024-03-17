@@ -232,13 +232,13 @@ int main(int argc, char* argv[]) {
       TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
 
       combs.assign(candVs.begin(), candVs.end());
-      // if(combs.size() > 2 * Formula::nCpus_) {
-      //   ParallelShuffle(combs.data(), combs.size());
-      // } else {
-      //   std::shuffle(combs.begin(), combs.end(), rng);
-      // }
-      std::sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
-        return a.second > b.second || (a.second == b.second && hash64(a.first) < hash64(b.first));
+      if(combs.size() > 2 * Formula::nCpus_) {
+        ParallelShuffle(combs.data(), combs.size());
+      } else {
+        std::shuffle(combs.begin(), combs.end(), rng);
+      }
+      std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
+        return a.second > b.second;
       });
       uint64_t nCombs = 0;
       uint64_t prevBestAtCombs = 0;
@@ -281,7 +281,7 @@ int main(int argc, char* argv[]) {
             });
 
             auto it = bv2nUnsat.find(next.hash_);
-            if( (it == bv2nUnsat.end() || it->second < bestUnsat) && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
+            if( (it == bv2nUnsat.end() || it->second > bestUnsat) && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
               TrackingSet newFront;
               TrackingSet newUnsatClauses = unsatClauses;
               int64_t nAffected = 0;
