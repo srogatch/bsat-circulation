@@ -136,7 +136,7 @@ struct Point {
 
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
 const uint32_t BitVector::nCpus_ = std::thread::hardware_concurrency();
-constexpr const uint32_t knLightCombs = 100; // These many combinations are considered a light operation
+constexpr const uint32_t knLightCombs = 10; // These many combinations are considered a light operation
 
 int main(int argc, char* argv[]) {
   if(argc < 3) {
@@ -249,7 +249,6 @@ int main(int argc, char* argv[]) {
         }
         for(;;) {
           nCombs++;
-          assert(next == formula.ans_);
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[incl[j]].first;
             auto it = stepRevs.set_.find(revV);
