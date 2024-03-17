@@ -180,8 +180,8 @@ int main(int argc, char* argv[]) {
         //std::cout << "Empty front" << std::endl;
         front = unsatClauses;
       }
-      std::unordered_set<int64_t> candVs;
       vFront.assign(front.set_.begin(), front.set_.end());
+      combs.clear();
       #pragma omp parallel for num_threads(Formula::nCpus_)
       for(int64_t i=0; i<vFront.size(); i++) {
         const int64_t originClause = vFront[i];
@@ -189,22 +189,37 @@ int main(int argc, char* argv[]) {
           if( (iVar < 0 && formula.ans_[-iVar]) || (iVar > 0 && !formula.ans_[iVar]) ) {
             // A dissatisfying arc
             #pragma omp critical
-            candVs.emplace(llabs(iVar));
+            combs.emplace_back(iVar);
           }
         }
       }
       int64_t bestUnsat = formula.nClauses_+1;
-      TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
+      TrackingSet bestFront, bestUnsatClauses, bestRevVertices, stepRevs;
 
-      combs.assign(candVs.begin(), candVs.end());
-      if(candVs.size() > 2 * Formula::nCpus_) {
+      std::sort(std::execution::par, combs.begin(), combs.end(), [](const int64_t a, const int64_t b) {
+        return llabs(a) < llabs(b);
+      });
+      next = formula.ans_;
+      #pragma omp parallel for num_threads(Formula::nCpus_)
+      for(int64_t i=0; i<combs.size(); i++) {
+        const int64_t revV = llabs(combs[i]);
+        if(i == 0 || revV != llabs(combs[i-1])) {
+          unsigned short r;
+          while(!_rdrand16_step(&r)); // TODO: use xoroshiro** or similar
+          if(r & 1) {
+            #pragma omp critical
+            stepRevs.Add(revV);
+            next.Flip(revV);
+          }
+        }
+      }
+
+      if(combs.size() > 2 * Formula::nCpus_) {
         ParallelShuffle(combs.data(), combs.size());
       } else {
         std::shuffle(combs.begin(), combs.end(), rng);
       }
       uint64_t nCombs = 0;
-      next = formula.ans_;
-      TrackingSet stepRevs;
       for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
         if(AccComb(combs.size(), nIncl) > 100) {
           std::cout << " C" << combs.size() << "," << nIncl << " ";
@@ -218,7 +233,7 @@ int main(int argc, char* argv[]) {
           nCombs++;
           assert(next == formula.ans_);
           for(int64_t j=0; j<nIncl; j++) {
-            const int64_t revV = combs[incl[j]];
+            const int64_t revV = llabs(combs[incl[j]]);
             auto it = stepRevs.set_.find(revV);
             if(it == stepRevs.set_.end()) {
               stepRevs.Add(revV);
@@ -231,7 +246,7 @@ int main(int argc, char* argv[]) {
             auto unflip = Finally([&]() {
               // Flip bits back
               for(int64_t j=0; j<nIncl; j++) {
-                const int64_t revV = combs[incl[j]];
+                const int64_t revV = llabs(combs[incl[j]]);
                 auto it = stepRevs.set_.find(revV);
                 if(it == stepRevs.set_.end()) {
                   stepRevs.Add(revV);
