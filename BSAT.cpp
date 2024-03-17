@@ -100,15 +100,19 @@ int main(int argc, char* argv[]) {
   std::mutex muFront;
   Formula formula;
   formula.Load(argv[1]);
+  BitVector maxPartial;
   bool maybeSat = true;
+  bool provenUnsat = false;
   std::unordered_set<std::pair<TrackingSet, TrackingSet>, MoveHash> seenMove;
   std::unordered_set<TrackingSet> seenFront;
   std::mt19937_64 rng;
   int64_t lastFlush = formula.nClauses_ + 1;
   std::deque<Point> dfs;
+  int64_t nStartUnsat;
   while(maybeSat) {
     TrackingSet unsatClauses = formula.ComputeUnsatClauses();
-    const int64_t nStartUnsat = unsatClauses.set_.size();
+    nStartUnsat = unsatClauses.set_.size();
+    maxPartial = formula.ans_;
     if(nStartUnsat == 0) {
       std::cout << "Satisfied" << std::endl;
       break;
@@ -290,7 +294,8 @@ int main(int argc, char* argv[]) {
       }
       seenMove.emplace(front, bestRevVertices);
       // Indicate a DFS step
-      std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
+      //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
+      std::cout << ">";
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
     }
@@ -299,16 +304,33 @@ int main(int argc, char* argv[]) {
 
   {
     std::ofstream ofs(argv[2]);
-    if(!maybeSat) {
+    if(provenUnsat) {
       ofs << "s UNSATISFIABLE" << std::endl;
+      // TODO: output the proof: proof.out, https://satcompetition.github.io/2024/output.html
       return 0;
     }
 
-    assert(formula.SolWorks());
-    ofs << "s SATISFIABLE" << std::endl;
-    ofs << "v ";
+    if(maybeSat) {
+      assert(formula.SolWorks());
+      ofs << "s SATISFIABLE" << std::endl;
+    } else {
+      formula.ans = maxPartial;
+      ofs << "s UNKNOWN" << std::endl;
+      ofs << "c Unsatisfied clause count: " << nStartUnsat << std::endl;
+    }
+    int64_t nInLine = 0;
     for(int64_t i=1; i<=formula.nVars_; i++) {
-      ofs << (formula.ans_[i] ? i : -i) << " ";
+      if(nInLine == 0) {
+        ofs << "v ";
+      }
+      ofs << (formula.ans_[i] ? i : -i);
+      nInLine++;
+      if(nInLine >= 200) {
+        nInLine = 0;
+        ofs << "\n";
+      } else {
+        ofs << " ";
+      }
     }
     ofs << "0" << std::endl;
   }
