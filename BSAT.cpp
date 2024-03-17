@@ -281,30 +281,26 @@ int main(int argc, char* argv[]) {
             });
 
             auto it = bv2nUnsat.find(next.hash_);
-            if( (it == bv2nUnsat.end() || it->second < bestUnsat) && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
+            bool maybeSuperior = (it == bv2nUnsat.end() || it->second < bestUnsat);
+            if(!maybeSuperior) {
+              // This combination has been to lightweight to count
+              prevBestAtCombs++;
+            }
+            if( maybeSuperior && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
               TrackingSet newFront;
               TrackingSet newUnsatClauses = unsatClauses;
-              int64_t nAffected = 0;
-              std::vector<std::pair<int64_t, int64_t>> vStepRevs;
+              // TODO: these can be parallelized if ordered maps are used, then copied to the vector in partitions
+              std::unordered_set<int64_t> clauses;
               for(const int64_t sr : stepRevs.set_) {
-                vStepRevs.emplace_back(sr, nAffected);
-                nAffected += formula.listVar2Clause_[sr].size();
-              }
-              vClauses.resize(nAffected);
-              #pragma omp parallel for num_threads(Formula::nCpus_)
-              for(int64_t i=0; i<vStepRevs.size(); i++) {
-                const std::vector<int64_t>& srcClauses = formula.listVar2Clause_[vStepRevs[i].first];
-                for(int64_t j=0; j<srcClauses.size(); j++) {
-                  vClauses[vStepRevs[i].second + j] = llabs(srcClauses[j]);
+                const std::vector<int64_t>& src = formula.listVar2Clause_[sr];
+                for(int64_t i=0; i<src.size(); i++) {
+                  clauses.emplace(llabs(src[i]));
                 }
               }
-              std::sort(std::execution::par, vClauses.begin(), vClauses.end());
+              std::vector<int64_t> vClauses(clauses.begin(), clauses.end());
               #pragma omp parallel for num_threads(Formula::nCpus_)
               for(int64_t j=0; j<vClauses.size(); j++) {
                 const uint64_t absClause = vClauses[j];
-                if(j > 0 && absClause == vClauses[j-1]) {
-                  continue;
-                }
                 const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
                 const bool newSat = formula.IsSatisfied(absClause, next);
                 if(newSat) {
