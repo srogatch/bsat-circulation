@@ -204,6 +204,7 @@ int main(int argc, char* argv[]) {
       }
       uint64_t nCombs = 0;
       next = formula.ans_;
+      TrackingSet stepRevs;
       for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
         if(AccComb(combs.size(), nIncl) > 100) {
           std::cout << " C" << combs.size() << "," << nIncl << " ";
@@ -215,71 +216,94 @@ int main(int argc, char* argv[]) {
         }
         for(;;) {
           nCombs++;
-          TrackingSet stepRevs;
           assert(next == formula.ans_);
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[incl[j]];
-            // Avoid flipping bits more than once
-            assert(stepRevs.set_.find(revV) == stepRevs.set_.end());
-            stepRevs.Add(revV);
+            auto it = stepRevs.set_.find(revV);
+            if(it == stepRevs.set_.end()) {
+              stepRevs.Add(revV);
+            } else {
+              stepRevs.Remove(revV);
+            }
             next.Flip(revV);
           }
-          auto unflip = Finally([&]() {
-            // Flip bits back
-            for(int64_t revV : stepRevs.set_) {
-              next.Flip(revV);
-            }
-          });
+          {
+            auto unflip = Finally([&]() {
+              // Flip bits back
+              for(int64_t j=0; j<nIncl; j++) {
+                const int64_t revV = combs[incl[j]];
+                auto it = stepRevs.set_.find(revV);
+                if(it == stepRevs.set_.end()) {
+                  stepRevs.Add(revV);
+                } else {
+                  stepRevs.Remove(revV);
+                }
+                next.Flip(revV);
+              }
+            });
 
-          if(seenMove.find({front, stepRevs}) == seenMove.end()) {
-            TrackingSet newFront;
-            TrackingSet newUnsatClauses = unsatClauses;
-            vClauses.clear();
-            for(const int64_t revV : stepRevs.set_) {
-              const std::vector<int64_t>& srcClauses = formula.listVar2Clause_[revV];
-              for(const int64_t iClause : srcClauses) {
-                vClauses.emplace_back(llabs(iClause));
-              }
-            }
-            std::sort(std::execution::par, vClauses.begin(), vClauses.end());
-            #pragma omp parallel for num_threads(Formula::nCpus_)
-            for(int64_t j=0; j<vClauses.size(); j++) {
-              const uint64_t absClause = vClauses[j];
-              if(j > 0 && absClause == vClauses[j-1]) {
-                continue;
-              }
-              const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
-              const bool newSat = formula.IsSatisfied(absClause, next);
-              if(newSat) {
-                if(!oldSat) {
-                  std::unique_lock<std::mutex> lock(muUnsatClauses);
-                  newUnsatClauses.Remove(absClause);
+            if(seenMove.find({front, stepRevs}) == seenMove.end()) {
+              TrackingSet newFront;
+              TrackingSet newUnsatClauses = unsatClauses;
+              vClauses.clear();
+              for(const int64_t revV : stepRevs.set_) {
+                const std::vector<int64_t>& srcClauses = formula.listVar2Clause_[revV];
+                for(const int64_t iClause : srcClauses) {
+                  vClauses.emplace_back(llabs(iClause));
                 }
-              } else {
-                if(oldSat)
-                {
-                  {
+              }
+              std::sort(std::execution::par, vClauses.begin(), vClauses.end());
+              #pragma omp parallel for num_threads(Formula::nCpus_)
+              for(int64_t j=0; j<vClauses.size(); j++) {
+                const uint64_t absClause = vClauses[j];
+                if(j > 0 && absClause == vClauses[j-1]) {
+                  continue;
+                }
+                const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
+                const bool newSat = formula.IsSatisfied(absClause, next);
+                if(newSat) {
+                  if(!oldSat) {
                     std::unique_lock<std::mutex> lock(muUnsatClauses);
-                    newUnsatClauses.Add(absClause);
+                    newUnsatClauses.Remove(absClause);
                   }
+                } else {
+                  if(oldSat)
                   {
-                    std::unique_lock<std::mutex> lock(muFront);
-                    newFront.Add(absClause);
+                    {
+                      std::unique_lock<std::mutex> lock(muUnsatClauses);
+                      newUnsatClauses.Add(absClause);
+                    }
+                    {
+                      std::unique_lock<std::mutex> lock(muFront);
+                      newFront.Add(absClause);
+                    }
                   }
                 }
               }
-            }
-            if(allowDuplicateFront || seenFront.find(newFront) == seenFront.end()) {
-              // UNSAT counting is a heavy and parallelized operation
-              const int64_t stepUnsat = newUnsatClauses.set_.size();
-              if(stepUnsat < bestUnsat) {
-                bestUnsat = stepUnsat;
-                bestFront = std::move(newFront);
-                bestUnsatClauses = std::move(newUnsatClauses);
-                bestRevVertices = stepRevs;
-              }
-              if(bestUnsat < nStartUnsat) {
-                break;
+              if(allowDuplicateFront || seenFront.find(newFront) == seenFront.end()) {
+                // UNSAT counting is a heavy and parallelized operation
+                const int64_t stepUnsat = newUnsatClauses.set_.size();
+                if(stepUnsat < bestUnsat) {
+                  bestUnsat = stepUnsat;
+                  bestFront = std::move(newFront);
+                  bestUnsatClauses = std::move(newUnsatClauses);
+                  bestRevVertices = stepRevs;
+
+                  if(nStartUnsat < 1000) {
+                    if(bestUnsat < nStartUnsat) {
+                      break;
+                    }
+                  } else {
+                    if(bestUnsat < nStartUnsat) {
+                      unflip.Disable();
+                      std::cout << " +" << nStartUnsat - bestUnsat << " ";
+                      std::flush(std::cout);
+                    }
+                    if(bestUnsat < nStartUnsat - std::sqrt(nStartUnsat)) {
+                      break;
+                    }
+                  }
+                }
               }
             }
           }
