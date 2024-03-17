@@ -289,7 +289,7 @@ int main(int argc, char* argv[]) {
                   bestUnsatClauses = std::move(newUnsatClauses);
                   bestRevVertices = stepRevs;
 
-                  if(nStartUnsat < 1000) {
+                  if(nStartUnsat <= std::max(100.0, std::sqrt(formula.nVars_))) {
                     if(bestUnsat < nStartUnsat) {
                       break;
                     }
