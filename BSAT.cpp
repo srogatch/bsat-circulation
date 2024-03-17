@@ -41,7 +41,7 @@ uint64_t Comb(const int64_t n, const int64_t k) {
     return n;
   }
   while(memComb.size()+1 < n) {
-    memComb.emplace_back(k-1);
+    memComb.emplace_back(memComb.size()+1);
   }
   uint64_t& mc = memComb[n-2][k-2];
   if(mc == 0) {
@@ -65,7 +65,7 @@ uint64_t AccComb(const int64_t n, const int64_t k) {
     return 0;
   }
   while(memAccComb.size()+1 < n) {
-    memAccComb.emplace_back(k-1);
+    memAccComb.emplace_back(memAccComb.size()+1);
   }
   uint64_t& mac = memAccComb[n-2][k-2];
   if(mac == 0) {
@@ -154,8 +154,9 @@ int main(int argc, char* argv[]) {
       // It may be slow to instantiate the bit vector in each combination
       BitVector next = formula.ans_;
       for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
-        if(nIncl >= 3) {
+        if(AccComb(combs.size(), nIncl) > 100) {
           std::cout << " C" << combs.size() << "," << nIncl << " ";
+          std::flush(std::cout);
         }
         incl.clear();
         for(int64_t j=0; j<nIncl; j++) {
