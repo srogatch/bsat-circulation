@@ -156,7 +156,7 @@ int main(int argc, char* argv[]) {
   std::deque<Point> dfs;
   int64_t nStartUnsat;
   // Define them here to avoid reallocations
-  std::vector<int64_t> combs;
+  std::vector<std::pair<int64_t, int64_t>> combs;
   std::vector<int64_t> vFront;
   std::vector<int64_t> incl;
   BitVector next;
@@ -180,7 +180,7 @@ int main(int argc, char* argv[]) {
         //std::cout << "Empty front" << std::endl;
         front = unsatClauses;
       }
-      std::unordered_set<int64_t> candVs;
+      std::unordered_map<int64_t, int64_t> candVs;
       vFront.assign(front.set_.begin(), front.set_.end());
       #pragma omp parallel for num_threads(Formula::nCpus_)
       for(int64_t i=0; i<vFront.size(); i++) {
@@ -188,8 +188,9 @@ int main(int argc, char* argv[]) {
         for(const int64_t iVar : formula.clause2var_[originClause]) {
           if( (iVar < 0 && formula.ans_[-iVar]) || (iVar > 0 && !formula.ans_[iVar]) ) {
             // A dissatisfying arc
+            const int64_t revV = llabs(iVar);
             #pragma omp critical
-            candVs.emplace(llabs(iVar));
+            candVs[revV]++;
           }
         }
       }
@@ -197,11 +198,14 @@ int main(int argc, char* argv[]) {
       TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
 
       combs.assign(candVs.begin(), candVs.end());
-      if(candVs.size() > 2 * Formula::nCpus_) {
-        ParallelShuffle(combs.data(), combs.size());
-      } else {
-        std::shuffle(combs.begin(), combs.end(), rng);
-      }
+      // if(combs.size() > 2 * Formula::nCpus_) {
+      //   ParallelShuffle(combs.data(), combs.size());
+      // } else {
+      //   std::shuffle(combs.begin(), combs.end(), rng);
+      // }
+      std::sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
+        return a.second > b.second || (a.second == b.second && hash64(a.first) < hash64(b.first));
+      });
       uint64_t nCombs = 0;
       next = formula.ans_;
       TrackingSet stepRevs;
@@ -218,7 +222,7 @@ int main(int argc, char* argv[]) {
           nCombs++;
           assert(next == formula.ans_);
           for(int64_t j=0; j<nIncl; j++) {
-            const int64_t revV = combs[incl[j]];
+            const int64_t revV = combs[incl[j]].first;
             auto it = stepRevs.set_.find(revV);
             if(it == stepRevs.set_.end()) {
               stepRevs.Add(revV);
@@ -231,7 +235,7 @@ int main(int argc, char* argv[]) {
             auto unflip = Finally([&]() {
               // Flip bits back
               for(int64_t j=0; j<nIncl; j++) {
-                const int64_t revV = combs[incl[j]];
+                const int64_t revV = combs[incl[j]].first;
                 auto it = stepRevs.set_.find(revV);
                 if(it == stepRevs.set_.end()) {
                   stepRevs.Add(revV);

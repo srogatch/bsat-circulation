@@ -91,6 +91,17 @@ struct BitVector {
   }
 };
 
+inline uint64_t hash64(uint64_t key) {
+  key = (~key) + (key << 21); // key = (key << 21) - key - 1;
+  key = key ^ (key >> 24);
+  key = (key + (key << 3)) + (key << 8); // key * 265
+  key = key ^ (key >> 14);
+  key = (key + (key << 2)) + (key << 4); // key * 21
+  key = key ^ (key >> 28);
+  key = key + (key << 31);
+  return key;
+}
+
 namespace std {
 
 template<> struct hash<BitVector> {
@@ -98,7 +109,7 @@ template<> struct hash<BitVector> {
     std::size_t ans = 0;
     uint64_t mul = 7;
     for(int64_t i=0; i<bv.nQwords_; i++) {
-      ans ^= mul * bv.bits_[i];
+      ans ^= mul * hash64(bv.bits_[i]);
       mul *= 18446744073709551557ULL;
     }
     return ans;
