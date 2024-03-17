@@ -136,7 +136,7 @@ struct Point {
 
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
 const uint32_t BitVector::nCpus_ = std::thread::hardware_concurrency();
-constexpr const uint32_t knLightCombs = 1000; // These many combinations are considered a light operation
+constexpr const uint32_t knLightCombs = 100; // These many combinations are considered a light operation
 
 int main(int argc, char* argv[]) {
   if(argc < 3) {
@@ -278,11 +278,18 @@ int main(int argc, char* argv[]) {
             if(seenMove.find({front, stepRevs}) == seenMove.end()) {
               TrackingSet newFront;
               TrackingSet newUnsatClauses = unsatClauses;
-              vClauses.clear();
-              for(const int64_t revV : stepRevs.set_) {
-                const std::vector<int64_t>& srcClauses = formula.listVar2Clause_[revV];
-                for(const int64_t iClause : srcClauses) {
-                  vClauses.emplace_back(llabs(iClause));
+              int64_t nAffected = 0;
+              std::vector<std::pair<int64_t, int64_t>> vStepRevs;
+              for(const int64_t sr : stepRevs.set_) {
+                vStepRevs.emplace_back(sr, nAffected);
+                nAffected += formula.listVar2Clause_[sr].size();
+              }
+              vClauses.resize(nAffected);
+              #pragma omp parallel for num_threads(Formula::nCpus_)
+              for(int64_t i=0; i<vStepRevs.size(); i++) {
+                const std::vector<int64_t>& srcClauses = formula.listVar2Clause_[vStepRevs[i].first];
+                for(int64_t j=0; j<srcClauses.size(); j++) {
+                  vClauses[vStepRevs[i].second + j] = llabs(srcClauses[j]);
                 }
               }
               std::sort(std::execution::par, vClauses.begin(), vClauses.end());
@@ -325,8 +332,7 @@ int main(int argc, char* argv[]) {
                   if(bestUnsat < nStartUnsat) {
                     prevBestAtCombs = nCombs;
                     unflip.Disable();
-                    std::cout << " +" << nStartUnsat - bestUnsat << " ";
-                    std::flush(std::cout);
+                    std::cout << "+";
                   }
                 }
               }
