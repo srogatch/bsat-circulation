@@ -33,17 +33,18 @@ detail::FinalAction<F> Finally(F&& f) {
 
 template <typename T>
 void ParallelShuffle(T* data, const size_t count) {
-  const uint32_t nThreads = Formula::nCpus_;
+  const uint32_t nThreads = omp_get_max_threads();
 
   std::atomic_flag* syncs = static_cast<std::atomic_flag*>(malloc(count * sizeof(std::atomic_flag)));
   auto clean_syncs = Finally([&]() { free(syncs); });
-#pragma omp parallel for num_threads(nThreads)
+  #pragma omp parallel for
   for (size_t i = 0; i < count; i++) {
     new (syncs + i) std::atomic_flag ATOMIC_FLAG_INIT;
   }
 
   const size_t nPerThread = (count + nThreads - 1) / nThreads;
-#pragma omp parallel for num_threads(nThreads)
+  // The number of threads here is important and must not default to whatever else
+  #pragma omp parallel for num_threads(nThreads)
   for (size_t i = 0; i < nThreads; i++) {
     std::random_device rd;
     std::mt19937_64 rng(rd());
@@ -136,7 +137,6 @@ struct Point {
 };
 
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
-const uint32_t BitVector::nCpus_ = std::thread::hardware_concurrency();
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
 
 constexpr const uint32_t knLightCombs = 10; // These many combinations are considered a light operation
@@ -146,17 +146,39 @@ int main(int argc, char* argv[]) {
     std::cerr << "Usage: " << argv[0] << " <input.dimacs> <output.dimacs>" << std::endl;
     return 1;
   }
+
+  // TODO: does it override the environment variable?
+  omp_set_num_threads(Formula::nCpus_);
+
   std::mutex muUnsatClauses;
   std::mutex muFront;
   Formula formula;
   formula.Load(argv[1]);
-  BitVector::CalcHashSeries(formula.nVars_);
+  // Now there are some clause bitvectors
+  BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
+
   int64_t bestInit = formula.CountUnsat(formula.ans_);
   std::cout << "All false: " << bestInit << ", ";
 
-  BitVector altAsg = formula.SetGreedy();
+  BitVector altAsg = formula.SetGreedy1();
   int64_t altNUnsat = formula.CountUnsat(altAsg);
-  std::cout << "Greedy: " << altNUnsat << ", ";
+  std::cout << "Greedy1: " << altNUnsat << ", ";
+  if(altNUnsat < bestInit) {
+    bestInit = altNUnsat;
+    formula.ans_ = altAsg;
+  }
+
+  altAsg = formula.SetGreedy2();
+  altNUnsat = formula.CountUnsat(altAsg);
+  std::cout << "Greedy2: " << altNUnsat << ", ";
+  if(altNUnsat < bestInit) {
+    bestInit = altNUnsat;
+    formula.ans_ = altAsg;
+  }
+
+  altAsg = formula.SetDfs();
+  altNUnsat = formula.CountUnsat(altAsg);
+  std::cout << "DFS: " << altNUnsat << ", ";
   if(altNUnsat < bestInit) {
     bestInit = altNUnsat;
     formula.ans_ = altAsg;
@@ -216,7 +238,7 @@ int main(int argc, char* argv[]) {
       }
       std::unordered_map<int64_t, int64_t> candVs;
       vFront.assign(front.set_.begin(), front.set_.end());
-      #pragma omp parallel for num_threads(Formula::nCpus_)
+      #pragma omp parallel for
       for(int64_t i=0; i<vFront.size(); i++) {
         const int64_t originClause = vFront[i];
         for(const int64_t iVar : formula.clause2var_[originClause]) {
@@ -302,7 +324,7 @@ int main(int argc, char* argv[]) {
                 }
               }
               std::vector<int64_t> vClauses(clauses.begin(), clauses.end());
-              #pragma omp parallel for num_threads(Formula::nCpus_)
+              #pragma omp parallel for
               for(int64_t j=0; j<vClauses.size(); j++) {
                 const uint64_t absClause = vClauses[j];
                 const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);

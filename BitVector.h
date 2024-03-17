@@ -13,7 +13,6 @@ template<typename T, typename U> constexpr T DivUp(const T a, const U b) {
 }
 
 struct BitVector {
-  static const uint32_t nCpus_;
   static constexpr const uint128 cHashBase =
     (uint128(244)  * uint128(1000*1000*1000) * uint128(1000*1000*1000) + uint128(903443422803031898ULL)) * uint128(1000*1000*1000) * uint128(1000*1000*1000)
     + uint128(471395581046679967ULL);
@@ -48,7 +47,7 @@ struct BitVector {
     bits_.reset(new uint64_t[nQwords_]);
 
     //memset(bits_.get(), 0, sizeof(uint64_t) * nQwords_);
-    #pragma omp parallel for num_threads(nCpus_)
+    #pragma omp parallel for
     for(int64_t i=0; i<nQwords_; i++) {
       bits_.get()[i] = 0;
     }
@@ -60,7 +59,7 @@ struct BitVector {
     nQwords_ = fellow.nQwords_;
     bits_.reset(new uint64_t[nQwords_]);
     // memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
-    #pragma omp parallel for num_threads(nCpus_)
+    #pragma omp parallel for
     for(int64_t i=0; i<nQwords_; i++) {
       bits_.get()[i] = fellow.bits_.get()[i];
     }
@@ -74,7 +73,7 @@ struct BitVector {
         bits_.reset(new uint64_t[nQwords_]);
       }
       // memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
-      #pragma omp parallel for num_threads(nCpus_)
+      #pragma omp parallel for
       for(int64_t i=0; i<nQwords_; i++) {
         bits_.get()[i] = fellow.bits_.get()[i];
       }
@@ -124,7 +123,7 @@ struct BitVector {
   }
 
   void Randomize() {
-    #pragma omp parallel for num_threads(nCpus_)
+    #pragma omp parallel for
     for(int64_t i=0; i<nQwords_; i++) {
       while(!_rdrand64_step(reinterpret_cast<unsigned long long*>(bits_.get()+i)));
     }
@@ -136,7 +135,7 @@ struct BitVector {
   }
 
   void SetTrue() {
-    #pragma omp parallel for num_threads(nCpus_)
+    #pragma omp parallel for
     for(int64_t i=0; i<nQwords_; i++) {
       bits_.get()[i] = -1LL;
     }

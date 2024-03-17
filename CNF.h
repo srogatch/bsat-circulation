@@ -18,6 +18,8 @@
 #include <thread>
 #include <atomic>
 #include <cassert>
+#include <stack>
+#include <random>
 
 template <typename T> constexpr int Signum(const T val) {
   return (T(0) < val) - (val < T(0));
@@ -124,7 +126,7 @@ struct Formula {
 
   int64_t CountUnsat(const BitVector& assignment) {
     std::atomic<int64_t> nUnsat = 0;
-    #pragma omp parallel for num_threads(nCpus_)
+    #pragma omp parallel for
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, assignment)) {
         nUnsat.fetch_add(1, std::memory_order_relaxed);
@@ -149,7 +151,7 @@ struct Formula {
 
   TrackingSet ComputeUnsatClauses() const {
     TrackingSet ans;
-    #pragma omp parallel for num_threads(nCpus_)
+    #pragma omp parallel for
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, ans_)) {
         #pragma omp critical
@@ -159,10 +161,10 @@ struct Formula {
     return ans;
   }
 
-  BitVector SetGreedy() const {
+  BitVector SetGreedy1() const {
     BitVector ans(nVars_); // Init to false
     std::vector<std::pair<int64_t, int64_t>> counts_;
-    #pragma omp parallel for num_threads(nCpus_)
+    #pragma omp parallel for
     for(int64_t i=1; i<=nVars_; i++) {
       auto it = var2clause_.find(i);
       if(it == var2clause_.end()) {
@@ -179,6 +181,83 @@ struct Formula {
       if(nPos > nNeg) {
         #pragma omp critical
         ans.Flip(i);
+      }
+    }
+    return ans;
+  }
+
+  BitVector SetGreedy2() const {
+    BitVector ans(nVars_); // Init to false
+    BitVector knownClauses(nClauses_); // Init to false
+    #pragma omp parallel for
+    for(int64_t i=1; i<=nVars_; i++) {
+      auto it = var2clause_.find(i);
+      if(it == var2clause_.end()) {
+        continue;
+      }
+      for(const int64_t iClause : it->second) {
+        bool bBreak = false;
+        #pragma omp critical
+        if(!knownClauses[llabs(iClause)]) {
+          knownClauses.Flip(llabs(iClause));
+          if(iClause > 0) {
+            ans.Flip(i);
+          }
+          bBreak = true;
+        }
+        if(bBreak) {
+          break;
+        }
+      }
+    }
+    return ans;
+  }
+
+  BitVector SetDfs() const {
+    BitVector ans(nVars_); // Init to false
+    BitVector visitedVars(nVars_); // Init to false
+    BitVector knownClauses(nClauses_); // Init to false
+    std::vector<int64_t> trail;
+    std::mt19937 rng;
+
+    for(int64_t i=1; i<=nVars_; i++) {
+      if(!visitedVars[i]) {
+        visitedVars.Flip(i);
+        trail.push_back(i);
+      }
+      while(!trail.empty()) {
+        const int64_t at = rng() % trail.size();
+        const int64_t iVar = trail[at];
+        trail[at] = trail.back();
+        trail.pop_back();
+        auto jt = var2clause_.find(llabs(iVar));
+        if(jt == var2clause_.end()) {
+          continue;
+        }
+        bool assigned = false;
+        for(const int64_t iClause : jt->second) {
+          if(knownClauses[llabs(iClause)]) {
+            continue;
+          }
+          knownClauses.Flip(llabs(iClause));
+          if(!assigned) {
+            assigned = true;
+            if(iClause > 0) {
+              ans.Flip(llabs(iVar));
+            }
+          }
+          auto kt = clause2var_.find(llabs(iClause));
+          if(kt == clause2var_.end()) {
+            continue;
+          }
+          for(const int64_t k : kt->second) {
+            if(visitedVars[llabs(k)]) {
+              continue;
+            }
+            visitedVars.Flip(llabs(k));
+            trail.push_back(k);
+          }
+        }
       }
     }
     return ans;
