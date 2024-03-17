@@ -39,7 +39,7 @@ void ParallelShuffle(T* data, const size_t count) {
   auto clean_syncs = Finally([&]() { free(syncs); });
 #pragma omp parallel for num_threads(nThreads)
   for (size_t i = 0; i < count; i++) {
-    new (syncs + i) std::atomic_flag(ATOMIC_FLAG_INIT);
+    new (syncs + i) std::atomic_flag ATOMIC_FLAG_INIT;
   }
 
   const size_t nPerThread = (count + nThreads - 1) / nThreads;

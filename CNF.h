@@ -124,7 +124,7 @@ struct Formula {
 
   int64_t CountUnsat(const BitVector& assignment) {
     std::atomic<int64_t> nUnsat = 0;
-    #pragma omp parrallel for num_threads(nCpus_)
+    #pragma omp parallel for num_threads(nCpus_)
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, assignment)) {
         nUnsat.fetch_add(1, std::memory_order_relaxed);
