@@ -41,7 +41,7 @@ uint64_t Comb(const int64_t n, const int64_t k) {
     return n;
   }
   while(memComb.size()+1 < n) {
-    memComb.emplace_back(k-1);
+    memComb.emplace_back(memComb.size()+1);
   }
   uint64_t& mc = memComb[n-2][k-2];
   if(mc == 0) {
@@ -65,7 +65,7 @@ uint64_t AccComb(const int64_t n, const int64_t k) {
     return 0;
   }
   while(memAccComb.size()+1 < n) {
-    memAccComb.emplace_back(k-1);
+    memAccComb.emplace_back(memAccComb.size()+1);
   }
   uint64_t& mac = memAccComb[n-2][k-2];
   if(mac == 0) {
@@ -73,12 +73,6 @@ uint64_t AccComb(const int64_t n, const int64_t k) {
   }
   return mac;
 }
-
-struct MoveHash {
-  bool operator()(const std::pair<TrackingSet, TrackingSet>& v) const {
-    return v.first.hash_ * 1949 + v.second.hash_ * 2011;
-  }
-};
 
 struct Point {
   BitVector assignment_;
@@ -106,11 +100,11 @@ int main(int argc, char* argv[]) {
   Formula formula;
   formula.Load(argv[1]);
   bool maybeSat = true;
-  std::unordered_set<std::pair<TrackingSet, TrackingSet>, MoveHash> seenMove;
-  std::unordered_set<TrackingSet> seenFront;
+  std::unordered_set<TrackingSet> seenUCSes; // unsatisfiable clause sets
   std::mt19937_64 rng;
   int64_t lastFlush = formula.nClauses_ + 1;
   bool enablePQ = false;
+  int64_t nClearedMems = 0;
   while(maybeSat) {
     TrackingSet unsatClauses = formula.ComputeUnsatClauses();
     const int64_t nStartUnsat = unsatClauses.set_.size();
@@ -123,12 +117,10 @@ int main(int argc, char* argv[]) {
     std::vector<int64_t> vClauses;
     // avoid reallocations
     vClauses.reserve(unsatClauses.set_.size() * 4);
-    bool allowDuplicateFront = false;
     std::priority_queue<Point> pq;
     while(unsatClauses.set_.size() >= nStartUnsat) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
-      if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
-        //std::cout << "Empty front" << std::endl;
+      if(front.set_.empty()) {
         front = unsatClauses;
       }
       std::unordered_set<int64_t> candVs;
@@ -154,8 +146,9 @@ int main(int argc, char* argv[]) {
       // It may be slow to instantiate the bit vector in each combination
       BitVector next = formula.ans_;
       for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
-        if(nIncl >= 3) {
+        if(AccComb(combs.size(), nIncl) > 100) {
           std::cout << " C" << combs.size() << "," << nIncl << " ";
+          std::flush(std::cout);
         }
         incl.clear();
         for(int64_t j=0; j<nIncl; j++) {
@@ -179,62 +172,61 @@ int main(int argc, char* argv[]) {
             }
           });
 
-          if(seenMove.find({front, stepRevs}) == seenMove.end()) {
-            TrackingSet newFront;
-            TrackingSet newUnsatClauses = unsatClauses;
-            vClauses.clear();
-            for(const int64_t revV : stepRevs.set_) {
-              const std::vector<int64_t>& srcClauses = formula.listVar2Clause_[revV];
-              for(const int64_t iClause : srcClauses) {
-                vClauses.emplace_back(llabs(iClause));
-              }
+          TrackingSet newFront;
+          TrackingSet newUnsatClauses = unsatClauses;
+          vClauses.clear();
+          for(const int64_t revV : stepRevs.set_) {
+            const std::vector<int64_t>& srcClauses = formula.listVar2Clause_[revV];
+            for(const int64_t iClause : srcClauses) {
+              vClauses.emplace_back(llabs(iClause));
             }
-            std::sort(std::execution::par, vClauses.begin(), vClauses.end());
-            #pragma omp parallel for num_threads(Formula::nCpus_)
-            for(int64_t j=0; j<vClauses.size(); j++) {
-              const uint64_t absClause = vClauses[j];
-              if(j > 0 && absClause == vClauses[j-1]) {
-                continue;
+          }
+          std::sort(std::execution::par, vClauses.begin(), vClauses.end());
+          #pragma omp parallel for num_threads(Formula::nCpus_)
+          for(int64_t j=0; j<vClauses.size(); j++) {
+            const uint64_t absClause = vClauses[j];
+            if(j > 0 && absClause == vClauses[j-1]) {
+              continue;
+            }
+            const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
+            const bool newSat = formula.IsSatisfied(absClause, next);
+            if(newSat) {
+              if(!oldSat) {
+                std::unique_lock<std::mutex> lock(muUnsatClauses);
+                newUnsatClauses.Remove(absClause);
               }
-              const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
-              const bool newSat = formula.IsSatisfied(absClause, next);
-              if(newSat) {
-                if(!oldSat) {
-                  std::unique_lock<std::mutex> lock(muUnsatClauses);
-                  newUnsatClauses.Remove(absClause);
-                }
-              } else {
-                if(oldSat)
+            } else {
+              if(oldSat)
+              {
                 {
-                  {
-                    std::unique_lock<std::mutex> lock(muUnsatClauses);
-                    newUnsatClauses.Add(absClause);
-                  }
-                  {
-                    std::unique_lock<std::mutex> lock(muFront);
-                    newFront.Add(absClause);
-                  }
+                  std::unique_lock<std::mutex> lock(muUnsatClauses);
+                  newUnsatClauses.Add(absClause);
                 }
-              }
-            }
-            if(allowDuplicateFront || seenFront.find(newFront) == seenFront.end()) {
-              // UNSAT counting is a heavy and parallelized operation
-              const int64_t stepUnsat = newUnsatClauses.set_.size();
-              if(enablePQ) {
-                pq.emplace(next, stepUnsat);
-                seenMove.emplace(front, stepRevs);
-              }
-              if(stepUnsat < bestUnsat) {
-                bestUnsat = stepUnsat;
-                bestFront = std::move(newFront);
-                bestUnsatClauses = std::move(newUnsatClauses);
-                bestRevVertices = stepRevs;
-              }
-              if(bestUnsat < nStartUnsat) {
-                break;
+                {
+                  std::unique_lock<std::mutex> lock(muFront);
+                  newFront.Add(absClause);
+                }
               }
             }
           }
+          if(seenUCSes.find(newUnsatClauses) == seenUCSes.end()) {
+            // UNSAT counting is a heavy and parallelized operation
+            const int64_t stepUnsat = newUnsatClauses.set_.size();
+            if(enablePQ) {
+              pq.emplace(next, stepUnsat);
+              seenUCSes.emplace(newUnsatClauses);
+            }
+            if(stepUnsat < bestUnsat) {
+              bestUnsat = stepUnsat;
+              bestFront = std::move(newFront);
+              bestUnsatClauses = std::move(newUnsatClauses);
+              bestRevVertices = stepRevs;
+            }
+            if(bestUnsat < nStartUnsat) {
+              break;
+            }
+          }
+          
           int64_t j;
           for(j=nIncl-1; j>=0; j--) {
             if(incl[j]+(nIncl-j) >= combs.size()) {
@@ -252,32 +244,15 @@ int main(int argc, char* argv[]) {
           }
         }
         if(bestUnsat < std::min<int64_t>(
-            std::max(nStartUnsat + nCombs - 1, unsatClauses.set_.size()*2),
+            //std::max<int64_t>(nStartUnsat + std::sqrt(nCombs) - 1, unsatClauses.set_.size()+std::log2(nCombs)),
+            nStartUnsat + std::log2(nCombs),
             formula.nClauses_))
         {
           break;
         }
       }
-      if(nCombs > formula.nVars_) {
-        std::cout << "Combinations to next: " << nCombs << std::endl;
-      }
 
       if(bestUnsat >= formula.nClauses_) {
-        //std::cout << "The front of " << front.size() << " clauses doesn't lead anywhere." << std::endl;
-        if(!allowDuplicateFront) {
-          seenFront.emplace(front);
-        }
-        // // TODO: a data structure with smaller algorithmic complexity
-        // std::vector<std::pair<TrackingSet, TrackingSet>> toRemove;
-        // for(const auto& p : seenMove) {
-        //   if(p.first == front) {
-        //     toRemove.emplace_back(p);
-        //   }
-        // }
-        // // Release some memory - the moves from this front are no more needed
-        // for(const auto& p : toRemove) {
-        //   seenMove.erase(p);
-        // }
         if(front != unsatClauses) {
           // Retry with full front
           front = unsatClauses;
@@ -287,8 +262,8 @@ int main(int argc, char* argv[]) {
         if(nStartUnsat < lastFlush) {
           std::cout << "...Flushing the memorization..." << std::endl;
           lastFlush = nStartUnsat;
-          seenFront.clear();
-          seenMove.clear();
+          nClearedMems += seenUCSes.size();
+          seenUCSes.clear();
         }
         if(!enablePQ) {
           enablePQ = true;
@@ -300,14 +275,7 @@ int main(int argc, char* argv[]) {
           pq.pop();
           unsatClauses = formula.ComputeUnsatClauses();
           front.Clear();
-          continue;
-        }
-        if(!allowDuplicateFront) {
-          std::cout << "...Unsatisfiability suspected: allowing duplicate fronts..." << std::endl;
-          allowDuplicateFront = true;
-          lastFlush = nStartUnsat;
-          seenFront.clear();
-          seenMove.clear();
+          std::cout << "@"; // Indicate a BFS step
           continue;
         }
         // Unsatisfiable
@@ -320,13 +288,13 @@ int main(int argc, char* argv[]) {
         formula.ans_.Flip(revV);
       }
       if(!enablePQ) {
-        seenMove.emplace(front, bestRevVertices);
+        seenUCSes.emplace(bestUnsatClauses);
       }
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
       std::cout << "$"; // Indicate a DFS step
     }
-    std::cout << "Search size: " << seenMove.size() << std::endl;
+    std::cout << "Search size: " << seenUCSes.size() + nClearedMems << std::endl;
   }
 
   {
