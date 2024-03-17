@@ -6,15 +6,39 @@
 #include <atomic>
 #include <immintrin.h>
 
+typedef unsigned __int128 uint128;
+
 template<typename T, typename U> constexpr T DivUp(const T a, const U b) {
   return (a + T(b) - 1) / T(b);
 }
 
 struct BitVector {
   static const uint32_t nCpus_;
+  static constexpr const uint128 cHashBase =
+    (uint128(244)  * uint128(1000*1000*1000) * uint128(1000*1000*1000) + uint128(903443422803031898ULL)) * uint128(1000*1000*1000) * uint128(1000*1000*1000)
+    + uint128(471395581046679967ULL);
+  static std::unique_ptr<uint128[]> hashSeries_;
   std::unique_ptr<uint64_t[]> bits_;
   int64_t nQwords_ = 0;
   int64_t nBits_ = 0;
+  uint128 hash_ = 0;
+
+  static void CalcHashSeries(const int64_t nVars) {
+    hashSeries_.reset(new uint128[nVars+1]);
+    hashSeries_[0] = 1;
+    for(int64_t i=1; i<=nVars; i++) {
+      hashSeries_[i] = hashSeries_[i-1] * cHashBase;
+    }
+  }
+
+  void Rehash() {
+    hash_ = 0;
+    for(int64_t i=0; i<nBits_; i++) {
+      if((*this)[i]) {
+        hash_ ^= hashSeries_.get()[i];
+      }
+    }
+  }
 
   BitVector() {}
 
@@ -28,6 +52,7 @@ struct BitVector {
     for(int64_t i=0; i<nQwords_; i++) {
       bits_.get()[i] = 0;
     }
+    hash_ = 0;
   }
 
   BitVector(const BitVector& fellow) {
@@ -39,6 +64,7 @@ struct BitVector {
     for(int64_t i=0; i<nQwords_; i++) {
       bits_.get()[i] = fellow.bits_.get()[i];
     }
+    hash_ = fellow.hash_;
   }
   BitVector& operator=(const BitVector& fellow) {
     if(this != &fellow) {
@@ -52,6 +78,7 @@ struct BitVector {
       for(int64_t i=0; i<nQwords_; i++) {
         bits_.get()[i] = fellow.bits_.get()[i];
       }
+      hash_ = fellow.hash_;
     }
     return *this;
   }
@@ -60,8 +87,10 @@ struct BitVector {
       nBits_ = src.nBits_;
       nQwords_ = src.nQwords_;
       bits_ = std::move(src.bits_);
+      hash_ = src.hash_;
       src.nBits_ = 0;
       src.nQwords_ = 0;
+      src.hash_ = 0;
     }
     return *this;
   }
@@ -71,24 +100,27 @@ struct BitVector {
   }
 
   bool operator==(const BitVector& fellow) const {
-    if(nBits_ != fellow.nBits_) {
-      return false;
-    }
-    // return memcmp(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_) == 0;
-    std::atomic<bool> equals{true};
-    #pragma omp parallel for num_threads(nCpus_)
-    for(int64_t i=0; i<nQwords_; i++) {
-      if(bits_.get()[i] != fellow.bits_.get()[i]) {
-        equals.store(false, std::memory_order_relaxed);
-        #pragma omp cancel for
-      }
-      #pragma omp cancellation point for
-    }
-    return equals;
+    return hash_ == fellow.hash_;
+
+    // if(nBits_ != fellow.nBits_) {
+    //   return false;
+    // }
+    // // return memcmp(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_) == 0;
+    // std::atomic<bool> equals{true};
+    // #pragma omp parallel for num_threads(nCpus_)
+    // for(int64_t i=0; i<nQwords_; i++) {
+    //   if(bits_.get()[i] != fellow.bits_.get()[i]) {
+    //     equals.store(false, std::memory_order_relaxed);
+    //     #pragma omp cancel for
+    //   }
+    //   #pragma omp cancellation point for
+    // }
+    // return equals;
   }
 
   void Flip(const int64_t index) {
     bits_[index/64] ^= (1ULL<<(index&63));
+    hash_ ^= hashSeries_.get()[index];
   }
 
   void Randomize() {
@@ -100,6 +132,7 @@ struct BitVector {
     if(bits_[0]) {
       Flip(0);
     }
+    Rehash();
   }
 
   void SetTrue() {
@@ -109,6 +142,7 @@ struct BitVector {
     }
     // Ensure the dummy bit for the formula is always false
     Flip(0);
+    Rehash();
   }
 };
 

@@ -7,6 +7,7 @@
 #include <execution>
 #include <cmath>
 #include <random>
+#include <map>
 
 namespace detail {
 
@@ -136,6 +137,8 @@ struct Point {
 
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
 const uint32_t BitVector::nCpus_ = std::thread::hardware_concurrency();
+std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
+
 constexpr const uint32_t knLightCombs = 10; // These many combinations are considered a light operation
 
 int main(int argc, char* argv[]) {
@@ -147,6 +150,7 @@ int main(int argc, char* argv[]) {
   std::mutex muFront;
   Formula formula;
   formula.Load(argv[1]);
+  BitVector::CalcHashSeries(formula.nVars_);
   int64_t bestInit = formula.CountUnsat(formula.ans_);
   std::cout << "All false: " << bestInit << ", ";
 
@@ -174,6 +178,8 @@ int main(int argc, char* argv[]) {
     formula.ans_ = altAsg;
   }
 
+  std::map<uint128, int64_t> bv2nUnsat;
+  bv2nUnsat[formula.ans_.hash_] = bestInit;
   BitVector maxPartial;
   bool maybeSat = true;
   bool provenUnsat = false;
@@ -274,7 +280,8 @@ int main(int argc, char* argv[]) {
               }
             });
 
-            if(seenMove.find({front, stepRevs}) == seenMove.end()) {
+            auto it = bv2nUnsat.find(next.hash_);
+            if( (it == bv2nUnsat.end() || it->second < bestUnsat) && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
               TrackingSet newFront;
               TrackingSet newUnsatClauses = unsatClauses;
               int64_t nAffected = 0;
@@ -319,9 +326,9 @@ int main(int argc, char* argv[]) {
                   }
                 }
               }
+              const int64_t stepUnsat = newUnsatClauses.set_.size();
+              bv2nUnsat[next.hash_] = stepUnsat;
               if(allowDuplicateFront || seenFront.find(newFront) == seenFront.end()) {
-                // UNSAT counting is a heavy and parallelized operation
-                const int64_t stepUnsat = newUnsatClauses.set_.size();
                 if(stepUnsat < bestUnsat) {
                   bestUnsat = stepUnsat;
                   bestFront = std::move(newFront);
@@ -409,7 +416,7 @@ int main(int argc, char* argv[]) {
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
     }
-    std::cout << "Search size: " << seenMove.size() << std::endl;
+    std::cout << "Traversal size: " << seenMove.size() << ", assignments considered: " << bv2nUnsat.size() << std::endl;
   }
 
   {
