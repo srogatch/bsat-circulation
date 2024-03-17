@@ -12,18 +12,64 @@ namespace detail {
 
 template <typename F>
 struct FinalAction {
-  FinalAction(F f) : clean_{f} {}
-  ~FinalAction() { if(enabled_) clean_(); }
-  void disable() { enabled_ = false; };
-private:
+  FinalAction(F&& f) : clean_{std::move(f)} {}
+  ~FinalAction() {
+    if (enabled_) clean_();
+  }
+  void Disable() { enabled_ = false; };
+
+ private:
   F clean_;
   bool enabled_{true};
 };
 
-}
+}  // namespace detail
+
 template <typename F>
-detail::FinalAction<F> finally(F f) {
-  return detail::FinalAction<F>(f); 
+detail::FinalAction<F> Finally(F&& f) {
+  return detail::FinalAction<F>(std::move(f));
+}
+
+template <typename T>
+void ParallelShuffle(T* data, const size_t count) {
+  const uint32_t nThreads = Formula::nCpus_;
+
+  std::atomic_flag* syncs = static_cast<std::atomic_flag*>(malloc(count * sizeof(std::atomic_flag)));
+  auto clean_syncs = Finally([&]() { free(syncs); });
+#pragma omp parallel for num_threads(nThreads)
+  for (size_t i = 0; i < count; i++) {
+    new (syncs + i) std::atomic_flag(ATOMIC_FLAG_INIT);
+  }
+
+  const size_t nPerThread = (count + nThreads - 1) / nThreads;
+#pragma omp parallel for num_threads(nThreads)
+  for (size_t i = 0; i < nThreads; i++) {
+    std::random_device rd;
+    std::mt19937_64 rng(rd());
+    std::uniform_int_distribution<size_t> dist(0, count - 1);
+    const size_t iFirst = nPerThread * i;
+    const size_t iLimit = std::min(nPerThread + iFirst, count);
+    if (iLimit <= iFirst) {
+      continue;
+    }
+    for (size_t j = iFirst; j < iLimit; j++) {
+      const size_t fellow = dist(rng);
+      if (fellow == j) {
+        continue;
+      }
+      const size_t sync1 = std::min(j, fellow);
+      const size_t sync2 = std::max(j, fellow);
+      while (syncs[sync1].test_and_set(std::memory_order_acq_rel)) {
+        std::this_thread::yield();
+      }
+      while (syncs[sync2].test_and_set(std::memory_order_acq_rel)) {
+        std::this_thread::yield();
+      }
+      std::swap(data[sync1], data[sync2]);
+      syncs[sync2].clear(std::memory_order_release);
+      syncs[sync1].clear(std::memory_order_release);
+    }
+  }
 }
 
 std::vector<std::vector<uint64_t>> memComb;
@@ -109,6 +155,7 @@ int main(int argc, char* argv[]) {
   int64_t lastFlush = formula.nClauses_ + 1;
   std::deque<Point> dfs;
   int64_t nStartUnsat;
+  std::vector<int64_t> combs;
   while(maybeSat) {
     TrackingSet unsatClauses = formula.ComputeUnsatClauses();
     nStartUnsat = unsatClauses.set_.size();
@@ -145,8 +192,12 @@ int main(int argc, char* argv[]) {
       int64_t bestUnsat = formula.nClauses_+1;
       TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
 
-      std::vector<int64_t> combs(candVs.begin(), candVs.end());
-      std::shuffle(combs.begin(), combs.end(), rng);
+      combs.assign(candVs.begin(), candVs.end());
+      if(candVs.size() > 2 * Formula::nCpus_) {
+        ParallelShuffle(combs.data(), combs.size());
+      } else {
+        std::shuffle(combs.begin(), combs.end(), rng);
+      }
       std::vector<int64_t> incl;
       uint64_t nCombs = 0;
       // It may be slow to instantiate the bit vector in each combination
@@ -171,7 +222,7 @@ int main(int argc, char* argv[]) {
             stepRevs.Add(revV);
             next.Flip(revV);
           }
-          auto unflip = finally([&]() {
+          auto unflip = Finally([&]() {
             // Flip bits back
             for(int64_t revV : stepRevs.set_) {
               next.Flip(revV);
@@ -314,7 +365,7 @@ int main(int argc, char* argv[]) {
       assert(formula.SolWorks());
       ofs << "s SATISFIABLE" << std::endl;
     } else {
-      formula.ans = maxPartial;
+      formula.ans_ = maxPartial;
       ofs << "s UNKNOWN" << std::endl;
       ofs << "c Unsatisfied clause count: " << nStartUnsat << std::endl;
     }
