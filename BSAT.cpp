@@ -281,7 +281,7 @@ int main(int argc, char* argv[]) {
             });
 
             auto it = bv2nUnsat.find(next.hash_);
-            if( (it == bv2nUnsat.end() || it->second > bestUnsat) && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
+            if( (it == bv2nUnsat.end() || it->second < bestUnsat) && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
               TrackingSet newFront;
               TrackingSet newUnsatClauses = unsatClauses;
               int64_t nAffected = 0;
