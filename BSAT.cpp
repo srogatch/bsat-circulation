@@ -325,7 +325,7 @@ int main(int argc, char* argv[]) {
       }
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
-      std::cout << "$"; // Indicate a DFS step
+      std::cout << " F" << front.set_.size() << ":U" << unsatClauses.set_.size() << " "; // Indicate a DFS step
     }
     std::cout << "Search size: " << seenMove.size() << std::endl;
   }
