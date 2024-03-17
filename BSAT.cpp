@@ -146,6 +146,22 @@ int main(int argc, char* argv[]) {
   std::mutex muFront;
   Formula formula;
   formula.Load(argv[1]);
+  int64_t bestInit = formula.CountUnsat(formula.ans_);
+  BitVector altAsg = formula.ans_;
+  altAsg.Randomize();
+  int64_t altNUnsat = formula.CountUnsat(altAsg);
+  if(altNUnsat < bestInit) {
+    bestInit = altNUnsat;
+    formula.ans_ = altAsg;
+  }
+  altAsg.SetTrue();
+  altNUnsat = formula.CountUnsat(altAsg);
+  if(altNUnsat < bestInit) {
+    bestInit = altNUnsat;
+    formula.ans_ = altAsg;
+  }
+  // TODO: try a greedy assignment
+
   BitVector maxPartial;
   bool maybeSat = true;
   bool provenUnsat = false;
@@ -293,7 +309,7 @@ int main(int argc, char* argv[]) {
                   bestUnsatClauses = std::move(newUnsatClauses);
                   bestRevVertices = stepRevs;
 
-                  if(nStartUnsat <= std::max(100.0, std::sqrt(formula.nVars_))) {
+                  if(nStartUnsat <= std::max(100.0, std::pow(formula.nVars_, 1.0 / 3))) {
                     if(bestUnsat < nStartUnsat) {
                       break;
                     }
@@ -303,7 +319,7 @@ int main(int argc, char* argv[]) {
                       std::cout << " +" << nStartUnsat - bestUnsat << " ";
                       std::flush(std::cout);
                     }
-                    if(bestUnsat < nStartUnsat - std::sqrt(nStartUnsat)) {
+                    if(bestUnsat < nStartUnsat - std::pow(nStartUnsat, 0.5)) {
                       break;
                     }
                   }

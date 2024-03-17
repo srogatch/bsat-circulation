@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <atomic>
+#include <immintrin.h>
 
 template<typename T, typename U> constexpr T DivUp(const T a, const U b) {
   return (a + T(b) - 1) / T(b);
@@ -88,6 +89,26 @@ struct BitVector {
 
   void Flip(const int64_t index) {
     bits_[index/64] ^= (1ULL<<(index&63));
+  }
+
+  void Randomize() {
+    #pragma omp parallel for num_threads(nCpus_)
+    for(int64_t i=0; i<nQwords_; i++) {
+      while(!_rdrand64_step(reinterpret_cast<unsigned long long*>(bits_.get()+i)));
+    }
+    // Ensure the dummy bit for the formula is always false
+    if(bits_[0]) {
+      Flip(0);
+    }
+  }
+
+  void SetTrue() {
+    #pragma omp parallel for num_threads(nCpus_)
+    for(int64_t i=0; i<nQwords_; i++) {
+      bits_.get()[i] = -1LL;
+    }
+    // Ensure the dummy bit for the formula is always false
+    Flip(0);
   }
 };
 
