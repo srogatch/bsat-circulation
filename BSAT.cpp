@@ -155,7 +155,10 @@ int main(int argc, char* argv[]) {
   int64_t lastFlush = formula.nClauses_ + 1;
   std::deque<Point> dfs;
   int64_t nStartUnsat;
+  // Define them here to avoid reallocations
   std::vector<int64_t> combs;
+  std::vector<int64_t> vFront;
+  std::vector<int64_t> incl;
   while(maybeSat) {
     TrackingSet unsatClauses = formula.ComputeUnsatClauses();
     nStartUnsat = unsatClauses.set_.size();
@@ -177,7 +180,7 @@ int main(int argc, char* argv[]) {
         front = unsatClauses;
       }
       std::unordered_set<int64_t> candVs;
-      std::vector<int64_t> vFront(front.set_.begin(), front.set_.end());
+      vFront.assign(front.set_.begin(), front.set_.end());
       #pragma omp parallel for num_threads(Formula::nCpus_)
       for(int64_t i=0; i<vFront.size(); i++) {
         const int64_t originClause = vFront[i];
@@ -198,7 +201,6 @@ int main(int argc, char* argv[]) {
       } else {
         std::shuffle(combs.begin(), combs.end(), rng);
       }
-      std::vector<int64_t> incl;
       uint64_t nCombs = 0;
       // It may be slow to instantiate the bit vector in each combination
       BitVector next = formula.ans_;
