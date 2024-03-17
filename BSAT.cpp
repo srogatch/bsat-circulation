@@ -82,15 +82,10 @@ struct MoveHash {
 
 struct Point {
   BitVector assignment_;
-  int64_t nUnsat_;
 
-  Point(const BitVector& assignment, const int64_t nUnsat)
-  : assignment_(assignment), nUnsat_(nUnsat)
+  Point(const BitVector& assignment)
+  : assignment_(assignment)
   { }
-
-  bool operator<(const Point& fellow) const {
-    return nUnsat_ > fellow.nUnsat_;
-  }
 };
 
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
@@ -110,7 +105,7 @@ int main(int argc, char* argv[]) {
   std::unordered_set<TrackingSet> seenFront;
   std::mt19937_64 rng;
   int64_t lastFlush = formula.nClauses_ + 1;
-  bool enablePQ = false;
+  std::deque<Point> dfs;
   while(maybeSat) {
     TrackingSet unsatClauses = formula.ComputeUnsatClauses();
     const int64_t nStartUnsat = unsatClauses.set_.size();
@@ -124,7 +119,6 @@ int main(int argc, char* argv[]) {
     // avoid reallocations
     vClauses.reserve(unsatClauses.set_.size() * 4);
     bool allowDuplicateFront = false;
-    std::priority_queue<Point> pq;
     while(unsatClauses.set_.size() >= nStartUnsat) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
       if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
@@ -221,10 +215,6 @@ int main(int argc, char* argv[]) {
             if(allowDuplicateFront || seenFront.find(newFront) == seenFront.end()) {
               // UNSAT counting is a heavy and parallelized operation
               const int64_t stepUnsat = newUnsatClauses.set_.size();
-              if(enablePQ) {
-                pq.emplace(next, stepUnsat);
-                seenMove.emplace(front, stepRevs);
-              }
               if(stepUnsat < bestUnsat) {
                 bestUnsat = stepUnsat;
                 bestFront = std::move(newFront);
@@ -268,47 +258,19 @@ int main(int argc, char* argv[]) {
         if(!allowDuplicateFront) {
           seenFront.emplace(front);
         }
-        // // TODO: a data structure with smaller algorithmic complexity
-        // std::vector<std::pair<TrackingSet, TrackingSet>> toRemove;
-        // for(const auto& p : seenMove) {
-        //   if(p.first == front) {
-        //     toRemove.emplace_back(p);
-        //   }
-        // }
-        // // Release some memory - the moves from this front are no more needed
-        // for(const auto& p : toRemove) {
-        //   seenMove.erase(p);
-        // }
         if(front != unsatClauses) {
           // Retry with full front
+          std::cout << "$";
           front = unsatClauses;
           continue;
         }
 
-        if(nStartUnsat < lastFlush) {
-          std::cout << "...Flushing the memorization..." << std::endl;
-          lastFlush = nStartUnsat;
-          seenFront.clear();
-          seenMove.clear();
-        }
-        if(!enablePQ) {
-          enablePQ = true;
-          std::cout << "...Enabling priority queue..." << std::endl;
-          continue;
-        }
-        if(!pq.empty()) {
-          formula.ans_ = std::move(pq.top().assignment_);
-          pq.pop();
+        if(!dfs.empty()) {
+          formula.ans_ = std::move(dfs.back().assignment_);
+          dfs.pop_back();
           unsatClauses = formula.ComputeUnsatClauses();
           front.Clear();
-          continue;
-        }
-        if(!allowDuplicateFront) {
-          std::cout << "...Unsatisfiability suspected: allowing duplicate fronts..." << std::endl;
-          allowDuplicateFront = true;
-          lastFlush = nStartUnsat;
-          seenFront.clear();
-          seenMove.clear();
+          std::cout << "@";
           continue;
         }
         // Unsatisfiable
@@ -317,15 +279,20 @@ int main(int argc, char* argv[]) {
         break;
       }
 
+      // Limit the size of the stack
+      if(dfs.size() > formula.nVars_) {
+        dfs.pop_front();
+      }
+      dfs.push_back(Point(formula.ans_));
+
       for(int64_t revV : bestRevVertices.set_) {
         formula.ans_.Flip(revV);
       }
-      if(!enablePQ) {
-        seenMove.emplace(front, bestRevVertices);
-      }
+      seenMove.emplace(front, bestRevVertices);
+      // Indicate a DFS step
+      std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
-      std::cout << " F" << front.set_.size() << ":U" << unsatClauses.set_.size() << " "; // Indicate a DFS step
     }
     std::cout << "Search size: " << seenMove.size() << std::endl;
   }
