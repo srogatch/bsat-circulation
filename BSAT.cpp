@@ -287,6 +287,10 @@ int main(int argc, char* argv[]) {
               prevBestAtCombs++;
             }
             if( maybeSuperior && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
+              // TODO: this is the bottleneck for huge formulas, but it can be alleviated
+              // by means of keeping track of the degree of satisfiability (how many variables
+              // are satisfying each clause) and updating the data structure as we flip
+              // variables
               TrackingSet newFront;
               TrackingSet newUnsatClauses = unsatClauses;
               // TODO: these can be parallelized if ordered maps are used, then copied to the vector in partitions
