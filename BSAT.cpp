@@ -136,6 +136,7 @@ struct Point {
 
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
 const uint32_t BitVector::nCpus_ = std::thread::hardware_concurrency();
+constexpr const uint32_t knLightCombs = 1000; // These many combinations are considered a light operation
 
 int main(int argc, char* argv[]) {
   if(argc < 3) {
@@ -147,20 +148,31 @@ int main(int argc, char* argv[]) {
   Formula formula;
   formula.Load(argv[1]);
   int64_t bestInit = formula.CountUnsat(formula.ans_);
-  BitVector altAsg = formula.ans_;
-  altAsg.Randomize();
+  std::cout << "All false: " << bestInit << ", ";
+
+  BitVector altAsg = formula.SetGreedy();
   int64_t altNUnsat = formula.CountUnsat(altAsg);
+  std::cout << "Greedy: " << altNUnsat << ", ";
   if(altNUnsat < bestInit) {
     bestInit = altNUnsat;
     formula.ans_ = altAsg;
   }
+
+  altAsg.Randomize();
+  altNUnsat = formula.CountUnsat(altAsg);
+  std::cout << "Random: " << altNUnsat << ", ";
+  if(altNUnsat < bestInit) {
+    bestInit = altNUnsat;
+    formula.ans_ = altAsg;
+  }
+
   altAsg.SetTrue();
   altNUnsat = formula.CountUnsat(altAsg);
+  std::cout << "All true: " << altNUnsat << std::endl;
   if(altNUnsat < bestInit) {
     bestInit = altNUnsat;
     formula.ans_ = altAsg;
   }
-  // TODO: try a greedy assignment
 
   BitVector maxPartial;
   bool maybeSat = true;
@@ -223,6 +235,7 @@ int main(int argc, char* argv[]) {
         return a.second > b.second || (a.second == b.second && hash64(a.first) < hash64(b.first));
       });
       uint64_t nCombs = 0;
+      uint64_t prevBestAtCombs = 0;
       next = formula.ans_;
       TrackingSet stepRevs;
       for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
@@ -309,23 +322,18 @@ int main(int argc, char* argv[]) {
                   bestUnsatClauses = std::move(newUnsatClauses);
                   bestRevVertices = stepRevs;
 
-                  if(nStartUnsat <= std::max(100.0, std::pow(formula.nVars_, 1.0 / 3))) {
-                    if(bestUnsat < nStartUnsat) {
-                      break;
-                    }
-                  } else {
-                    if(bestUnsat < nStartUnsat) {
-                      unflip.Disable();
-                      std::cout << " +" << nStartUnsat - bestUnsat << " ";
-                      std::flush(std::cout);
-                    }
-                    if(bestUnsat < nStartUnsat - std::pow(nStartUnsat, 0.5)) {
-                      break;
-                    }
+                  if(bestUnsat < nStartUnsat) {
+                    prevBestAtCombs = nCombs;
+                    unflip.Disable();
+                    std::cout << " +" << nStartUnsat - bestUnsat << " ";
+                    std::flush(std::cout);
                   }
                 }
               }
             }
+          }
+          if(bestUnsat < nStartUnsat && nCombs - prevBestAtCombs > knLightCombs) {
+            break;
           }
           int64_t j;
           for(j=nIncl-1; j>=0; j--) {

@@ -122,44 +122,6 @@ struct Formula {
     return true;
   }
 
-  // var2clause_ is not handled in RemoveKnown()
-  // bool RemoveKnown(const std::vector<bool>& known) {
-  //   std::vector<uint64_t> satClauses;
-  //   for(auto& clause : clause2var_) {
-  //     std::vector<int64_t> unsatVars;
-  //     bool hasUnknowns = false;
-  //     bool satisfied = false;
-  //     for(int64_t iVar : clause.second) {
-  //       if(!known[llabs(iVar)]) {
-  //         hasUnknowns = true;
-  //         continue;
-  //       }
-  //       if( (iVar < 0 && !ans_[-iVar]) || (iVar > 0 && ans_[iVar]) ) {
-  //         satisfied = true;
-  //         break;
-  //       } else {
-  //         unsatVars.emplace_back(iVar);
-  //       }
-  //     }
-  //     if(satisfied) {
-  //       satClauses.emplace_back(clause.first);
-  //     } else if(!hasUnknowns) {
-  //       // Unsatisfied clause
-  //       return false;
-  //     }
-  //     for(int64_t uv : unsatVars) {
-  //       clause.second.erase(uv);
-  //     }
-  //   }
-  //   for(uint64_t iClause : satClauses) {
-  //     clause2var_.erase(iClause);
-  //   }
-  //   if(clause2var_.empty()) {
-  //     std::cout << "All clauses satisfied." << std::endl;
-  //   }
-  //   return true;
-  // }
-
   int64_t CountUnsat(const BitVector& assignment) {
     std::atomic<int64_t> nUnsat = 0;
     #pragma omp parrallel for num_threads(nCpus_)
@@ -192,6 +154,31 @@ struct Formula {
       if(!IsSatisfied(i, ans_)) {
         #pragma omp critical
         ans.Add(i);
+      }
+    }
+    return ans;
+  }
+
+  BitVector SetGreedy() const {
+    BitVector ans(nVars_); // Init to false
+    std::vector<std::pair<int64_t, int64_t>> counts_;
+    #pragma omp parallel for num_threads(nCpus_)
+    for(int64_t i=1; i<=nVars_; i++) {
+      auto it = var2clause_.find(i);
+      if(it == var2clause_.end()) {
+        continue; // this variable doesn't appear in any clause - let it stay false
+      }
+      int64_t nPos = 0, nNeg = 0;
+      for(const int64_t j : it->second) {
+        if(j < 0) {
+          nNeg++;
+        } else {
+          nPos++;
+        }
+      }
+      if(nPos > nNeg) {
+        #pragma omp critical
+        ans.Flip(i);
       }
     }
     return ans;
