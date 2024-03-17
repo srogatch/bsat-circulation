@@ -159,6 +159,7 @@ int main(int argc, char* argv[]) {
   std::vector<int64_t> combs;
   std::vector<int64_t> vFront;
   std::vector<int64_t> incl;
+  BitVector next;
   while(maybeSat) {
     TrackingSet unsatClauses = formula.ComputeUnsatClauses();
     nStartUnsat = unsatClauses.set_.size();
@@ -202,8 +203,7 @@ int main(int argc, char* argv[]) {
         std::shuffle(combs.begin(), combs.end(), rng);
       }
       uint64_t nCombs = 0;
-      // It may be slow to instantiate the bit vector in each combination
-      BitVector next = formula.ans_;
+      next = formula.ans_;
       for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
         if(AccComb(combs.size(), nIncl) > 100) {
           std::cout << " C" << combs.size() << "," << nIncl << " ";
@@ -214,8 +214,8 @@ int main(int argc, char* argv[]) {
           incl.push_back(j);
         }
         for(;;) {
-          TrackingSet stepRevs;
           nCombs++;
+          TrackingSet stepRevs;
           assert(next == formula.ans_);
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[incl[j]];
