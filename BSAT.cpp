@@ -173,7 +173,7 @@ int main(int argc, char* argv[]) {
   std::vector<int64_t> incl;
   BitVector next;
   uint64_t cycleOffset = 0;
-  int64_t minIncl = 1;
+  int64_t lastGD = 0;
   while(maybeSat) {
     TrackingSet unsatClauses = satTr.GetUnsat();
     nStartUnsat = unsatClauses.set_.size();
@@ -185,7 +185,7 @@ int main(int argc, char* argv[]) {
     auto tmEnd = std::chrono::high_resolution_clock::now();
     double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmStart).count() / 1e9;
     double clausesPerSec = (prevNUnsat - nStartUnsat) / nSec;
-    std::cout << "Unsatisfied clauses: " << nStartUnsat << " - elapsed " << nSec << " seconds, ";
+    std::cout << "\tUnsatisfied clauses: " << nStartUnsat << " - elapsed " << nSec << " seconds, ";
     if(clausesPerSec >= 1 || clausesPerSec == 0) {
       std::cout << clausesPerSec << " clauses per second.";
     } else {
@@ -203,7 +203,7 @@ int main(int argc, char* argv[]) {
     while(unsatClauses.set_.size() >= nStartUnsat) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
       if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
-        if(minIncl == 1) {
+        if(seenMove.size() - lastGD > std::sqrt(formula.nVars_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) {
           std::cout << "G";
           std::cout.flush();
           satTr.Populate(formula.ans_);
@@ -211,15 +211,19 @@ int main(int argc, char* argv[]) {
           std::cout << "D";
           std::cout.flush();
           if(newUnsat > nStartUnsat - std::sqrt(nStartUnsat)) {
-            minIncl = 2;
+            lastGD = seenMove.size();
           }
+          unsatClauses = satTr.GetUnsat();
+          bv2nUnsat[formula.ans_.hash_] = unsatClauses.set_.size();
+          front.Clear();
+          // Limit the size of the stack
+          if(dfs.size() > formula.nVars_) {
+            dfs.pop_front();
+          }
+          dfs.push_back(Point(formula.ans_));
           if(newUnsat < nStartUnsat) {
             break;
           }
-          unsatClauses = satTr.GetUnsat();
-          front.Clear();
-        } else {
-          minIncl = 1;
         }
 
         const int64_t oldFrontSize = front.set_.size();
@@ -238,17 +242,51 @@ int main(int argc, char* argv[]) {
             //TODO: instead of the random shuffle, perhaps we should sort the clauses by their extent of influence on the formula
             // but this wouldn't be relevant for 3-CNF.
             ParallelShuffle(vFront.data(), vFront.size());
+            int64_t vfEnd;
             if(oldFrontSize > nInFront) {
-              for(int64_t i=0; i<oldFrontSize - nInFront; i++) {
+              vfEnd = oldFrontSize - nInFront;
+              for(int64_t i=0; i<vfEnd; i++) {
                 front.Remove(vFront[i]);
               }
             } else {
-              for(int64_t i=0; i<nInFront - oldFrontSize; i++) {
+              vfEnd = nInFront - oldFrontSize;
+              for(int64_t i=0; i<vfEnd; i++) {
                 front.Add(vFront[i]);
+              }
+            }
+            if(!allowDuplicateFront) {
+              while(seenFront.find(front) != seenFront.end()) {
+                if(vfEnd < vFront.size()) {
+                  front.Remove(*front.set_.begin());
+                  front.Add(vFront[vfEnd]);
+                  vfEnd++;
+                } else {
+                  front = unsatClauses;
+                  break;
+                }
               }
             }
           } else {
             front = unsatClauses;
+          }
+          if(seenFront.find(front) != seenFront.end() && unsatClauses.set_.size() < 20) {
+            vFront.assign(unsatClauses.set_.begin(), unsatClauses.set_.end());
+            const int64_t limitI = (1LL << front.set_.size());
+            #pragma omp parallel for
+            for(int64_t i=0; i<limitI; i++) {
+              TrackingSet newFront;
+              for(int j=0; j<vFront.size(); j++) {
+                if(i & (1LL<<j)) {
+                  newFront.Add(vFront[j]);
+                }
+              }
+              if(seenFront.find(newFront) == seenFront.end()) {
+                #pragma omp critical
+                front = newFront;
+                #pragma omp cancel for
+              }
+              #pragma omp cancellation point for
+            }
           }
         }
         std::cout << "$";
@@ -274,7 +312,6 @@ int main(int argc, char* argv[]) {
       TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
 
       combs.assign(candVs.begin(), candVs.end());
-
       if( combs.size() <= std::log2(formula.nClauses_) ) {
         if( combs.size() >= 2 * omp_get_max_threads() ) {
           ParallelShuffle(combs.data(), combs.size());
@@ -289,11 +326,12 @@ int main(int argc, char* argv[]) {
           return a.second > b.second || (a.second == b.second && hash64(a.first) < hash64(b.first));
         });
       }
+
       uint64_t nCombs = 0;
       uint64_t prevBestAtCombs = 0;
       next = formula.ans_;
       TrackingSet stepRevs;
-      for(int64_t nIncl=std::min<int64_t>(combs.size(), minIncl); nIncl<=combs.size(); nIncl++) {
+      for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
         if(AccComb(combs.size(), nIncl) > 100) {
           std::cout << " C" << combs.size() << "," << nIncl << " ";
           std::flush(std::cout);
@@ -364,6 +402,9 @@ int main(int argc, char* argv[]) {
           {
             break;
           }
+          if( nCombs > 100 && nCombs > std::sqrt(formula.nClauses_) ) {
+            break;
+          }
           int64_t j;
           for(j=nIncl-1; j>=0; j--) {
             if(incl[j]+(nIncl-j) >= combs.size()) {
@@ -382,19 +423,32 @@ int main(int argc, char* argv[]) {
         }
         // Let the next traversal start from the combination we left on
         cycleOffset += nCombs - nBeforeCombs;
-        if(bestUnsat < std::min<int64_t>(
-            std::max(nStartUnsat + nCombs - 1, unsatClauses.set_.size()*2),
-            formula.nClauses_))
-        {
-          cycleOffset -= bestRevVertices.set_.size();
+        if( bestUnsat < formula.nClauses_ ) {
+          if(bestUnsat < nStartUnsat) {
+            cycleOffset -= bestRevVertices.set_.size();
+            break;
+          }
+          if(bestUnsat < unsatClauses.set_.size() * 2) {
+            break;
+          }
+          if(nStartUnsat < std::log2(formula.nClauses_)) {
+            if(bestUnsat < nStartUnsat + nCombs/std::log2(nCombs+1)) {
+              break;
+            }
+          }
+        }
+        if( nCombs > 100 && nCombs > std::sqrt(formula.nClauses_) ) {
           break;
         }
       }
       if(nCombs > 100) {
-        std::cout << " N" << nCombs << " " << std::endl;
+        std::cout << " N" << nCombs << " ";
+        std::cout.flush();
       }
 
       if(bestUnsat >= formula.nClauses_) {
+        std::cout << "#";
+
         //std::cout << "The front of " << front.size() << " clauses doesn't lead anywhere." << std::endl;
         if(!allowDuplicateFront) {
           seenFront.emplace(front);
@@ -402,6 +456,7 @@ int main(int argc, char* argv[]) {
 
         if(front != unsatClauses) {
           // Retry with full/random front
+          satTr.Swap(origSatTr);
           front.Clear();
           continue;
         }
@@ -409,7 +464,8 @@ int main(int argc, char* argv[]) {
         if(!dfs.empty()) {
           formula.ans_ = std::move(dfs.back().assignment_);
           dfs.pop_back();
-          unsatClauses = formula.ComputeUnsatClauses();
+          satTr.Populate(formula.ans_);
+          unsatClauses = satTr.GetUnsat();
           front.Clear();
           std::cout << "@";
           continue;
@@ -442,7 +498,7 @@ int main(int argc, char* argv[]) {
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
     }
-    std::cout << "...Traversal size: " << seenMove.size() << ", assignments considered: " << bv2nUnsat.size() << std::endl;
+    std::cout << "\n\tTraversal size: " << seenMove.size() << ", assignments considered: " << bv2nUnsat.size() << std::endl;
   }
 
   {
