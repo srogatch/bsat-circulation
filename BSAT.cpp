@@ -175,7 +175,7 @@ int main(int argc, char* argv[]) {
   uint64_t cycleOffset = 0;
   int64_t minIncl = 1;
   while(maybeSat) {
-    TrackingSet unsatClauses = formula.ComputeUnsatClauses();
+    TrackingSet unsatClauses = satTr.GetUnsat();
     nStartUnsat = unsatClauses.set_.size();
     maxPartial = formula.ans_;
     if(nStartUnsat == 0) {
@@ -254,6 +254,8 @@ int main(int argc, char* argv[]) {
         std::cout << "$";
         std::cout.flush();
       }
+
+      DefaultSatTracker origSatTr(satTr);
       std::unordered_map<int64_t, int64_t> candVs;
       vFront.assign(front.set_.begin(), front.set_.end());
       #pragma omp parallel for
@@ -303,6 +305,7 @@ int main(int argc, char* argv[]) {
         int64_t nBeforeCombs = nCombs;
         for(;;) {
           nCombs++;
+          TrackingSet newFront;
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
             auto it = stepRevs.set_.find(revV);
@@ -312,9 +315,10 @@ int main(int argc, char* argv[]) {
               stepRevs.Remove(revV);
             }
             next.Flip(revV);
+            satTr.FlipVar(revV * (next[revV] ? 1 : -1), &unsatClauses, &newFront);
           }
           {
-            auto unflip = Finally([&combs, &incl, &stepRevs, &next, nIncl, cycleOffset]() {
+            auto unflip = Finally([&combs, &incl, &stepRevs, &next, &unsatClauses, &satTr, nIncl, cycleOffset]() {
               // Flip bits back
               for(int64_t j=0; j<nIncl; j++) {
                 const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
@@ -325,6 +329,7 @@ int main(int argc, char* argv[]) {
                   stepRevs.Remove(revV);
                 }
                 next.Flip(revV);
+                satTr.FlipVar(revV * (next[revV] ? 1 : -1), &unsatClauses, nullptr);
               }
             });
 
@@ -335,52 +340,13 @@ int main(int argc, char* argv[]) {
               prevBestAtCombs++;
             }
             if( maybeSuperior && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
-              // TODO: this is the bottleneck for huge formulas, but it can be alleviated
-              // by means of keeping track of the degree of satisfiability (how many variables
-              // are satisfying each clause) and updating the data structure as we flip
-              // variables
-              TrackingSet newFront;
-              TrackingSet newUnsatClauses = unsatClauses;
-              // TODO: these can be parallelized if ordered maps are used, then copied to the vector in partitions
-              std::unordered_set<int64_t> clauses;
-              for(const int64_t sr : stepRevs.set_) {
-                const std::vector<int64_t>& src = formula.listVar2Clause_[sr];
-                for(int64_t i=0; i<src.size(); i++) {
-                  clauses.emplace(llabs(src[i]));
-                }
-              }
-              std::vector<int64_t> vClauses(clauses.begin(), clauses.end());
-              #pragma omp parallel for
-              for(int64_t j=0; j<vClauses.size(); j++) {
-                const uint64_t absClause = vClauses[j];
-                const bool oldSat = formula.IsSatisfied(absClause, formula.ans_);
-                const bool newSat = formula.IsSatisfied(absClause, next);
-                if(newSat) {
-                  if(!oldSat) {
-                    std::unique_lock<std::mutex> lock(muUnsatClauses);
-                    newUnsatClauses.Remove(absClause);
-                  }
-                } else {
-                  if(oldSat)
-                  {
-                    {
-                      std::unique_lock<std::mutex> lock(muUnsatClauses);
-                      newUnsatClauses.Add(absClause);
-                    }
-                    {
-                      std::unique_lock<std::mutex> lock(muFront);
-                      newFront.Add(absClause);
-                    }
-                  }
-                }
-              }
-              const int64_t stepUnsat = newUnsatClauses.set_.size();
+              const int64_t stepUnsat = unsatClauses.set_.size();
               bv2nUnsat[next.hash_] = stepUnsat;
               if(allowDuplicateFront || seenFront.find(newFront) == seenFront.end()) {
                 if(stepUnsat < bestUnsat) {
                   bestUnsat = stepUnsat;
                   bestFront = std::move(newFront);
-                  bestUnsatClauses = std::move(newUnsatClauses);
+                  bestUnsatClauses = unsatClauses;
                   bestRevVertices = stepRevs;
 
                   if(bestUnsat < nStartUnsat) {
@@ -460,9 +426,12 @@ int main(int argc, char* argv[]) {
       }
       dfs.push_back(Point(formula.ans_));
 
+      satTr.Swap(origSatTr);
       for(int64_t revV : bestRevVertices.set_) {
         formula.ans_.Flip(revV);
+        satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), nullptr, nullptr);
       }
+
       seenMove.emplace(front, bestRevVertices);
       if(bestRevVertices.set_.size() >= 2) {
         // TODO: More than 2 variables have been changed at once - try to descend into a better solution by flipping all variables one by one
