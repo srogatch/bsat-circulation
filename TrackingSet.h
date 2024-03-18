@@ -35,6 +35,16 @@ struct TrackingSet {
   bool operator!=(const TrackingSet& fellow) const {
     return hash_ != fellow.hash_ || set_ != fellow.set_;
   }
+
+  TrackingSet operator-(const TrackingSet& fellow) const {
+    TrackingSet ans;
+    for(const int64_t iClause : set_) {
+      if(fellow.set_.find(iClause) == fellow.set_.end()) {
+        ans.Add(iClause);
+      }
+    }
+    return ans;
+  }
 };
 
 namespace std {

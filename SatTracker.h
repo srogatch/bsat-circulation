@@ -59,7 +59,7 @@ template<typename TCounter> struct SatTracker {
 
   // The sign of iVar must reflect the new value of the variable.
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
-  int64_t FlipVar(const int64_t iVar, TrackingSet* pUnsatClauses, TrackingSet* pFront) {
+  int64_t FlipVar(const int64_t iVar, TrackingSet* front = nullptr) {
     const std::vector<int64_t>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     std::atomic<int64_t> ans(0);
     #pragma omp parallel for
@@ -71,10 +71,9 @@ template<typename TCounter> struct SatTracker {
         assert(oldVal >= 0);
         if(oldVal == 0) {
           ans.fetch_add(1, std::memory_order_relaxed);
-          const int64_t aClause = llabs(iClause);
-          if(pUnsatClauses) {
+          if(front != nullptr) {
             #pragma omp critical
-            pUnsatClauses->Remove(aClause);
+            front->Remove(aClause);
           }
         }
       }
@@ -83,13 +82,9 @@ template<typename TCounter> struct SatTracker {
         assert(oldVal >= 1);
         if(oldVal == 1) {
           ans.fetch_sub(1, std::memory_order_relaxed);
-          if(pUnsatClauses) {
+          if(front != nullptr) {
             #pragma omp critical
-            pUnsatClauses->Add(aClause);
-          }
-          if(pFront) {
-            #pragma omp critical
-            pFront->Add(aClause);
+            front->Add(aClause);
           }
         }
       }
@@ -128,13 +123,13 @@ template<typename TCounter> struct SatTracker {
     for(int64_t k=0; k<pFormula_->nVars_; k++) {
       assert(1 <= vVars[k] && vVars[k] <= pFormula_->nVars_);
       const int64_t iVar = vVars[k] * (pFormula_->ans_[vVars[k]] ? 1 : -1);
-      const int64_t nNewSat = FlipVar(-iVar, nullptr, nullptr);
+      const int64_t nNewSat = FlipVar(-iVar);
       if(nNewSat >= (preferMove ? 0 : 1)) {
         minUnsat -= nNewSat;
         pFormula_->ans_.Flip(vVars[k]);
       } else {
         // Flip back
-        FlipVar(iVar, nullptr, nullptr);
+        FlipVar(iVar);
       }
     }
     return minUnsat;
