@@ -10,6 +10,7 @@
 #include <cmath>
 #include <random>
 #include <map>
+#include <chrono>
 
 std::vector<std::vector<uint64_t>> memComb;
 uint64_t Comb(const int64_t n, const int64_t k) {
@@ -93,6 +94,10 @@ int main(int argc, char* argv[]) {
   std::mutex muFront;
   Formula formula;
   formula.Load(argv[1]);
+
+  int64_t prevNUnsat = formula.nClauses_;
+  auto tmStart = std::chrono::high_resolution_clock::now();
+
   // Now there are some clause bitvectors
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
 
@@ -176,7 +181,19 @@ int main(int argc, char* argv[]) {
       std::cout << "Satisfied" << std::endl;
       break;
     }
-    std::cout << "Unsatisfied clauses: " << nStartUnsat << std::endl;
+    auto tmEnd = std::chrono::high_resolution_clock::now();
+    double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmStart).count() / 1e9;
+    double clausesPerSec = (prevNUnsat - nStartUnsat) / nSec;
+    std::cout << "Unsatisfied clauses: " << nStartUnsat << " - ";
+    if(clausesPerSec >= 1 || clausesPerSec == 0) {
+      std::cout << clausesPerSec << " clauses per second.";
+    } else {
+      std::cout << 1.0 / clausesPerSec << " seconds per clause.";
+    }
+    std::cout << std::endl;
+    tmStart = tmEnd;
+    prevNUnsat = nStartUnsat;
+    
     TrackingSet front;
     std::vector<int64_t> vClauses;
     // avoid reallocations
