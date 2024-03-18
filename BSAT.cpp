@@ -174,6 +174,7 @@ int main(int argc, char* argv[]) {
   BitVector next;
   uint64_t cycleOffset = 0;
   int64_t lastGD = 0;
+  int64_t nGD = 0; // the number of times Gradient Descent was launched
   while(maybeSat) {
     TrackingSet unsatClauses = satTr.GetUnsat();
     nStartUnsat = unsatClauses.set_.size();
@@ -407,11 +408,12 @@ int main(int argc, char* argv[]) {
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
 
-      if(bestRevVertices.set_.size() >= 2) {
-        if(seenMove.size() - lastGD > std::sqrt(formula.nVars_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) {
+      if(bestRevVertices.set_.size() >= 3) {
+        if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) {
           std::cout << "G";
           std::cout.flush();
           satTr.Populate(formula.ans_);
+          nGD++;
           const int64_t newUnsat = satTr.GradientDescend(true);
           std::cout << "D";
           std::cout.flush();
@@ -432,7 +434,8 @@ int main(int argc, char* argv[]) {
         }
       }
     }
-    std::cout << "\n\tTraversal size: " << seenMove.size() << ", assignments considered: " << bv2nUnsat.size() << std::endl;
+    std::cout << "\n\tTraversal size: " << seenMove.size() << ", assignments considered: " << bv2nUnsat.size()
+      << ", Gradient Descents: " << nGD << std::endl;
   }
 
   {
