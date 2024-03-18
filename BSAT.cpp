@@ -101,7 +101,7 @@ int main(int argc, char* argv[]) {
   std::cout << "All false: " << bestInit << ", ";
   std::cout.flush();
 
-  int64_t altNUnsat=satTr.GradientDescend();
+  int64_t altNUnsat=satTr.GradientDescend(false); // for init it's usually better if we don't move an extra time
   std::cout << "GradientDescent: " << altNUnsat << ", ";
   std::cout.flush();
   if(altNUnsat < bestInit) {

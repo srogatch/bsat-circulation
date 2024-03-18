@@ -90,7 +90,7 @@ template<typename TCounter> struct SatTracker {
     return pFormula_->nClauses_ - totSat_.load(std::memory_order_relaxed);
   }
 
-  int64_t GradientDescend() {
+  int64_t GradientDescend(const bool preferMove) {
     std::vector<int64_t> vVars(pFormula_->nVars_);
     constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars[0]);
 
@@ -105,7 +105,7 @@ template<typename TCounter> struct SatTracker {
       assert(1 <= vVars[k] && vVars[k] <= pFormula_->nVars_);
       const int64_t iVar = vVars[k] * (pFormula_->ans_[vVars[k]] ? 1 : -1);
       const int64_t nNewSat = FlipVar(-iVar, nullptr);
-      if(nNewSat >= 0) {
+      if(nNewSat >= (preferMove ? 0 : 1)) {
         minUnsat -= nNewSat;
         pFormula_->ans_.Flip(vVars[k]);
       } else {
