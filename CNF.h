@@ -54,7 +54,7 @@ struct Formula {
     BlockingQueue<std::pair<int64_t, int64_t>> bqAdding;
 
     std::thread parsingThr([&] {
-      const int remainingCpus = std::max(1, int(omp_get_max_threads()) - 3);
+      const int remainingCpus = std::max<int>(1, std::thread::hardware_concurrency() / 2);
       bool probDefRead = false;
       int64_t iClause = 0;
       std::string line;

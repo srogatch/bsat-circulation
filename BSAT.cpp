@@ -75,6 +75,8 @@ struct Point {
 
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
+constexpr const uint32_t kMinFront = 5;
+constexpr const uint32_t kMaxFront = 20;
 
 int main(int argc, char* argv[]) {
   if(argc < 3) {
@@ -182,8 +184,37 @@ int main(int argc, char* argv[]) {
     while(unsatClauses.set_.size() >= nStartUnsat) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
       if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
-        //std::cout << "Empty front" << std::endl;
-        front = unsatClauses;
+        const int64_t oldFrontSize = front.set_.size();
+        int64_t nInFront = std::log(formula.nClauses_);
+        nInFront = std::max<int64_t>(kMinFront, nInFront);
+        nInFront = std::min<int64_t>(unsatClauses.set_.size(), nInFront);
+        if(oldFrontSize != nInFront) {
+          if(nInFront < unsatClauses.set_.size()) {
+            std::vector<int64_t> vFront;
+            if(oldFrontSize > nInFront) {
+              vFront.assign(front.set_.begin(), front.set_.end());
+            }
+            else {
+              vFront.assign(unsatClauses.set_.begin(), unsatClauses.set_.end());
+            }
+            //TODO: instead of the random shuffle, perhaps we should sort the clauses by their extent of influence on the formula
+            // but this wouldn't be relevant for 3-CNF.
+            ParallelShuffle(vFront.data(), vFront.size());
+            if(oldFrontSize > nInFront) {
+              for(int64_t i=0; i<oldFrontSize - nInFront; i++) {
+                front.Remove(vFront[i]);
+              }
+            } else {
+              for(int64_t i=0; i<nInFront - oldFrontSize; i++) {
+                front.Add(vFront[i]);
+              }
+            }
+          } else {
+            front = unsatClauses;
+          }
+        }
+        std::cout << "$";
+        std::cout.flush();
       }
       std::unordered_map<int64_t, int64_t> candVs;
       vFront.assign(front.set_.begin(), front.set_.end());
@@ -365,9 +396,8 @@ int main(int argc, char* argv[]) {
           seenFront.emplace(front);
         }
         if(front != unsatClauses) {
-          // Retry with full front
-          std::cout << "$";
-          front = unsatClauses;
+          // Retry with full/random front
+          front.Clear();
           continue;
         }
 
