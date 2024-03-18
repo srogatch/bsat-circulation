@@ -11,6 +11,7 @@
 #include <random>
 #include <map>
 #include <chrono>
+#include <set>
 
 std::vector<std::vector<uint64_t>> memComb;
 uint64_t Comb(const int64_t n, const int64_t k) {
@@ -228,18 +229,11 @@ int main(int argc, char* argv[]) {
       TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
 
       combs.assign(candVs.begin(), candVs.end());
-      if( combs.size() <= std::log2(formula.nClauses_) ) {
-        if( combs.size() >= 2 * omp_get_max_threads() ) {
-          ParallelShuffle(combs.data(), combs.size());
-        } else {
-          std::shuffle(combs.begin(), combs.end(), rng);
-        }
+      const bool fullCombinations = combs.size() <= std::log(formula.nClauses_);
+      if(fullCombinations) {
+        std::shuffle(combs.begin(), combs.end(), rng);
         std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
           return a.second > b.second;
-        });
-      } else {
-        std::sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
-          return a.second > b.second || (a.second == b.second && hash64(a.first) < hash64(b.first));
         });
       }
 
@@ -248,13 +242,21 @@ int main(int argc, char* argv[]) {
       next = formula.ans_;
       TrackingSet stepRevs;
       for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
-        if(AccComb(combs.size(), nIncl) > 100) {
+        if(!fullCombinations || AccComb(combs.size(), nIncl) > 100) {
           std::cout << " C" << combs.size() << "," << nIncl << " ";
           std::flush(std::cout);
         }
-        incl.clear();
-        for(int64_t j=0; j<nIncl; j++) {
-          incl.push_back(j);
+        if(fullCombinations) {
+          incl.clear();
+          for(int64_t j=0; j<nIncl; j++) {
+            incl.push_back(j);
+          }
+        } else {
+          std::set<int64_t> sIncl;
+          while(sIncl.size() < nIncl) {
+            sIncl.emplace(rng() % combs.size());
+          }
+          incl.assign(sIncl.begin(), sIncl.end());
         }
         int64_t nBeforeCombs = nCombs;
         for(;;) {
@@ -320,6 +322,9 @@ int main(int argc, char* argv[]) {
             // These little combinations are considered a light operation
             && nCombs - prevBestAtCombs > std::log2(formula.nVars_+1))
           {
+            break;
+          }
+          if(!fullCombinations) {
             break;
           }
           int64_t j;
