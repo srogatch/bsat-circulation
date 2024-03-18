@@ -20,6 +20,26 @@ template<typename TCounter> struct SatTracker {
     nSat_.reset(new std::atomic<TCounter>[pFormula_->nClauses_+1]);
   }
 
+  SatTracker(const SatTracker& src) {
+    pFormula_ = src.pFormula_;
+    totSat_.store(src.totSat_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    nSat_.reset(new std::atomic<TCounter>[pFormula_->nClauses_+1]);
+
+    // TODO: better split into memcpy() ranges?
+    #pragma omp parallel for
+    for(int64_t i=0; i<=pFormula_->nClauses_; i++) {
+      nSat_.get()[i].store(src.nSat_.get()[i].load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+  }
+
+  void Swap(SatTracker& fellow) {
+    std::swap(nSat_, fellow.nSat_);
+    std::swap(pFormula_, fellow.pFormula_);
+    TCounter t = totSat_.load(std::memory_order_relaxed);
+    totSat_.store(fellow.totSat_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    fellow.totSat_.store(t, std::memory_order_relaxed);
+  }
+
   void Populate(const BitVector& assignment) {
     totSat_.store(0, std::memory_order_relaxed);
     nSat_[0] = 1;
@@ -39,7 +59,7 @@ template<typename TCounter> struct SatTracker {
 
   // The sign of iVar must reflect the new value of the variable.
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
-  int64_t FlipVar(const int64_t iVar, TrackingSet* pUnsatClauses) {
+  int64_t FlipVar(const int64_t iVar, TrackingSet* pUnsatClauses, TrackingSet* pFront) {
     const std::vector<int64_t>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     std::atomic<int64_t> ans(0);
     #pragma omp parallel for
@@ -66,6 +86,10 @@ template<typename TCounter> struct SatTracker {
           if(pUnsatClauses) {
             #pragma omp critical
             pUnsatClauses->Add(aClause);
+          }
+          if(pFront) {
+            #pragma omp critical
+            pFront->Add(aClause);
           }
         }
       }
@@ -104,13 +128,13 @@ template<typename TCounter> struct SatTracker {
     for(int64_t k=0; k<pFormula_->nVars_; k++) {
       assert(1 <= vVars[k] && vVars[k] <= pFormula_->nVars_);
       const int64_t iVar = vVars[k] * (pFormula_->ans_[vVars[k]] ? 1 : -1);
-      const int64_t nNewSat = FlipVar(-iVar, nullptr);
+      const int64_t nNewSat = FlipVar(-iVar, nullptr, nullptr);
       if(nNewSat >= (preferMove ? 0 : 1)) {
         minUnsat -= nNewSat;
         pFormula_->ans_.Flip(vVars[k]);
       } else {
         // Flip back
-        FlipVar(iVar, nullptr);
+        FlipVar(iVar, nullptr, nullptr);
       }
     }
     return minUnsat;
