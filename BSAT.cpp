@@ -229,7 +229,7 @@ int main(int argc, char* argv[]) {
       TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
 
       combs.assign(candVs.begin(), candVs.end());
-      const bool fullCombinations = combs.size() <= std::log(formula.nClauses_);
+      const bool fullCombinations = combs.size() <= std::max<int64_t>(10, std::log(formula.nClauses_));
       if(fullCombinations) {
         std::shuffle(combs.begin(), combs.end(), rng);
         std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
@@ -413,8 +413,9 @@ int main(int argc, char* argv[]) {
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
 
-      if(bestRevVertices.set_.size() >= 3) {
-        if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) {
+      if(!fullCombinations || bestRevVertices.set_.size() >= 3) {
+        if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) 
+        {
           std::cout << "G";
           std::cout.flush();
           satTr.Populate(formula.ans_);
