@@ -1,6 +1,7 @@
 #include "Reduction.h"
 #include "TrackingSet.h"
 #include "Utils.h"
+#include "SatTracker.h"
 
 #include <iostream>
 #include <mutex>
@@ -144,7 +145,7 @@ int main(int argc, char* argv[]) {
     formula.ans_ = altAsg;
   }
 
-  std::map<uint128, int64_t> bv2nUnsat;
+  std::unordered_map<uint128, int64_t> bv2nUnsat;
   bv2nUnsat[formula.ans_.hash_] = bestInit;
   BitVector maxPartial;
   bool maybeSat = true;

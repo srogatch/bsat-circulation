@@ -361,4 +361,15 @@ struct Formula {
     }
     return ans;
   }
+
+  // To avoid falsse sharing in SatTracker, don't call it - let the indices stay randomized
+  void SortClauseLists() {
+    #pragma omp parallel for
+    for(int64_t i=1; i<=nVars_; i++) {
+      std::vector<int64_t>& clauses = listVar2Clause_[i];
+      std::sort(clauses.begin(), clauses.end(), [](const int64_t a, const int64_t b) {
+        return llabs(a) < llabs(b);
+      });
+    }
+  }
 };
