@@ -321,7 +321,7 @@ int main(int argc, char* argv[]) {
           }
           if(bestUnsat < nStartUnsat
             // These little combinations are considered a light operation
-            && nCombs - prevBestAtCombs > std::log2(combs.size()+1))
+            && nCombs - prevBestAtCombs > std::pow(combs.size(), 1.0/3))
           {
             break;
           }
@@ -391,7 +391,10 @@ int main(int argc, char* argv[]) {
         formula.ans_.Flip(revV);
       }
       seenMove.emplace(front, bestRevVertices);
-      // Indicate a DFS step
+      if(bestRevVertices.set_.size() >= 2) {
+        // TODO: More than 2 variables have been changed at once - try to descend into a better solution by flipping all variables one by one
+      }
+      // Indicate a walk step
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
       std::cout << ">";
       front = std::move(bestFront);
