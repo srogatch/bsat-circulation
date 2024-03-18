@@ -305,7 +305,7 @@ int main(int argc, char* argv[]) {
             auto it = bv2nUnsat.find(next.hash_);
             bool maybeSuperior = (it == bv2nUnsat.end() || it->second < bestUnsat);
             if(!maybeSuperior) {
-              // This combination has been to lightweight to count
+              // This combination has been too lightweight to count
               prevBestAtCombs++;
             }
             if( maybeSuperior && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {

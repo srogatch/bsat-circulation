@@ -213,6 +213,7 @@ struct Formula {
     return ans;
   }
 
+  // TODO: disable it as it gives inferior results, but is also single-threaded / slow
   BitVector SetDfs() const {
     BitVector ans(nVars_); // Init to false
     BitVector visitedVars(nVars_); // Init to false
