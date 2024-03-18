@@ -184,7 +184,7 @@ int main(int argc, char* argv[]) {
     auto tmEnd = std::chrono::high_resolution_clock::now();
     double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmStart).count() / 1e9;
     double clausesPerSec = (prevNUnsat - nStartUnsat) / nSec;
-    std::cout << "Unsatisfied clauses: " << nStartUnsat << " - ";
+    std::cout << "Unsatisfied clauses: " << nStartUnsat << " - elapsed " << nSec << " seconds, ";
     if(clausesPerSec >= 1 || clausesPerSec == 0) {
       std::cout << clausesPerSec << " clauses per second.";
     } else {
