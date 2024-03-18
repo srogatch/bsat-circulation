@@ -327,7 +327,7 @@ struct Formula {
   }
 
   // This is very slow for now - without SatTracker data structure
-  BitVector SetDescent() const {
+  BitVector SetDescent() {
     BitVector ans(nVars_); // Init to false
     std::vector<int64_t> vVars(nVars_);
     constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars[0]);
@@ -342,7 +342,8 @@ struct Formula {
     for(int64_t k=0; k<nVars_; k++) {
       const int64_t iVar = vVars[k];
       ans.Flip(iVar);
-      const std::vector<int64_t>& clauses = listVar2Clause_.find(iVar)->second;
+      std::vector<int64_t>& clauses = listVar2Clause_.find(iVar)->second;
+      ParallelShuffle(clauses.data(), clauses.size());
       std::atomic<int64_t> newUnsat(minUnsat);
       #pragma omp parallel for
       for(int64_t j=0; j<clauses.size(); j++) {

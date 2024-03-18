@@ -75,8 +75,6 @@ struct Point {
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
 
-constexpr const uint32_t knLightCombs = 10; // These many combinations are considered a light operation
-
 int main(int argc, char* argv[]) {
   if(argc < 3) {
     std::cerr << "Usage: " << argv[0] << " <input.dimacs> <output.dimacs>" << std::endl;
@@ -321,7 +319,10 @@ int main(int argc, char* argv[]) {
               }
             }
           }
-          if(bestUnsat < nStartUnsat && nCombs - prevBestAtCombs > knLightCombs) {
+          if(bestUnsat < nStartUnsat
+            // These little combinations are considered a light operation
+            && nCombs - prevBestAtCombs > std::log2(combs.size()+1))
+          {
             break;
           }
           int64_t j;
