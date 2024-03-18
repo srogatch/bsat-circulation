@@ -80,6 +80,8 @@ constexpr const uint32_t kMinFront = 5;
 constexpr const uint32_t kMaxFront = 20;
 
 int main(int argc, char* argv[]) {
+  auto tmStart = std::chrono::high_resolution_clock::now();
+
   if(argc < 3) {
     std::cerr << "Usage: " << argv[0] << " <input.dimacs> <output.dimacs>" << std::endl;
     return 1;
@@ -96,7 +98,6 @@ int main(int argc, char* argv[]) {
   formula.Load(argv[1]);
 
   int64_t prevNUnsat = formula.nClauses_;
-  auto tmStart = std::chrono::high_resolution_clock::now();
 
   // Now there are some clause bitvectors
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
