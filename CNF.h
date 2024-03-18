@@ -54,12 +54,14 @@ struct Formula {
     BlockingQueue<std::pair<int64_t, int64_t>> bqAdding;
 
     std::thread parsingThr([&] {
+      const int remainingCpus = std::max(1, int(omp_get_max_threads()) - 3);
       bool probDefRead = false;
       int64_t iClause = 0;
       std::string line;
+      std::istringstream iss;
+      std::string cmd;
       while(bqParsing.Pop(line)) {
-        std::istringstream iss(line);
-        std::string cmd;
+        iss = std::istringstream(line);
         if( !(iss >> cmd) ) {
           continue; // empty line?
         }
@@ -81,22 +83,82 @@ struct Formula {
           probDefRead = true;
           continue;
         }
-        if(!probDefRead) {
-          throw std::runtime_error("Data starts without a problem definition coming first.");
-        }
-        iClause++;
-        if(iClause > nClauses_) {
-          std::cerr << "Too many clauses: check the input DIMACS." << std::endl;
+        if(probDefRead) {
           break;
         }
-        do {
-          int64_t iVar = std::stoll(cmd);
-          if(iVar == 0) {
+        throw std::runtime_error("Data starts without a problem definition coming first.");
+      }
+
+      iClause++;
+      if(iClause > nClauses_) {
+        std::cerr << "Too many clauses: check the input DIMACS." << std::endl;
+        // Stop reading excesssive clauses
+        goto release;
+      }
+      do {
+        int64_t iVar = std::stoll(cmd);
+        if(iVar == 0) {
+          break;
+        }
+        if( !(1 <= llabs(iVar) && llabs(iVar) <= nVars_) ) {
+          std::cerr << "Variable value out of range: " << iVar << std::endl;
+          throw std::runtime_error("Incorrect input");
+        }
+        bqAdding.Push(std::make_pair(iClause, iVar));
+      } while(iss >> cmd);
+
+      for(;;) {
+        std::vector<std::string> lines;
+        while(lines.size() < remainingCpus) {
+          if(!bqParsing.Pop(line)) {
             break;
           }
-          bqAdding.Push(std::make_pair(iClause, iVar));
-        } while(iss >> cmd);
+          bool isComment = false;
+          int64_t j=0;
+          for(; j<line.size(); j++) {
+            if(line[j] == 'c') {
+              isComment = true;
+              break;
+            }
+            if(!isspace(line[j])) {
+              break;
+            }
+          }
+          if(isComment || j >= line.size()) {
+            continue;
+          }
+          lines.emplace_back(std::move(line));
+        }
+        #pragma omp parallel for num_threads(remainingCpus)
+        for(int64_t i=0; i<lines.size(); i++) {
+          const int64_t locClause = iClause + 1 + i;
+          if(locClause > nClauses_) {
+            std::cerr << "Too many clauses: check the input DIMACS." << std::endl;
+            // Stop reading excesssive clauses
+            continue;
+          }
+          std::istringstream locIss = std::istringstream(lines[i]);
+          int64_t iVar;
+          while(locIss >> iVar) {
+            if(iVar == 0) {
+              break;
+            }
+            if( !(1 <= llabs(iVar) && llabs(iVar) <= nVars_) ) {
+              std::cerr << "Variable value out of range: " << iVar << std::endl;
+              throw std::runtime_error("Incorrect input");
+            }
+            bqAdding.Push(std::make_pair(locClause, iVar));
+          }
+        }
+        iClause += lines.size();
+        if(lines.size() < remainingCpus) {
+          break;
+        }
+        if(iClause > nClauses_) {
+          break;
+        }
       }
+release:
       bqAdding.RequestShutdown();
       std::cout << "Finished parsing the input file lines." << std::endl;
     });
@@ -138,10 +200,16 @@ struct Formula {
     std::cout << "Constructing vectors of clauses for variables." << std::endl;
     for(int64_t i=1; i<=nVars_; i++) {
       listVar2Clause_[i] = {};
+      var2clause_[i];
     }
     #pragma omp parallel for
     for(int64_t i=1; i<=nVars_; i++) {
-      listVar2Clause_.find(i)->second.assign(var2clause_[i].begin(), var2clause_[i].end());
+      unsigned long long seed;
+      while(!_rdrand64_step(&seed));
+      std::mt19937_64 rng(seed);
+      std::vector<int64_t>& list = listVar2Clause_.find(i)->second;
+      list.assign(var2clause_[i].begin(), var2clause_[i].end());
+      std::shuffle(list.begin(), list.end(), rng);
     }
   }
 
@@ -324,42 +392,6 @@ struct Formula {
     } else {
       return 0;
     }
-  }
-
-  // This is very slow for now - without SatTracker data structure
-  BitVector SetDescent() {
-    BitVector ans(nVars_); // Init to false
-    std::vector<int64_t> vVars(nVars_);
-    constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars[0]);
-
-    #pragma omp parallel for schedule(static, cParChunkSize)
-    for(int64_t i=1; i<=nVars_; i++) {
-      vVars[i-1] = i;
-    }
-    ParallelShuffle(vVars.data(), nVars_);
-
-    int64_t minUnsat = CountUnsat(ans);
-    for(int64_t k=0; k<nVars_; k++) {
-      const int64_t iVar = vVars[k];
-      ans.Flip(iVar);
-      std::vector<int64_t>& clauses = listVar2Clause_.find(iVar)->second;
-      ParallelShuffle(clauses.data(), clauses.size());
-      std::atomic<int64_t> newUnsat(minUnsat);
-      #pragma omp parallel for
-      for(int64_t j=0; j<clauses.size(); j++) {
-        const int64_t iClause = clauses[j];
-        const int64_t satDiff = GetSatDiff(llabs(iClause), ans, iVar * Signum(iClause));
-        if(satDiff != 0) {
-          newUnsat.fetch_sub(satDiff);
-        }
-      }
-      if(newUnsat > minUnsat) {
-        ans.Flip(iVar);
-        continue;
-      }
-      minUnsat = newUnsat;
-    }
-    return ans;
   }
 
   // To avoid falsse sharing in SatTracker, don't call it - let the indices stay randomized

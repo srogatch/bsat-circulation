@@ -10,11 +10,11 @@
 
 template<typename TCounter> struct SatTracker {
   static constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(TCounter);
-  std::unique_ptr<std::atomic<TCounter[]>> nSat_;
-  const Formula *pFormula_;
+  std::unique_ptr<std::atomic<TCounter>[]> nSat_;
+  Formula *pFormula_;
   std::atomic<int64_t> totSat_ = -1;
 
-  explicit SatTracker(const Formula& formula)
+  explicit SatTracker(Formula& formula)
   : pFormula_(&formula)
   {
     nSat_.reset(new std::atomic<TCounter>[pFormula_->nClauses_+1]);
@@ -39,30 +39,34 @@ template<typename TCounter> struct SatTracker {
 
   // The sign of iVar must reflect the new value of the variable.
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
-  int64_t FlipVar(const int64_t iVar, TrackingSet& unsatClauses) {
+  int64_t FlipVar(const int64_t iVar, TrackingSet* pUnsatClauses) {
     const std::vector<int64_t>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     std::atomic<int64_t> ans(0);
     #pragma omp parallel for
     for(int64_t i=0; i<clauses.size(); i++) {
       const int64_t iClause = clauses[i];
+      const int64_t aClause = llabs(iClause);
       if(iClause * iVar > 0) {
-        int64_t oldVal = nSat_.get()[llabs(iClause)].fetch_add(1, std::memory_order_relaxed);
+        int64_t oldVal = nSat_.get()[aClause].fetch_add(1, std::memory_order_relaxed);
         assert(oldVal >= 0);
         if(oldVal == 0) {
           ans.fetch_add(1, std::memory_order_relaxed);
           const int64_t aClause = llabs(iClause);
-          #pragma omp critical
-          unsatClauses.Remove(aClause);
+          if(pUnsatClauses) {
+            #pragma omp critical
+            pUnsatClauses->Remove(aClause);
+          }
         }
       }
       else {
-        int64_t oldVal = nSat_.get()[llabs(iClause)].fetch_sub(1, std::memory_order_relaxed);
+        int64_t oldVal = nSat_.get()[aClause].fetch_sub(1, std::memory_order_relaxed);
         assert(oldVal >= 1);
         if(oldVal == 1) {
           ans.fetch_sub(1, std::memory_order_relaxed);
-          const int64_t aClause = llabs(iClause);
-          #pragma omp critical
-          unsatClauses.Add(aClause);
+          if(pUnsatClauses) {
+            #pragma omp critical
+            pUnsatClauses->Add(aClause);
+          }
         }
       }
     }
@@ -81,4 +85,36 @@ template<typename TCounter> struct SatTracker {
     }
     return ans;
   }
+
+  int64_t UnsatCount() const {
+    return pFormula_->nClauses_ - totSat_.load(std::memory_order_relaxed);
+  }
+
+  int64_t GradientDescend() {
+    std::vector<int64_t> vVars(pFormula_->nVars_);
+    constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars[0]);
+
+    #pragma omp parallel for schedule(static, cParChunkSize)
+    for(int64_t i=1; i<=pFormula_->nVars_; i++) {
+      vVars[i-1] = i;
+    }
+    ParallelShuffle(vVars.data(), pFormula_->nVars_);
+
+    int64_t minUnsat = UnsatCount();
+    for(int64_t k=0; k<pFormula_->nVars_; k++) {
+      assert(1 <= vVars[k] && vVars[k] <= pFormula_->nVars_);
+      const int64_t iVar = vVars[k] * (pFormula_->ans_[vVars[k]] ? 1 : -1);
+      const int64_t nNewSat = FlipVar(-iVar, nullptr);
+      if(nNewSat >= 0) {
+        minUnsat -= nNewSat;
+        pFormula_->ans_.Flip(vVars[k]);
+      } else {
+        // Flip back
+        FlipVar(iVar, nullptr);
+      }
+    }
+    return minUnsat;
+  }
 };
+
+using DefaultSatTracker = SatTracker<int16_t>;

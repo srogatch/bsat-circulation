@@ -84,6 +84,8 @@ int main(int argc, char* argv[]) {
 
   // TODO: does it override the environment variable?
   omp_set_num_threads(Formula::nCpus_);
+  // Enable nested parallelism
+  omp_set_max_active_levels(4);
 
   std::mutex muUnsatClauses;
   std::mutex muFront;
@@ -92,46 +94,45 @@ int main(int argc, char* argv[]) {
   // Now there are some clause bitvectors
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
 
-  int64_t bestInit = formula.CountUnsat(formula.ans_);
+  DefaultSatTracker satTr(formula);
+  satTr.Populate(formula.ans_);
+
+  int64_t bestInit = satTr.UnsatCount();
   std::cout << "All false: " << bestInit << ", ";
+  std::cout.flush();
+
+  int64_t altNUnsat=satTr.GradientDescend();
+  std::cout << "GradientDescent: " << altNUnsat << ", ";
+  std::cout.flush();
+  if(altNUnsat < bestInit) {
+    bestInit = altNUnsat;
+  } else {
+    // Revert to all false
+    formula.ans_ = BitVector(formula.nVars_+1);
+  }
 
   BitVector altAsg = formula.SetGreedy1();
-  int64_t altNUnsat = formula.CountUnsat(altAsg);
-  std::cout << "Greedy1: " << altNUnsat << ", ";
-  if(altNUnsat < bestInit) {
-    bestInit = altNUnsat;
-    formula.ans_ = altAsg;
-  }
-
-  std::cout << "Trying to descend into a better assignment." << std::endl;
-  altAsg = formula.SetDescent();
   altNUnsat = formula.CountUnsat(altAsg);
-  std::cout << "Descent: " << altNUnsat << ", ";
+  std::cout << "Greedy1: " << altNUnsat << ", ";
+  std::cout.flush();
   if(altNUnsat < bestInit) {
     bestInit = altNUnsat;
     formula.ans_ = altAsg;
   }
 
-  std::cout << "Trying greedy-2 assignment." << std::endl;
   altAsg = formula.SetGreedy2();
   altNUnsat = formula.CountUnsat(altAsg);
   std::cout << "Greedy2: " << altNUnsat << ", ";
+  std::cout.flush();
   if(altNUnsat < bestInit) {
     bestInit = altNUnsat;
     formula.ans_ = altAsg;
   }
-
-  // altAsg = formula.SetDfs();
-  // altNUnsat = formula.CountUnsat(altAsg);
-  // std::cout << "DFS: " << altNUnsat << ", ";
-  // if(altNUnsat < bestInit) {
-  //   bestInit = altNUnsat;
-  //   formula.ans_ = altAsg;
-  // }
 
   altAsg.Randomize();
   altNUnsat = formula.CountUnsat(altAsg);
   std::cout << "Random: " << altNUnsat << ", ";
+  std::cout.flush();
   if(altNUnsat < bestInit) {
     bestInit = altNUnsat;
     formula.ans_ = altAsg;
@@ -144,6 +145,8 @@ int main(int argc, char* argv[]) {
     bestInit = altNUnsat;
     formula.ans_ = altAsg;
   }
+
+  satTr.Populate(formula.ans_);
 
   std::unordered_map<uint128, int64_t> bv2nUnsat;
   bv2nUnsat[formula.ans_.hash_] = bestInit;
