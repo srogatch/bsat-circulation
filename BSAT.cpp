@@ -167,6 +167,7 @@ int main(int argc, char* argv[]) {
   std::vector<int64_t> incl;
   BitVector next;
   uint64_t cycleOffset = 0;
+  int64_t minIncl = 1;
   while(maybeSat) {
     TrackingSet unsatClauses = formula.ComputeUnsatClauses();
     nStartUnsat = unsatClauses.set_.size();
@@ -184,6 +185,25 @@ int main(int argc, char* argv[]) {
     while(unsatClauses.set_.size() >= nStartUnsat) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
       if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
+        if(minIncl == 1) {
+          std::cout << "G";
+          std::cout.flush();
+          satTr.Populate(formula.ans_);
+          const int64_t newUnsat = satTr.GradientDescend(true);
+          std::cout << "D";
+          std::cout.flush();
+          if(newUnsat > nStartUnsat - std::sqrt(nStartUnsat)) {
+            minIncl = 2;
+          }
+          if(newUnsat < nStartUnsat) {
+            break;
+          }
+          unsatClauses = satTr.GetUnsat();
+          front.Clear();
+        } else {
+          minIncl = 1;
+        }
+
         const int64_t oldFrontSize = front.set_.size();
         int64_t nInFront = std::log(formula.nClauses_);
         nInFront = std::max<int64_t>(kMinFront, nInFront);
@@ -253,7 +273,7 @@ int main(int argc, char* argv[]) {
       uint64_t prevBestAtCombs = 0;
       next = formula.ans_;
       TrackingSet stepRevs;
-      for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
+      for(int64_t nIncl=std::min<int64_t>(combs.size(), minIncl); nIncl<=combs.size(); nIncl++) {
         if(AccComb(combs.size(), nIncl) > 100) {
           std::cout << " C" << combs.size() << "," << nIncl << " ";
           std::flush(std::cout);
@@ -386,8 +406,8 @@ int main(int argc, char* argv[]) {
           break;
         }
       }
-      if(nCombs > formula.nVars_) {
-        std::cout << "Combinations to next: " << nCombs << std::endl;
+      if(nCombs > 100) {
+        std::cout << " N" << nCombs << " " << std::endl;
       }
 
       if(bestUnsat >= formula.nClauses_) {
@@ -395,6 +415,7 @@ int main(int argc, char* argv[]) {
         if(!allowDuplicateFront) {
           seenFront.emplace(front);
         }
+
         if(front != unsatClauses) {
           // Retry with full/random front
           front.Clear();
@@ -434,7 +455,7 @@ int main(int argc, char* argv[]) {
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
     }
-    std::cout << "Traversal size: " << seenMove.size() << ", assignments considered: " << bv2nUnsat.size() << std::endl;
+    std::cout << "...Traversal size: " << seenMove.size() << ", assignments considered: " << bv2nUnsat.size() << std::endl;
   }
 
   {
