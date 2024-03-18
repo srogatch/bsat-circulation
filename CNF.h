@@ -329,21 +329,31 @@ struct Formula {
   // This is very slow for now - without SatTracker data structure
   BitVector SetDescent() const {
     BitVector ans(nVars_); // Init to false
-    int64_t minUnsat = CountUnsat(ans);
+    std::vector<int64_t> vVars(nVars_);
+    constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars[0]);
+
+    #pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=1; i<=nVars_; i++) {
-      ans.Flip(i);
-      const std::vector<int64_t>& clauses = listVar2Clause_.find(i)->second;
+      vVars[i-1] = i;
+    }
+    ParallelShuffle(vVars.data(), nVars_);
+
+    int64_t minUnsat = CountUnsat(ans);
+    for(int64_t k=0; k<nVars_; k++) {
+      const int64_t iVar = vVars[k];
+      ans.Flip(iVar);
+      const std::vector<int64_t>& clauses = listVar2Clause_.find(iVar)->second;
       std::atomic<int64_t> newUnsat(minUnsat);
       #pragma omp parallel for
       for(int64_t j=0; j<clauses.size(); j++) {
         const int64_t iClause = clauses[j];
-        const int64_t satDiff = GetSatDiff(llabs(iClause), ans, i * Signum(iClause));
+        const int64_t satDiff = GetSatDiff(llabs(iClause), ans, iVar * Signum(iClause));
         if(satDiff != 0) {
           newUnsat.fetch_sub(satDiff);
         }
       }
       if(newUnsat > minUnsat) {
-        ans.Flip(i);
+        ans.Flip(iVar);
         continue;
       }
       minUnsat = newUnsat;
