@@ -168,6 +168,16 @@ int main(int argc, char* argv[]) {
     formula.ans_ = altAsg;
   }
 
+  std::cout << "Trying to descend into a better assignment." << std::endl;
+  altAsg = formula.SetDescent();
+  altNUnsat = formula.CountUnsat(altAsg);
+  std::cout << "Descent: " << altNUnsat << ", ";
+  if(altNUnsat < bestInit) {
+    bestInit = altNUnsat;
+    formula.ans_ = altAsg;
+  }
+
+  std::cout << "Trying greedy-2 assignment." << std::endl;
   altAsg = formula.SetGreedy2();
   altNUnsat = formula.CountUnsat(altAsg);
   std::cout << "Greedy2: " << altNUnsat << ", ";
@@ -176,13 +186,13 @@ int main(int argc, char* argv[]) {
     formula.ans_ = altAsg;
   }
 
-  altAsg = formula.SetDfs();
-  altNUnsat = formula.CountUnsat(altAsg);
-  std::cout << "DFS: " << altNUnsat << ", ";
-  if(altNUnsat < bestInit) {
-    bestInit = altNUnsat;
-    formula.ans_ = altAsg;
-  }
+  // altAsg = formula.SetDfs();
+  // altNUnsat = formula.CountUnsat(altAsg);
+  // std::cout << "DFS: " << altNUnsat << ", ";
+  // if(altNUnsat < bestInit) {
+  //   bestInit = altNUnsat;
+  //   formula.ans_ = altAsg;
+  // }
 
   altAsg.Randomize();
   altNUnsat = formula.CountUnsat(altAsg);
@@ -216,6 +226,7 @@ int main(int argc, char* argv[]) {
   std::vector<int64_t> vFront;
   std::vector<int64_t> incl;
   BitVector next;
+  uint64_t cycleOffset = 0;
   while(maybeSat) {
     TrackingSet unsatClauses = formula.ComputeUnsatClauses();
     nStartUnsat = unsatClauses.set_.size();
@@ -254,14 +265,21 @@ int main(int argc, char* argv[]) {
       TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
 
       combs.assign(candVs.begin(), candVs.end());
-      if(combs.size() > 2 * Formula::nCpus_) {
-        ParallelShuffle(combs.data(), combs.size());
+
+      if(combs.size() <= std::sqrt(formula.nVars_)) {
+        if(combs.size() > 2 * Formula::nCpus_) {
+          ParallelShuffle(combs.data(), combs.size());
+        } else {
+          std::shuffle(combs.begin(), combs.end(), rng);
+        }
+        std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
+          return a.second > b.second;
+        });
       } else {
-        std::shuffle(combs.begin(), combs.end(), rng);
+        std::sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
+          return a.second > b.second || (a.second == b.second && hash64(a.first) < hash64(b.first));
+        });
       }
-      std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
-        return a.second > b.second;
-      });
       uint64_t nCombs = 0;
       uint64_t prevBestAtCombs = 0;
       next = formula.ans_;
@@ -275,10 +293,11 @@ int main(int argc, char* argv[]) {
         for(int64_t j=0; j<nIncl; j++) {
           incl.push_back(j);
         }
+        int64_t nBeforeCombs = nCombs;
         for(;;) {
           nCombs++;
           for(int64_t j=0; j<nIncl; j++) {
-            const int64_t revV = combs[incl[j]].first;
+            const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
             auto it = stepRevs.set_.find(revV);
             if(it == stepRevs.set_.end()) {
               stepRevs.Add(revV);
@@ -288,10 +307,10 @@ int main(int argc, char* argv[]) {
             next.Flip(revV);
           }
           {
-            auto unflip = Finally([&]() {
+            auto unflip = Finally([&combs, &incl, &stepRevs, &next, nIncl, cycleOffset]() {
               // Flip bits back
               for(int64_t j=0; j<nIncl; j++) {
-                const int64_t revV = combs[incl[j]].first;
+                const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
                 auto it = stepRevs.set_.find(revV);
                 if(it == stepRevs.set_.end()) {
                   stepRevs.Add(revV);
@@ -385,10 +404,13 @@ int main(int argc, char* argv[]) {
             incl[k] = incl[k-1] + 1;
           }
         }
+        // Let the next traversal start from the combination we left on
+        cycleOffset += nCombs - nBeforeCombs;
         if(bestUnsat < std::min<int64_t>(
             std::max(nStartUnsat + nCombs - 1, unsatClauses.set_.size()*2),
             formula.nClauses_))
         {
+          cycleOffset -= bestRevVertices.set_.size();
           break;
         }
       }

@@ -2,6 +2,7 @@
 
 #include "BitVector.h"
 #include "TrackingSet.h"
+#include "BlockingQueue.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -45,51 +46,82 @@ struct Formula {
       std::cerr << "Cannot open the file to load the formula from: " << filePath << std::endl;
       throw std::runtime_error("Cannot open input file.");
     }
-    std::string line;
-    bool probDefRead = false;
-    int64_t iClause = 0;
-    while(std::getline(ifs, line)) {
-      std::istringstream iss(line);
-      std::string cmd;
-      if( !(iss >> cmd) ) {
-        continue; // empty line?
-      }
-      if(cmd == "c" || cmd == "C") {
-        continue; // a comment
-      }
-      if(cmd == "p" || cmd == "P") {
-        if(probDefRead) {
-          throw std::runtime_error("Duplicate problem definition");
+    constexpr const uint32_t cBufSize = 8 * 1024 * 1024;
+    std::unique_ptr<char[]> buffer(new char[cBufSize]);
+    ifs.rdbuf()->pubsetbuf(buffer.get(), cBufSize);
+
+    BlockingQueue<std::string> bqParsing;
+    BlockingQueue<std::pair<int64_t, int64_t>> bqAdding;
+
+    std::thread parsingThr([&] {
+      bool probDefRead = false;
+      int64_t iClause = 0;
+      std::string line;
+      while(bqParsing.Pop(line)) {
+        std::istringstream iss(line);
+        std::string cmd;
+        if( !(iss >> cmd) ) {
+          continue; // empty line?
         }
-        std::string type;
-        iss >> type;
-        if(type != "cnf") {
-          throw std::runtime_error("Unsupported problem type");
+        if(cmd == "c" || cmd == "C") {
+          continue; // a comment
         }
-        iss >> nVars_ >> nClauses_;
-        ans_ = BitVector(nVars_+1);
-        dummySat_ = BitVector(nClauses_+1);
-        probDefRead = true;
-        continue;
-      }
-      if(!probDefRead) {
-        throw std::runtime_error("Data starts without a problem definition coming first.");
-      }
-      iClause++;
-      if(iClause > nClauses_) {
-        std::cerr << "Too many clauses: check the input DIMACS." << std::endl;
-        break;
-      }
-      do {
-        int64_t iVar = std::stoll(cmd);
-        if(iVar == 0) {
+        if(cmd == "p" || cmd == "P") {
+          if(probDefRead) {
+            throw std::runtime_error("Duplicate problem definition");
+          }
+          std::string type;
+          iss >> type;
+          if(type != "cnf") {
+            throw std::runtime_error("Unsupported problem type");
+          }
+          iss >> nVars_ >> nClauses_;
+          ans_ = BitVector(nVars_+1);
+          dummySat_ = BitVector(nClauses_+1);
+          probDefRead = true;
+          continue;
+        }
+        if(!probDefRead) {
+          throw std::runtime_error("Data starts without a problem definition coming first.");
+        }
+        iClause++;
+        if(iClause > nClauses_) {
+          std::cerr << "Too many clauses: check the input DIMACS." << std::endl;
           break;
         }
-        Add(iClause, iVar);
-      } while(iss >> cmd);
+        do {
+          int64_t iVar = std::stoll(cmd);
+          if(iVar == 0) {
+            break;
+          }
+          bqAdding.Push(std::make_pair(iClause, iVar));
+        } while(iss >> cmd);
+      }
+      bqAdding.RequestShutdown();
+      std::cout << "Finished parsing the input file lines." << std::endl;
+    });
+
+    std::thread addingThr([&] {
+      std::pair<int64_t, int64_t> entry;
+      while(bqAdding.Pop(entry)) {
+        Add(entry.first, entry.second);
+      }
+      std::cout << "Finished linking clauses and variables." << std::endl;
+    });
+
+    std::string line;
+    while(std::getline(ifs, line)) {
+      bqParsing.Push(std::move(line));
     }
+    bqParsing.RequestShutdown();
+    std::cout << "Finished streaming the input file." << std::endl;
+    parsingThr.join();
+    addingThr.join();
+
+    std::cout << "Finding dummy clauses" << std::endl;
     for(int64_t i=1; i<=nClauses_; i++) {
-      if(clause2var_[i].size() == 0) {
+      auto it = clause2var_.find(i);
+      if(it == clause2var_.end() || it->second.size() == 0) {
         dummySat_.Flip(i);
         continue;
       }
@@ -103,8 +135,13 @@ struct Formula {
         }
       }
     }
+    std::cout << "Constructing vectors of clauses for variables." << std::endl;
     for(int64_t i=1; i<=nVars_; i++) {
-      listVar2Clause_[i].assign(var2clause_[i].begin(), var2clause_[i].end());
+      listVar2Clause_[i] = {};
+    }
+    #pragma omp parallel for
+    for(int64_t i=1; i<=nVars_; i++) {
+      listVar2Clause_.find(i)->second.assign(var2clause_[i].begin(), var2clause_[i].end());
     }
   }
 
@@ -124,7 +161,7 @@ struct Formula {
     return true;
   }
 
-  int64_t CountUnsat(const BitVector& assignment) {
+  int64_t CountUnsat(const BitVector& assignment) const {
     std::atomic<int64_t> nUnsat = 0;
     #pragma omp parallel for
     for(int64_t i=1; i<=nClauses_; i++) {
@@ -213,7 +250,7 @@ struct Formula {
     return ans;
   }
 
-  // TODO: disable it as it gives inferior results, but is also single-threaded / slow
+  // Disable it as it gives inferior results, but is also single-threaded / slow
   BitVector SetDfs() const {
     BitVector ans(nVars_); // Init to false
     BitVector visitedVars(nVars_); // Init to false
@@ -260,6 +297,56 @@ struct Formula {
           }
         }
       }
+    }
+    return ans;
+  }
+
+  int64_t GetSatDiff(const uint64_t iClause, const BitVector& newAsg, const int64_t iFlipVar) const {
+    if(dummySat_[iClause]) {
+      return 0;
+    }
+    auto it = clause2var_.find(iClause);
+    assert(it != clause2var_.end());
+    int64_t nSatVars = 0;
+    bool flippedSat = false;
+    for(const int64_t iVar : it->second) {
+      if( (iVar < 0 && !newAsg[-iVar]) || (iVar > 0 && newAsg[iVar]) ) {
+        nSatVars++;
+        if(iVar == iFlipVar) {
+          flippedSat = true;
+        }
+      }
+    }
+    if(nSatVars == 0) {
+      return -1;
+    } else if(nSatVars == 1 && flippedSat) {
+      return 1;
+    } else {
+      return 0;
+    }
+  }
+
+  // This is very slow for now - without SatTracker data structure
+  BitVector SetDescent() const {
+    BitVector ans(nVars_); // Init to false
+    int64_t minUnsat = CountUnsat(ans);
+    for(int64_t i=1; i<=nVars_; i++) {
+      ans.Flip(i);
+      const std::vector<int64_t>& clauses = listVar2Clause_.find(i)->second;
+      std::atomic<int64_t> newUnsat(minUnsat);
+      #pragma omp parallel for
+      for(int64_t j=0; j<clauses.size(); j++) {
+        const int64_t iClause = clauses[j];
+        const int64_t satDiff = GetSatDiff(llabs(iClause), ans, i * Signum(iClause));
+        if(satDiff != 0) {
+          newUnsat.fetch_sub(satDiff);
+        }
+      }
+      if(newUnsat > minUnsat) {
+        ans.Flip(i);
+        continue;
+      }
+      minUnsat = newUnsat;
     }
     return ans;
   }
