@@ -223,7 +223,7 @@ int main(int argc, char* argv[]) {
         }
       }
       int64_t bestUnsat = formula.nClauses_+1;
-      TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
+      TrackingSet bestRevVertices;
 
       combs.assign(candVs.begin(), candVs.end());
       if( combs.size() <= std::log2(formula.nClauses_) ) {
@@ -258,6 +258,7 @@ int main(int argc, char* argv[]) {
         for(;;) {
           nCombs++;
           TrackingSet newFront;
+          TrackingSet oldUnsatClauses = unsatClauses;
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
             auto it = stepRevs.set_.find(revV);
@@ -267,10 +268,8 @@ int main(int argc, char* argv[]) {
               stepRevs.Remove(revV);
             }
             next.Flip(revV);
-            satTr.FlipVar(revV * (next[revV] ? 1 : -1));
+            satTr.FlipVar(revV * (next[revV] ? 1 : -1), &unsatClauses, &newFront);
           }
-          TrackingSet oldUnsatClauses = unsatClauses;
-          unsatClauses = satTr.GetUnsat(origSatTr, newFront);
 
           {
             auto unflip = Finally([&combs, &incl, &stepRevs, &next, &unsatClauses, &satTr, &oldUnsatClauses, nIncl, cycleOffset]() {
@@ -284,7 +283,7 @@ int main(int argc, char* argv[]) {
                   stepRevs.Remove(revV);
                 }
                 next.Flip(revV);
-                satTr.FlipVar(revV * (next[revV] ? 1 : -1));
+                satTr.FlipVar(revV * (next[revV] ? 1 : -1), nullptr, nullptr);
               }
               unsatClauses = oldUnsatClauses;
             });
@@ -302,8 +301,6 @@ int main(int argc, char* argv[]) {
               if(allowDuplicateFront || newFront.set_.empty() || seenFront.find(newFront) == seenFront.end()) {
                 if(stepUnsat < bestUnsat) {
                   bestUnsat = stepUnsat;
-                  bestFront = newFront;
-                  bestUnsatClauses = unsatClauses;
                   bestRevVertices = stepRevs;
 
                   if(bestUnsat < nStartUnsat) {
@@ -396,18 +393,17 @@ int main(int argc, char* argv[]) {
       }
       dfs.push_back(Point(formula.ans_));
 
+      seenMove.emplace(front, bestRevVertices);
       satTr.Swap(origSatTr);
+      front.Clear();
       for(int64_t revV : bestRevVertices.set_) {
         formula.ans_.Flip(revV);
-        satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1));
+        satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
       }
 
-      seenMove.emplace(front, bestRevVertices);
       // Indicate a walk step
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
       std::cout << ">";
-      front = std::move(bestFront);
-      unsatClauses = std::move(bestUnsatClauses);
 
       if(bestRevVertices.set_.size() >= 3 && unsatClauses.set_.size() >= std::sqrt(formula.nClauses_)/nStartUnsat) {
         if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) {
