@@ -157,7 +157,7 @@ template<typename TCounter> struct SatTracker {
         assert(1 <= aVar && aVar <= pFormula_->nVars_);
         iVar = aVar * (pFormula_->ans_[aVar] ? 1 : -1);
         const int64_t nNewSat = FlipVar(-iVar);
-        front[omp_get_thread_num()] = aVar;
+        front[omp_get_thread_num()] = iVar;
       }
 
       #pragma omp barrier
@@ -166,6 +166,9 @@ template<typename TCounter> struct SatTracker {
       {
         int64_t newUSC = UnsatCount();
         if(newUSC < minUnsat + (preferMove ? 1 : 0)) {
+          if(newUSC < minUnsat) {
+            std::cout << " *** ";
+          }
           minUnsat = newUSC;
           for(int64_t i=0; i<varsAtOnce; i++) {
             const int64_t aFV = llabs(front[i]);
@@ -191,7 +194,7 @@ template<typename TCounter> struct SatTracker {
       #pragma omp barrier
 
       if(k < weightedVars.size()) {
-        if(front[omp_get_thread_num()] == aVar) {
+        if(front[omp_get_thread_num()] == iVar) {
           // Flip back
           FlipVar(iVar);
         }

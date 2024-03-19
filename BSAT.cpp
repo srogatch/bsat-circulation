@@ -238,7 +238,7 @@ int main(int argc, char* argv[]) {
         });
       }
       else {
-        // for(int64_t varsAtOnce = 2; varsAtOnce <= std::min<int64_t>(Formula::nCpus_, combs.size()); varsAtOnce++) {
+        // for(int64_t varsAtOnce = 2; varsAtOnce <= std::min<int64_t>(8, combs.size()); varsAtOnce++) {
         //   std::cout << " SH" << combs.size() << " ";
         //   std::cout.flush();
         //   ParallelShuffle(combs.data(), combs.size());
@@ -246,14 +246,16 @@ int main(int argc, char* argv[]) {
         //   std::cout << " PG" << varsAtOnce;
         //   std::cout.flush();
         //   bestUnsat = satTr.ParallelGD(true, varsAtOnce, combs, &bestRevVertices);
+        //   std::cout << "}" << bestUnsat << "D ";
+        //   std::cout.flush();
         //   if(bestUnsat < nStartUnsat) {
         //     break;
         //   }
-        //   std::cout << "}" << bestUnsat << "D ";
-        //   std::cout.flush();
         // }
         // bestUnsatClauses = satTr.GetUnsat();
         // bestFront = bestUnsatClauses - unsatClauses;
+        // unsatClauses = bestUnsatClauses;
+        // front = bestFront;
       }
 
       uint64_t nCombs = 0;
@@ -261,7 +263,7 @@ int main(int argc, char* argv[]) {
       next = formula.ans_;
       TrackingSet stepRevs;
       // Inclusion of only 1 variable is handled by SGD
-      for(int64_t nIncl=std::min<int64_t>(2, combs.size());
+      for(int64_t nIncl=1;
         nIncl<=std::min<int64_t>(combs.size(), std::max<int64_t>(std::log2(formula.nClauses_), 10) + 1);
         nIncl++)
       {
@@ -330,8 +332,15 @@ int main(int argc, char* argv[]) {
               unsatClauses = oldUnsatClauses;
             });
 
-            auto it = bv2nUnsat.find(next.hash_);
-            bool maybeSuperior = (it == bv2nUnsat.end() || it->second < bestUnsat);
+            bool maybeSuperior = true;
+            TrackingSet newFront = unsatClauses - oldUnsatClauses;
+            if(newFront.set_.empty()) {
+              maybeSuperior = false;
+            }
+            if(maybeSuperior) {
+              auto it = bv2nUnsat.find(next.hash_);
+              maybeSuperior = (it == bv2nUnsat.end() || it->second < bestUnsat);
+            }
             if(!maybeSuperior) {
               // This combination has been too lightweight to count
               prevBestAtCombs++;
@@ -339,7 +348,6 @@ int main(int argc, char* argv[]) {
             if( maybeSuperior && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
               const int64_t stepUnsat = unsatClauses.set_.size();
               bv2nUnsat[next.hash_] = stepUnsat;
-              TrackingSet newFront = unsatClauses - oldUnsatClauses;
               if(allowDuplicateFront || newFront.set_.empty() || seenFront.find(newFront) == seenFront.end()) {
                 if(stepUnsat < bestUnsat) {
                   bestUnsat = stepUnsat;
@@ -348,8 +356,8 @@ int main(int argc, char* argv[]) {
                   bestRevVertices = stepRevs;
 
                   if(bestUnsat < nStartUnsat) {
-                    prevBestAtCombs = nCombs;
                     unflip.Disable();
+                    prevBestAtCombs = nCombs;
                     std::cout << "+";
                   }
                 }
@@ -395,12 +403,12 @@ int main(int argc, char* argv[]) {
             cycleOffset -= bestRevVertices.set_.size();
             break;
           }
-          // if(bestUnsat < unsatClauses.set_.size() * 2) {
-          //   break;
-          // }
-          // if( bestUnsat < nStartUnsat + nCombs - 1 ) {
-          //   break;
-          // }
+          if(bestUnsat < unsatClauses.set_.size() * 2) {
+            break;
+          }
+          if( bestUnsat < nStartUnsat + nCombs - 1 ) {
+            break;
+          }
         }
       }
       if(nCombs > 100) {
@@ -459,8 +467,8 @@ int main(int argc, char* argv[]) {
       unsatClauses = std::move(bestUnsatClauses);
 
       const int64_t nWalkFlip = bestRevVertices.set_.size();
-      if(nWalkFlip >= 3 &&
-        seenMove.size() - lastGD > 100 )
+      if(nWalkFlip >= 2 &&
+        seenMove.size() - lastGD > 10 )
       {
         int64_t newUnsat;
         std::cout << "SG";
