@@ -236,13 +236,31 @@ int main(int argc, char* argv[]) {
           return a.second > b.second;
         });
       }
+      else {
+        for(int64_t varsAtOnce = 2; varsAtOnce <= std::min<int64_t>(Formula::nCpus_, combs.size()); varsAtOnce++) {
+          std::cout << " SH" << combs.size() << " ";
+          std::cout.flush();
+          ParallelShuffle(combs.data(), combs.size());
+
+          std::cout << " PG" << varsAtOnce;
+          std::cout.flush();
+          bestUnsat = satTr.ParallelGD(true, varsAtOnce, combs, &bestRevVertices);
+          if(bestUnsat < nStartUnsat) {
+            break;
+          }
+          std::cout << "}" << bestUnsat << "D ";
+          std::cout.flush();
+        }
+        bestUnsatClauses = satTr.GetUnsat();
+        bestFront = bestUnsatClauses - unsatClauses;
+      }
 
       uint64_t nCombs = 0;
       uint64_t prevBestAtCombs = 0;
       next = formula.ans_;
       TrackingSet stepRevs;
       int64_t totIncl = 0;
-      for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
+      for(int64_t nIncl=1; nIncl<=combs.size() && bestUnsat >= nStartUnsat; nIncl++) {
         if(!fullCombinations || AccComb(combs.size(), nIncl) > 100) {
           if(fullCombinations) {
             std::cout << " C" << combs.size() << "," << nIncl << " ";
@@ -259,8 +277,7 @@ int main(int argc, char* argv[]) {
         if(!fullCombinations) {
           nIncl = 4;
         }
-        while( fullCombinations || totIncl <= std::pow(bestUnsat - nStartUnsat, 2) )
-        {
+        for(;;) {
           if(!fullCombinations) {
             std::set<int64_t> sIncl;
             while(sIncl.size() < nIncl) {
@@ -328,11 +345,18 @@ int main(int argc, char* argv[]) {
               }
             }
           }
-          if(bestUnsat < nStartUnsat
-            // These little combinations are considered a light operation
-            && nCombs - prevBestAtCombs > std::log2(formula.nVars_+1))
-          {
-            break;
+          if(bestUnsat < nStartUnsat) {
+            if(nCombs - prevBestAtCombs > std::log2(formula.nVars_+1)) {
+              break;
+            }
+            if(!fullCombinations) {
+              break;
+            }
+          }
+          else {
+            if(!fullCombinations && totIncl > NlogN(bestUnsat - nStartUnsat + 1)) {
+              break;
+            }
           }
           if(!fullCombinations) {
             continue;
@@ -423,30 +447,30 @@ int main(int argc, char* argv[]) {
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
 
-      if(bestRevVertices.set_.size() >= std::min<int64_t>(4, unsatClauses.set_.size())) {
-        if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) 
-        {
-          std::cout << "G";
-          std::cout.flush();
-          satTr.Populate(formula.ans_);
-          nGD++;
-          const int64_t newUnsat = satTr.GradientDescend(true);
-          std::cout << "D";
-          std::cout.flush();
-          if(newUnsat > nStartUnsat - std::sqrt(nStartUnsat)) {
-            lastGD = seenMove.size();
-          }
-          unsatClauses = satTr.GetUnsat();
-          bv2nUnsat[formula.ans_.hash_] = unsatClauses.set_.size();
-          front = unsatClauses;
-          // Limit the size of the stack
-          if(dfs.size() > formula.nVars_) {
-            dfs.pop_front();
-          }
-          dfs.push_back(Point(formula.ans_));
-          if(newUnsat < nStartUnsat) {
-            break;
-          }
+      const int64_t nWalkFlip = bestRevVertices.set_.size();
+      if(nWalkFlip >= 4 &&
+        seenMove.size() - lastGD > std::sqrt(formula.nClauses_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) 
+      {
+        int64_t newUnsat;
+        std::cout << "SG";
+        std::cout.flush();
+        newUnsat = satTr.GradientDescend(true);
+        std::cout << "D";
+        std::cout.flush();
+        nGD++;
+        if(newUnsat > nStartUnsat - std::sqrt(nStartUnsat)) {
+          lastGD = seenMove.size();
+        }
+        unsatClauses = satTr.GetUnsat();
+        bv2nUnsat[formula.ans_.hash_] = unsatClauses.set_.size();
+        front = unsatClauses;
+        // Limit the size of the stack
+        if(dfs.size() > formula.nVars_) {
+          dfs.pop_front();
+        }
+        dfs.push_back(Point(formula.ans_));
+        if(newUnsat < nStartUnsat) {
+          break;
         }
       }
     }
