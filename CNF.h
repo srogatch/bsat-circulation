@@ -4,6 +4,7 @@
 #include "TrackingSet.h"
 #include "BlockingQueue.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
