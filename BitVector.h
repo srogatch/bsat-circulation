@@ -7,6 +7,7 @@
 #include <cstring>
 #include <atomic>
 #include <immintrin.h>
+#include <atomic>
 
 typedef unsigned __int128 uint128;
 
@@ -121,8 +122,13 @@ struct BitVector {
   }
 
   void Flip(const int64_t index) {
-    bits_[index/64] ^= (1ULL<<(index&63));
-    hash_ ^= hashSeries_.get()[index];
+    reinterpret_cast<std::atomic<uint64_t>*>(&bits_[index/64])->fetch_xor( 1ULL<<(index&63) );
+    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[0].fetch_xor(reinterpret_cast<std::atomic<uint64_t>*>(&hashSeries_.get()[index])[0]);
+    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[1].fetch_xor(reinterpret_cast<std::atomic<uint64_t>*>(&hashSeries_.get()[index])[1]);
+  }
+
+  void NohashSet(const int64_t index) {
+    reinterpret_cast<std::atomic<uint64_t>*>(&bits_[index/64])->fetch_or(1ULL<<(index&63));
   }
 
   void Randomize() {

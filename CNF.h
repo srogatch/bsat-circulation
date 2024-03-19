@@ -285,7 +285,6 @@ release:
         }
       }
       if(nPos > nNeg) {
-        #pragma omp critical
         ans.Flip(i);
       }
     }
@@ -302,16 +301,11 @@ release:
         continue;
       }
       for(const int64_t iClause : it->second) {
-        bool bBreak = false;
-        #pragma omp critical
         if(!knownClauses[llabs(iClause)]) {
           knownClauses.Flip(llabs(iClause));
           if(iClause > 0) {
             ans.Flip(i);
           }
-          bBreak = true;
-        }
-        if(bBreak) {
           break;
         }
       }

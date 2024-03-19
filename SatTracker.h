@@ -135,27 +135,48 @@ template<typename TCounter> struct SatTracker {
     return pFormula_->nClauses_ - totSat_.load(std::memory_order_relaxed);
   }
 
-  int64_t GradientDescend(const bool preferMove) {
+  int64_t GradientDescend(const bool preferMove, TrackingSet *unsatClauses, TrackingSet *front) {
     std::vector<int64_t> vVars(pFormula_->nVars_);
-    constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars[0]);
-
-    #pragma omp parallel for schedule(static, cParChunkSize)
-    for(int64_t i=1; i<=pFormula_->nVars_; i++) {
-      vVars[i-1] = i;
+    if(unsatClauses == nullptr) {
+      constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars[0]);
+      #pragma omp parallel for schedule(static, cParChunkSize)
+      for(int64_t i=1; i<=pFormula_->nVars_; i++) {
+        vVars[i-1] = i;
+      }
     }
-    ParallelShuffle(vVars.data(), pFormula_->nVars_);
+    else {
+      std::vector<int64_t> vClauses(unsatClauses->set_.begin(), unsatClauses->set_.end());
+      BitVector useVar(pFormula_->nVars_+1);
+      #pragma omp parallel for
+      for(int64_t i=0; i<vClauses.size(); i++) {
+        for(const int64_t iVar : pFormula_->clause2var_.find(vClauses[i])->second) {
+          useVar.NohashSet(llabs(iVar));
+        }
+      }
+      std::atomic<int64_t> pos(0);
+      #pragma omp parallel for
+      for(int64_t i=1; i<=pFormula_->nVars_; i++) {
+        if(useVar[i]) {
+          const int64_t oldPos = pos.fetch_add(1, std::memory_order_relaxed);
+          vVars[oldPos] = i;
+        }
+      }
+      vVars.resize(pos.load(std::memory_order_relaxed));
+    }
+    ParallelShuffle(vVars.data(), vVars.size());
 
     int64_t minUnsat = UnsatCount();
-    for(int64_t k=0; k<pFormula_->nVars_; k++) {
+    assert( unsatClauses == nullptr || minUnsat == unsatClauses->set_.size() );
+    for(int64_t k=0; k<vVars.size(); k++) {
       assert(1 <= vVars[k] && vVars[k] <= pFormula_->nVars_);
       const int64_t iVar = vVars[k] * (pFormula_->ans_[vVars[k]] ? 1 : -1);
-      const int64_t nNewSat = FlipVar(-iVar, nullptr, nullptr);
+      const int64_t nNewSat = FlipVar(-iVar, unsatClauses, front);
       if(nNewSat >= (preferMove ? 0 : 1)) {
         minUnsat -= nNewSat;
         pFormula_->ans_.Flip(vVars[k]);
       } else {
         // Flip back
-        FlipVar(iVar, nullptr, nullptr);
+        FlipVar(iVar, unsatClauses, front);
       }
     }
     return minUnsat;

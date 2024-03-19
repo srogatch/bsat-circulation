@@ -107,7 +107,9 @@ int main(int argc, char* argv[]) {
   std::cout << "All false: " << bestInit << ", ";
   std::cout.flush();
 
-  int64_t altNUnsat=satTr.GradientDescend(false); // for init it's usually better if we don't move an extra time
+  TrackingSet initUSC = satTr.GetUnsat();
+  TrackingSet initFront;
+  int64_t altNUnsat=satTr.GradientDescend(false, &initUSC, &initFront); // for init it's usually better if we don't move an extra time
   std::cout << "GradientDescent: " << altNUnsat << ", ";
   std::cout.flush();
   if(altNUnsat < bestInit) {
@@ -195,6 +197,9 @@ int main(int argc, char* argv[]) {
     prevNUnsat = nStartUnsat;
     
     TrackingSet front;
+    if(nStartUnsat == bestInit) {
+      front = initFront;
+    }
     std::vector<int64_t> vClauses;
     // avoid reallocations
     vClauses.reserve(unsatClauses.set_.size() * 4);
@@ -405,21 +410,20 @@ int main(int argc, char* argv[]) {
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
       std::cout << ">";
 
-      if(bestRevVertices.set_.size() >= 3 && unsatClauses.set_.size() >= std::sqrt(formula.nClauses_)/nStartUnsat) {
-        if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) {
+      if(bestRevVertices.set_.size() >= 3 && unsatClauses.set_.size() >= std::sqrt(formula.nVars_)/std::log2(formula.nClauses_)) {
+        if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) / unsatClauses.set_.size()) {
           std::cout << "G";
           std::cout.flush();
           satTr.Populate(formula.ans_);
           nGD++;
           SatTracker backup(satTr);
-          const int64_t newUnsat = satTr.GradientDescend(true);
+          front.Clear();
+          const int64_t newUnsat = satTr.GradientDescend(true, &unsatClauses, &front);
           std::cout << "D";
           std::cout.flush();
           if(newUnsat > nStartUnsat - std::sqrt(nStartUnsat)) {
             lastGD = seenMove.size();
           }
-          front.Clear();
-          unsatClauses = satTr.GetUnsat(backup, front);
           bv2nUnsat[formula.ans_.hash_] = unsatClauses.set_.size();
           // Limit the size of the stack
           if(dfs.size() > formula.nVars_) {
