@@ -409,22 +409,22 @@ int main(int argc, char* argv[]) {
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
 
-      if(bestRevVertices.set_.size() >= 3) {
+      if(bestRevVertices.set_.size() >= 3 && unsatClauses.set_.size() >= std::sqrt(formula.nClauses_)/nStartUnsat) {
         if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) {
           std::cout << "G";
           std::cout.flush();
           satTr.Populate(formula.ans_);
           nGD++;
+          SatTracker backup(satTr);
           const int64_t newUnsat = satTr.GradientDescend(true);
           std::cout << "D";
           std::cout.flush();
           if(newUnsat > nStartUnsat - std::sqrt(nStartUnsat)) {
             lastGD = seenMove.size();
           }
-          TrackingSet oldUnsatClauses = unsatClauses;
-          unsatClauses = satTr.GetUnsat();
+          front.Clear();
+          unsatClauses = satTr.GetUnsat(backup, front);
           bv2nUnsat[formula.ans_.hash_] = unsatClauses.set_.size();
-          front = unsatClauses - oldUnsatClauses;
           // Limit the size of the stack
           if(dfs.size() > formula.nVars_) {
             dfs.pop_front();

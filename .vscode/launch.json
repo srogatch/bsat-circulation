@@ -9,7 +9,7 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/bin/BSAT-Debug",
-      "args": ["ewddr2-10-by-5-8.cnf", "ewddr2-10-by-5-8.sol"],
+      "args": ["a83665715cf54e10f6d5382b97fd909c-PRP_100_400.cnf", "2023.sol"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}/bin",
       "environment": [],
