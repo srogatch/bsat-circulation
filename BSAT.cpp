@@ -302,7 +302,7 @@ int main(int argc, char* argv[]) {
               if(allowDuplicateFront || newFront.set_.empty() || seenFront.find(newFront) == seenFront.end()) {
                 if(stepUnsat < bestUnsat) {
                   bestUnsat = stepUnsat;
-                  bestFront = std::move(newFront);
+                  bestFront = newFront;
                   bestUnsatClauses = unsatClauses;
                   bestRevVertices = stepRevs;
 
