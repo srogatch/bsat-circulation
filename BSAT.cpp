@@ -424,7 +424,7 @@ int main(int argc, char* argv[]) {
       unsatClauses = std::move(bestUnsatClauses);
 
       if(bestRevVertices.set_.size() >= std::min<int64_t>(4, unsatClauses.set_.size())) {
-        if(seenMove.size() - lastGD > std::sqrt(formula.nVars_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) 
+        if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) 
         {
           std::cout << "G";
           std::cout.flush();

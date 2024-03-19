@@ -61,8 +61,8 @@ template<typename TCounter> struct SatTracker {
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
   int64_t FlipVar(const int64_t iVar, TrackingSet* front = nullptr) {
     const std::vector<int64_t>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
-    std::atomic<int64_t> ans(0);
-    #pragma omp parallel for
+    int64_t ans = 0;
+    #pragma omp parallel for reduction(+:ans)
     for(int64_t i=0; i<clauses.size(); i++) {
       const int64_t iClause = clauses[i];
       const int64_t aClause = llabs(iClause);
@@ -70,7 +70,7 @@ template<typename TCounter> struct SatTracker {
         int64_t oldVal = nSat_.get()[aClause].fetch_add(1, std::memory_order_relaxed);
         assert(oldVal >= 0);
         if(oldVal == 0) {
-          ans.fetch_add(1, std::memory_order_relaxed);
+          ans++;
           if(front != nullptr) {
             #pragma omp critical
             front->Remove(aClause);
@@ -81,7 +81,7 @@ template<typename TCounter> struct SatTracker {
         int64_t oldVal = nSat_.get()[aClause].fetch_sub(1, std::memory_order_relaxed);
         assert(oldVal >= 1);
         if(oldVal == 1) {
-          ans.fetch_sub(1, std::memory_order_relaxed);
+          ans--;
           if(front != nullptr) {
             #pragma omp critical
             front->Add(aClause);
@@ -89,8 +89,8 @@ template<typename TCounter> struct SatTracker {
         }
       }
     }
-    totSat_.fetch_add(ans.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    return ans.load(std::memory_order_relaxed);
+    totSat_.fetch_add(ans, std::memory_order_relaxed);
+    return ans;
   }
 
   TrackingSet GetUnsat() const {
@@ -120,6 +120,8 @@ template<typename TCounter> struct SatTracker {
     ParallelShuffle(vVars.data(), pFormula_->nVars_);
 
     int64_t minUnsat = UnsatCount();
+
+    // TODO: parallelism here would also add randomization
     for(int64_t k=0; k<pFormula_->nVars_; k++) {
       assert(1 <= vVars[k] && vVars[k] <= pFormula_->nVars_);
       const int64_t iVar = vVars[k] * (pFormula_->ans_[vVars[k]] ? 1 : -1);
