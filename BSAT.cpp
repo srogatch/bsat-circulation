@@ -76,8 +76,6 @@ struct Point {
 
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
-constexpr const uint32_t kMinFront = 5;
-constexpr const uint32_t kMaxFront = 20;
 
 int main(int argc, char* argv[]) {
   auto tmStart = std::chrono::high_resolution_clock::now();
@@ -259,7 +257,6 @@ int main(int argc, char* argv[]) {
         int64_t nBeforeCombs = nCombs;
         for(;;) {
           nCombs++;
-          TrackingSet newFront;
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
             auto it = stepRevs.set_.find(revV);
@@ -269,10 +266,11 @@ int main(int argc, char* argv[]) {
               stepRevs.Remove(revV);
             }
             next.Flip(revV);
-            satTr.FlipVar(revV * (next[revV] ? 1 : -1), &newFront);
+            satTr.FlipVar(revV * (next[revV] ? 1 : -1), nullptr);
           }
           TrackingSet oldUnsatClauses = unsatClauses;
           unsatClauses = satTr.GetUnsat();
+          TrackingSet newFront = unsatClauses - oldUnsatClauses;
 
           {
             auto unflip = Finally([&combs, &incl, &stepRevs, &next, &unsatClauses, &satTr, &oldUnsatClauses, nIncl, cycleOffset]() {
@@ -420,9 +418,10 @@ int main(int argc, char* argv[]) {
           if(newUnsat > nStartUnsat - std::sqrt(nStartUnsat)) {
             lastGD = seenMove.size();
           }
+          TrackingSet oldUnsatClauses = unsatClauses;
           unsatClauses = satTr.GetUnsat();
           bv2nUnsat[formula.ans_.hash_] = unsatClauses.set_.size();
-          front = unsatClauses;
+          front = unsatClauses - oldUnsatClauses;
           // Limit the size of the stack
           if(dfs.size() > formula.nVars_) {
             dfs.pop_front();

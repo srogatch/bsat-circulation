@@ -21,6 +21,7 @@
 #include <cassert>
 #include <stack>
 #include <random>
+#include <algorithm>
 
 template <typename T> constexpr int Signum(const T val) {
   return (T(0) < val) - (val < T(0));
