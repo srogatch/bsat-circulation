@@ -229,7 +229,7 @@ int main(int argc, char* argv[]) {
       TrackingSet bestFront, bestUnsatClauses, bestRevVertices;
 
       combs.assign(candVs.begin(), candVs.end());
-      const bool fullCombinations = combs.size() <= std::max<int64_t>(10, std::log(formula.nClauses_));
+      const bool fullCombinations = combs.size() <= std::max<int64_t>(10, std::log(formula.nVars_));
       if(fullCombinations) {
         std::shuffle(combs.begin(), combs.end(), rng);
         std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
@@ -241,26 +241,36 @@ int main(int argc, char* argv[]) {
       uint64_t prevBestAtCombs = 0;
       next = formula.ans_;
       TrackingSet stepRevs;
+      int64_t totIncl = 0;
       for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
         if(!fullCombinations || AccComb(combs.size(), nIncl) > 100) {
-          std::cout << " C" << combs.size() << "," << nIncl << " ";
-          std::flush(std::cout);
+          if(fullCombinations) {
+            std::cout << " C" << combs.size() << "," << nIncl << " ";
+            std::flush(std::cout);
+          }
         }
         if(fullCombinations) {
           incl.clear();
           for(int64_t j=0; j<nIncl; j++) {
             incl.push_back(j);
           }
-        } else {
-          std::set<int64_t> sIncl;
-          while(sIncl.size() < nIncl) {
-            sIncl.emplace(rng() % combs.size());
-          }
-          incl.assign(sIncl.begin(), sIncl.end());
         }
         int64_t nBeforeCombs = nCombs;
-        for(;;) {
+        if(!fullCombinations) {
+          nIncl = 4;
+        }
+        while( fullCombinations || totIncl <= std::pow(bestUnsat - nStartUnsat, 2) )
+        {
+          if(!fullCombinations) {
+            std::set<int64_t> sIncl;
+            while(sIncl.size() < nIncl) {
+              sIncl.emplace(rng() % combs.size());
+            }
+            incl.assign(sIncl.begin(), sIncl.end());
+          }
           nCombs++;
+          totIncl += nIncl;
+
           TrackingSet newFront;
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
@@ -325,7 +335,7 @@ int main(int argc, char* argv[]) {
             break;
           }
           if(!fullCombinations) {
-            break;
+            continue;
           }
           int64_t j;
           for(j=nIncl-1; j>=0; j--) {
@@ -413,8 +423,8 @@ int main(int argc, char* argv[]) {
       front = std::move(bestFront);
       unsatClauses = std::move(bestUnsatClauses);
 
-      if(!fullCombinations || bestRevVertices.set_.size() >= 3) {
-        if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) 
+      if(bestRevVertices.set_.size() >= std::min<int64_t>(4, unsatClauses.set_.size())) {
+        if(seenMove.size() - lastGD > std::sqrt(formula.nVars_) * std::log2(formula.nClauses_+1) / unsatClauses.set_.size()) 
         {
           std::cout << "G";
           std::cout.flush();

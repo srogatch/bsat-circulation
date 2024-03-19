@@ -5,6 +5,8 @@
 #include <random>
 #include <thread>
 #include <immintrin.h>
+#include <cmath>
+#include <cassert>
 
 constexpr const uint32_t kCacheLineSize = 64;
 
@@ -72,4 +74,9 @@ void ParallelShuffle(T* data, const size_t count) {
       syncs[sync1].clear(std::memory_order_release);
     }
   }
+}
+
+double NlogN(const double N) {
+  assert(N >= 0);
+  return N * std::log2(N+1);
 }
