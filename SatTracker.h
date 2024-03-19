@@ -59,7 +59,7 @@ template<typename TCounter> struct SatTracker {
 
   // The sign of iVar must reflect the new value of the variable.
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
-  int64_t FlipVar(const int64_t iVar, TrackingSet* front = nullptr) {
+  int64_t FlipVar(const int64_t iVar) {
     const std::vector<int64_t>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     std::atomic<int64_t> ans(0);
     #pragma omp parallel for
@@ -71,10 +71,6 @@ template<typename TCounter> struct SatTracker {
         assert(oldVal >= 0);
         if(oldVal == 0) {
           ans.fetch_add(1, std::memory_order_relaxed);
-          if(front != nullptr) {
-            #pragma omp critical
-            front->Remove(aClause);
-          }
         }
       }
       else {
@@ -82,10 +78,6 @@ template<typename TCounter> struct SatTracker {
         assert(oldVal >= 1);
         if(oldVal == 1) {
           ans.fetch_sub(1, std::memory_order_relaxed);
-          if(front != nullptr) {
-            #pragma omp critical
-            front->Add(aClause);
-          }
         }
       }
     }
@@ -100,6 +92,27 @@ template<typename TCounter> struct SatTracker {
       if(nSat_.get()[i].load(std::memory_order_relaxed) == 0) {
         #pragma omp critical
         ans.Add(i);
+      }
+    }
+    return ans;
+  }
+
+  TrackingSet GetUnsat(const SatTracker& oldSatTr, TrackingSet& newFront) const {
+    TrackingSet ans;
+    #pragma omp parallel for schedule(static, cParChunkSize)
+    for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
+      if(nSat_.get()[i].load(std::memory_order_relaxed) == 0) {
+        if(oldSatTr.nSat_.get()[i].load(std::memory_order_relaxed) > 0) {
+          #pragma omp critical
+          {
+            newFront.Add(i);
+            ans.Add(i);
+          }
+        }
+        else {
+          #pragma omp critical
+          ans.Add(i);
+        }
       }
     }
     return ans;

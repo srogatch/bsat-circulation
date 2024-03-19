@@ -257,6 +257,7 @@ int main(int argc, char* argv[]) {
         int64_t nBeforeCombs = nCombs;
         for(;;) {
           nCombs++;
+          TrackingSet newFront;
           for(int64_t j=0; j<nIncl; j++) {
             const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
             auto it = stepRevs.set_.find(revV);
@@ -266,11 +267,10 @@ int main(int argc, char* argv[]) {
               stepRevs.Remove(revV);
             }
             next.Flip(revV);
-            satTr.FlipVar(revV * (next[revV] ? 1 : -1), nullptr);
+            satTr.FlipVar(revV * (next[revV] ? 1 : -1));
           }
           TrackingSet oldUnsatClauses = unsatClauses;
-          unsatClauses = satTr.GetUnsat();
-          TrackingSet newFront = unsatClauses - oldUnsatClauses;
+          unsatClauses = satTr.GetUnsat(origSatTr, newFront);
 
           {
             auto unflip = Finally([&combs, &incl, &stepRevs, &next, &unsatClauses, &satTr, &oldUnsatClauses, nIncl, cycleOffset]() {
@@ -298,7 +298,8 @@ int main(int argc, char* argv[]) {
             if( maybeSuperior && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
               const int64_t stepUnsat = unsatClauses.set_.size();
               bv2nUnsat[next.hash_] = stepUnsat;
-              if(allowDuplicateFront || seenFront.find(newFront) == seenFront.end()) {
+              //TODO: shall this condition include a check for an empty front too?
+              if(allowDuplicateFront || newFront.set_.empty() || seenFront.find(newFront) == seenFront.end()) {
                 if(stepUnsat < bestUnsat) {
                   bestUnsat = stepUnsat;
                   bestFront = std::move(newFront);
@@ -308,7 +309,9 @@ int main(int argc, char* argv[]) {
                   if(bestUnsat < nStartUnsat) {
                     prevBestAtCombs = nCombs;
                     unflip.Disable();
+                    front = newFront;
                     std::cout << "+";
+                    std::cout.flush();
                   }
                 }
               }
