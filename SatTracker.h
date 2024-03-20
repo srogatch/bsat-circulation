@@ -9,7 +9,7 @@
 #include <variant>
 
 template<typename TCounter> struct SatTracker {
-  static constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(TCounter);
+  static constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(std::atomic<TCounter>);
   std::unique_ptr<std::atomic<TCounter>[]> nSat_;
   Formula *pFormula_;
   std::atomic<int64_t> totSat_ = -1;
@@ -20,16 +20,33 @@ template<typename TCounter> struct SatTracker {
     nSat_.reset(new std::atomic<TCounter>[pFormula_->nClauses_+1]);
   }
 
-  SatTracker(const SatTracker& src) {
+  void CopyFrom(const SatTracker& src) {
     pFormula_ = src.pFormula_;
     totSat_.store(src.totSat_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     nSat_.reset(new std::atomic<TCounter>[pFormula_->nClauses_+1]);
 
-    // TODO: better split into memcpy() ranges?
-    #pragma omp parallel for
-    for(int64_t i=0; i<=pFormula_->nClauses_; i++) {
-      nSat_.get()[i].store(src.nSat_.get()[i].load(std::memory_order_relaxed), std::memory_order_relaxed);
+    #pragma omp parallel for schedule(static, kRamPageBytes)
+    for(int64_t i=0; i<=DivUp(pFormula_->nClauses_, cParChunkSize); i++) {
+      const int64_t iFirst = i*cParChunkSize;
+      const int64_t iLimit = std::min((i+1) * cParChunkSize, pFormula_->nClauses_);
+      if(iFirst < iLimit) {
+        memcpy(
+          nSat_.get()+iFirst, src.nSat_.get()+iFirst,
+          (iLimit-iFirst) * cParChunkSize * sizeof(std::atomic<TCounter>)
+        );
+      }
     }
+  }
+
+  SatTracker(const SatTracker& src) {
+    CopyFrom(src);
+  }
+
+  SatTracker& operator=(const SatTracker& src) {
+    if(this != &src) {
+      CopyFrom(src);
+    }
+    return *this;
   }
 
   void Swap(SatTracker& fellow) {
@@ -181,6 +198,87 @@ template<typename TCounter> struct SatTracker {
     }
     return minUnsat;
   }
+
+  int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
+    const std::vector<std::pair<int64_t, int64_t>>& weightedVars,
+    BitVector& next, const std::unordered_map<uint128, int64_t>& seenAssignment, TrackingSet* revVertices)
+  {
+    int64_t minUnsat = pFormula_->nClauses_ + 1;
+    std::vector<int64_t> front(varsAtOnce, 0);
+    const int64_t endK = DivUp(weightedVars.size(), varsAtOnce) * varsAtOnce;
+    #pragma omp parallel num_threads(varsAtOnce) shared(front)
+    for(int64_t k=omp_get_thread_num(); k<endK; k+=varsAtOnce) {
+      assert(omp_get_num_threads() == varsAtOnce);
+      int64_t aVar, iVar;
+      if(k < weightedVars.size()) {
+        aVar = weightedVars[k].first;
+        assert(1 <= aVar && aVar <= pFormula_->nVars_);
+        iVar = aVar * (next[aVar] ? 1 : -1);
+        const int64_t nNewSat = FlipVar(-iVar, nullptr, nullptr);
+        front[omp_get_thread_num()] = iVar;
+      }
+
+      #pragma omp barrier
+
+      #pragma omp single
+      do {
+        const int64_t newUSC = UnsatCount();
+        if(newUSC < minUnsat + (preferMove ? 1 : 0)) {
+          for(int64_t i=0; i<varsAtOnce; i++) {
+            const int64_t aFV = llabs(front[i]);
+            if(aFV == 0) {
+              continue;
+            }
+            next.Flip(aFV);
+          }
+          if(seenAssignment.find(next.hash_) != seenAssignment.end()) {
+            // Flip back
+            for(int64_t i=0; i<varsAtOnce; i++) {
+              const int64_t aFV = llabs(front[i]);
+              if(aFV == 0) {
+                continue;
+              }
+              next.Flip(aFV);
+            }
+            break;
+          }
+
+          minUnsat = newUSC;
+          for(int64_t i=0; i<varsAtOnce; i++) {
+            const int64_t aFV = llabs(front[i]);
+            if(aFV == 0) {
+              continue;
+            }
+            if(revVertices != nullptr) {
+              if(revVertices->set_.find(aFV) == revVertices->set_.end()) {
+                revVertices->Add(aFV);
+              } else {
+                revVertices->Remove(aFV);
+              }
+            }
+          }
+          for(int64_t i=0; i<varsAtOnce; i++) {
+            front[i] = 0;
+          }
+        }
+      } while(false);
+      
+
+      #pragma omp barrier
+
+      if(k < weightedVars.size()) {
+        if(front[omp_get_thread_num()] == iVar) {
+          // Flip back
+          FlipVar(iVar, nullptr, nullptr);
+        }
+        front[omp_get_thread_num()] = 0;
+      }
+
+      #pragma omp barrier
+    }
+    return minUnsat;
+  }
+
 };
 
 using DefaultSatTracker = SatTracker<int16_t>;

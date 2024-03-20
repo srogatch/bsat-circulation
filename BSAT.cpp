@@ -88,7 +88,7 @@ int main(int argc, char* argv[]) {
   // TODO: does it override the environment variable?
   omp_set_num_threads(Formula::nCpus_);
   // Enable nested parallelism
-  omp_set_max_active_levels(4);
+  omp_set_max_active_levels(omp_get_supported_active_levels());
 
   std::mutex muUnsatClauses;
   std::mutex muFront;
@@ -156,25 +156,21 @@ int main(int argc, char* argv[]) {
 
   satTr.Populate(formula.ans_);
 
-  std::unordered_map<uint128, int64_t> bv2nUnsat;
-  bv2nUnsat[formula.ans_.hash_] = bestInit;
+  std::unordered_map<uint128, int64_t> seenAssignment;
+  seenAssignment[formula.ans_.hash_] = bestInit;
+
   BitVector maxPartial;
   bool maybeSat = true;
   bool provenUnsat = false;
-  std::unordered_set<std::pair<TrackingSet, TrackingSet>, MoveHash> seenMove;
   std::unordered_set<TrackingSet> seenFront;
   std::mt19937_64 rng;
-  int64_t lastFlush = formula.nClauses_ + 1;
   std::deque<Point> dfs;
   int64_t nStartUnsat;
   // Define them here to avoid reallocations
   std::vector<std::pair<int64_t, int64_t>> combs;
   std::vector<int64_t> vFront;
-  std::vector<int64_t> incl;
   BitVector next;
-  uint64_t cycleOffset = 0;
-  int64_t lastGD = 0;
-  int64_t nGD = 0; // the number of times Gradient Descent was launched
+  int64_t nParallelGD = 0, nSequentialGD = 0;
   while(maybeSat) {
     TrackingSet unsatClauses = satTr.GetUnsat();
     nStartUnsat = unsatClauses.set_.size();
@@ -200,9 +196,6 @@ int main(int argc, char* argv[]) {
     if(nStartUnsat == bestInit) {
       front = initFront;
     }
-    std::vector<int64_t> vClauses;
-    // avoid reallocations
-    vClauses.reserve(unsatClauses.set_.size() * 4);
     bool allowDuplicateFront = false;
     while(unsatClauses.set_.size() >= nStartUnsat) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
@@ -231,133 +224,29 @@ int main(int argc, char* argv[]) {
       TrackingSet bestRevVertices;
 
       combs.assign(candVs.begin(), candVs.end());
-      if( combs.size() <= std::log2(formula.nClauses_) ) {
-        if( combs.size() >= 2 * omp_get_max_threads() ) {
-          ParallelShuffle(combs.data(), combs.size());
-        } else {
-          std::shuffle(combs.begin(), combs.end(), rng);
-        }
-        std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
-          return a.second > b.second;
-        });
+      if( combs.size() >= 2 * omp_get_max_threads() ) {
+        ParallelShuffle(combs.data(), combs.size());
       } else {
-        std::sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
-          return a.second > b.second || (a.second == b.second && hash64(a.first) < hash64(b.first));
-        });
+        std::shuffle(combs.begin(), combs.end(), rng);
       }
+      std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
+        return a.second > b.second;
+      });
 
-      uint64_t nCombs = 0;
-      uint64_t prevBestAtCombs = 0;
-      next = formula.ans_;
-      TrackingSet stepRevs;
-      for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
-        if(AccComb(combs.size(), nIncl) > 100) {
-          std::cout << " C" << combs.size() << "," << nIncl << " ";
-          std::flush(std::cout);
+      const int64_t endNIncl = std::min<int64_t>(combs.size(), Formula::nCpus_);
+      for(int64_t nIncl=1; nIncl<=endNIncl; nIncl++) {
+        next = formula.ans_;
+        TrackingSet stepRevs;
+        std::cout << "P" << nIncl;
+        std::cout.flush();
+        const int64_t curNUnsat = satTr.ParallelGD(true, nIncl, combs, next, seenAssignment, &stepRevs);
+        nParallelGD++;
+        if( curNUnsat < bestUnsat ) {
+          bestUnsat = curNUnsat;
+          bestRevVertices = stepRevs;
         }
-        incl.clear();
-        for(int64_t j=0; j<nIncl; j++) {
-          incl.push_back(j);
-        }
-        int64_t nBeforeCombs = nCombs;
-        for(;;) {
-          nCombs++;
-          TrackingSet newFront;
-          TrackingSet oldUnsatClauses = unsatClauses;
-          for(int64_t j=0; j<nIncl; j++) {
-            const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
-            auto it = stepRevs.set_.find(revV);
-            if(it == stepRevs.set_.end()) {
-              stepRevs.Add(revV);
-            } else {
-              stepRevs.Remove(revV);
-            }
-            next.Flip(revV);
-            satTr.FlipVar(revV * (next[revV] ? 1 : -1), &unsatClauses, &newFront);
-          }
-
-          {
-            auto unflip = Finally([&combs, &incl, &stepRevs, &next, &unsatClauses, &satTr, &oldUnsatClauses, nIncl, cycleOffset]() {
-              // Flip bits back
-              for(int64_t j=0; j<nIncl; j++) {
-                const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
-                auto it = stepRevs.set_.find(revV);
-                if(it == stepRevs.set_.end()) {
-                  stepRevs.Add(revV);
-                } else {
-                  stepRevs.Remove(revV);
-                }
-                next.Flip(revV);
-                satTr.FlipVar(revV * (next[revV] ? 1 : -1), nullptr, nullptr);
-              }
-              unsatClauses = oldUnsatClauses;
-            });
-
-            auto it = bv2nUnsat.find(next.hash_);
-            bool maybeSuperior = (it == bv2nUnsat.end() || it->second < bestUnsat);
-            if(!maybeSuperior) {
-              // This combination has been too lightweight to count
-              prevBestAtCombs++;
-            }
-            if( maybeSuperior && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
-              const int64_t stepUnsat = unsatClauses.set_.size();
-              bv2nUnsat[next.hash_] = stepUnsat;
-              //TODO: shall this condition include a check for an empty front too?
-              if(allowDuplicateFront || newFront.set_.empty() || seenFront.find(newFront) == seenFront.end()) {
-                if(stepUnsat < bestUnsat) {
-                  bestUnsat = stepUnsat;
-                  bestRevVertices = stepRevs;
-
-                  if(bestUnsat < nStartUnsat) {
-                    prevBestAtCombs = nCombs;
-                    unflip.Disable();
-                    front = newFront;
-                    std::cout << "+";
-                    std::cout.flush();
-                  }
-                }
-              }
-            }
-          }
-          if(bestUnsat < nStartUnsat
-            // These little combinations are considered a light operation
-            && nCombs - prevBestAtCombs > std::log2(formula.nVars_+1))
-          {
-            break;
-          }
-          int64_t j;
-          for(j=nIncl-1; j>=0; j--) {
-            if(incl[j]+(nIncl-j) >= combs.size()) {
-              continue;
-            }
-            break;
-          }
-          if(j < 0) {
-            // All combinations with nIncl elements exhausted
-            break;
-          }
-          incl[j]++;
-          for(int64_t k=j+1; k<nIncl; k++) {
-            incl[k] = incl[k-1] + 1;
-          }
-        }
-        // Let the next traversal start from the combination we left on
-        cycleOffset += nCombs - nBeforeCombs;
-        if( bestUnsat < formula.nClauses_ ) {
-          if(bestUnsat < nStartUnsat) {
-            cycleOffset -= bestRevVertices.set_.size();
-            break;
-          }
-          if(bestUnsat < unsatClauses.set_.size() * 2) {
-            break;
-          }
-          if( bestUnsat < nStartUnsat + nCombs - 1 ) {
-            break;
-          }
-        }
-      }
-      if(nCombs > 100) {
-        std::cout << " N" << nCombs << " ";
+        satTr = origSatTr;
+        std::cout << "]";
         std::cout.flush();
       }
 
@@ -398,46 +287,34 @@ int main(int argc, char* argv[]) {
       }
       dfs.push_back(Point(formula.ans_));
 
-      seenMove.emplace(front, bestRevVertices);
       satTr.Swap(origSatTr);
       front.Clear();
       for(int64_t revV : bestRevVertices.set_) {
         formula.ans_.Flip(revV);
         satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
       }
-
+      seenAssignment[formula.ans_.hash_] = bestUnsat;
       // Indicate a walk step
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
       std::cout << ">";
 
-      if(bestRevVertices.set_.size() >= 3 && unsatClauses.set_.size() >= std::sqrt(formula.nVars_)/std::log2(formula.nClauses_)) {
-        if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) / unsatClauses.set_.size()) {
-          std::cout << "G";
-          std::cout.flush();
-          satTr.Populate(formula.ans_);
-          nGD++;
-          SatTracker backup(satTr);
-          front.Clear();
-          const int64_t newUnsat = satTr.GradientDescend(true, &unsatClauses, &front);
-          std::cout << "D";
-          std::cout.flush();
-          if(newUnsat > nStartUnsat - std::sqrt(nStartUnsat)) {
-            lastGD = seenMove.size();
-          }
-          bv2nUnsat[formula.ans_.hash_] = unsatClauses.set_.size();
-          // Limit the size of the stack
-          if(dfs.size() > formula.nVars_) {
-            dfs.pop_front();
-          }
-          dfs.push_back(Point(formula.ans_));
-          if(newUnsat < nStartUnsat) {
-            break;
-          }
-        }
+      std::cout << "S";
+      std::cout.flush();
+      front.Clear();
+      const int64_t newUnsat = satTr.GradientDescend(true, &unsatClauses, &front);
+      nSequentialGD++;
+      std::cout << "}";
+      std::cout.flush();
+      seenAssignment[formula.ans_.hash_] = unsatClauses.set_.size();
+
+      // Limit the size of the stack
+      if(dfs.size() > formula.nVars_) {
+        dfs.pop_front();
       }
+      dfs.push_back(Point(formula.ans_));
     }
-    std::cout << "\n\tTraversal size: " << seenMove.size() << ", assignments considered: " << bv2nUnsat.size()
-      << ", Gradient Descents: " << nGD << std::endl;
+    std::cout << "\n\tAssignments considered: " << seenAssignment.size()
+      << ", nParallelGD: " << nParallelGD << ", nSequentialGD: " << nSequentialGD << std::endl;
   }
 
   {

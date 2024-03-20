@@ -7,6 +7,7 @@
 #include <immintrin.h>
 
 constexpr const uint32_t kCacheLineSize = 64;
+constexpr const uint32_t kRamPageBytes = 4096;
 
 namespace detail {
 
