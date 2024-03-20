@@ -23,12 +23,14 @@ template<typename TCounter> struct SatTracker {
   void CopyFrom(const SatTracker& src) {
     pFormula_ = src.pFormula_;
     totSat_.store(src.totSat_.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    nSat_.reset(new std::atomic<TCounter>[pFormula_->nClauses_+1]);
+    if(nSat_ == nullptr) {
+      nSat_.reset(new std::atomic<TCounter>[pFormula_->nClauses_+1]);
+    }
 
     #pragma omp parallel for schedule(static, kRamPageBytes)
-    for(int64_t i=0; i<=DivUp(pFormula_->nClauses_, cParChunkSize); i++) {
+    for(int64_t i=0; i<=DivUp(pFormula_->nClauses_+1, cParChunkSize); i++) {
       const int64_t iFirst = i*cParChunkSize;
-      const int64_t iLimit = std::min((i+1) * cParChunkSize, pFormula_->nClauses_);
+      const int64_t iLimit = std::min((i+1) * cParChunkSize, pFormula_->nClauses_+1);
       if(iFirst < iLimit) {
         memcpy(
           nSat_.get()+iFirst, src.nSat_.get()+iFirst,
