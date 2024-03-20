@@ -258,7 +258,7 @@ int main(int argc, char* argv[]) {
       constexpr const int64_t knCombine = 5;
       const int64_t nSources = omp_get_max_threads();
       std::mutex muSeenMove, muSeenFront, muBestUnsat;
-      #pragma omp parallel for
+      #pragma omp parallel for num_threads(nSources)
       for(int64_t i=0; i<nSources; i++) {
         int64_t baseFront = ((i+1) * BitVector::hashSeries_[0]) % (formula.nVars_-nZeroes);
         int64_t baseOut = ((i+2) * BitVector::hashSeries_[1]) % nZeroes;
@@ -346,7 +346,7 @@ int main(int argc, char* argv[]) {
             // Flip back
             for(l=0; l<nToInclude; l++) {
               next[omp_get_thread_num()].Flip(incl[l]);
-              satTrackers[l].FlipVar(incl[l] * (formula.ans_[incl[l]] ? 1 : -1), nullptr, nullptr);
+              satTrackers[l].FlipVar(incl[l] * (next[omp_get_thread_num()][incl[l]] ? 1 : -1), nullptr, nullptr);
               parRevVars[omp_get_thread_num()].Flip(incl[l]);
             }
           }
