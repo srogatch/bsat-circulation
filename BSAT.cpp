@@ -272,24 +272,32 @@ int main(int argc, char* argv[]) {
             for(; l<nFrontVars; l++) {
               incl[l] = varSplit[nZeroes+baseFront%(formula.nVars_-nZeroes)].first;
               baseFront++;
+              bool hasDups = false;
               for(int64_t m=0; m<l; m++) {
                 if(incl[m] == incl[l]) {
-                  // Avoid duplicates
-                  l--;
-                  continue;
+                  hasDups = true;
+                  break;
                 }
+              }
+              if(hasDups) {
+                l--;
+                continue;
               }
               parRevVars[omp_get_thread_num()].Flip(incl[l]);
             }
             for(; l<nToInclude; l++) {
               incl[l] = varSplit[baseOut%nZeroes].first;
               baseOut++;
+              bool hasDups = false;
               for(int64_t m=nFrontVars; m<l; m++) {
                 if(incl[m] == incl[l]) {
-                  // Avoid duplicates
-                  l--;
-                  continue;
+                  hasDups = true;
+                  break;
                 }
+              }
+              if(hasDups) {
+                l--;
+                continue;
               }
               parRevVars[omp_get_thread_num()].Flip(incl[l]);
             }
