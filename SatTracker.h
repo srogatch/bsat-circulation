@@ -60,9 +60,9 @@ template<typename TCounter> struct SatTracker {
   }
 
   void Populate(const BitVector& assignment) {
-    totSat_.store(0, std::memory_order_relaxed);
+    int64_t nSatClauses = 0;
     nSat_[0] = 1;
-    #pragma omp parallel for schedule(static, cParChunkSize)
+    #pragma omp parallel for schedule(static, cParChunkSize) reduction(+:nSatClauses)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       nSat_[i] = 0;
       for(const int64_t iVar : pFormula_->clause2var_.find(i)->second) {
@@ -71,20 +71,42 @@ template<typename TCounter> struct SatTracker {
         }
       }
       if(nSat_.get()[i].load(std::memory_order_relaxed)) {
-        totSat_.fetch_add(1, std::memory_order_relaxed);
+        nSatClauses++;
       }
     }
+    totSat_.store(nSatClauses, std::memory_order_relaxed);
+  }
+
+  void SelfCheck(const BitVector& assignment) {
+    int64_t nSatClauses = 0;
+    assert(nSat_[0] == 1);
+    #pragma omp parallel for schedule(static, cParChunkSize) reduction(+:nSatClauses)
+    for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
+      int64_t curSat = 0;
+      for(const int64_t iVar : pFormula_->clause2var_.find(i)->second) {
+        if( (iVar < 0 && !assignment[-iVar]) || (iVar > 0 && assignment[iVar]) ) {
+          curSat++;
+        }
+      }
+      assert(curSat == nSat_.get()[i].load(std::memory_order_relaxed));
+      if(curSat) {
+        nSatClauses++;
+      }
+    }
+    assert(totSat_ == nSatClauses);
   }
 
   // The sign of iVar must reflect the new value of the variable.
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
   int64_t FlipVar(const int64_t iVar, TrackingSet* unsatClauses, TrackingSet* front) {
+    assert(1 <= llabs(iVar) && llabs(iVar) <= pFormula_->nVars_);
     std::mutex muUC, muFront;
     const std::vector<int64_t>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     int64_t ans = 0;
     #pragma omp parallel for reduction(+:ans)
     for(int64_t i=0; i<clauses.size(); i++) {
       const int64_t iClause = clauses[i];
+      assert(1 <= llabs(iClause) && llabs(iClause) <= pFormula_->nClauses_);
       const int64_t aClause = llabs(iClause);
       if(iClause * iVar > 0) {
         int64_t oldVal = nSat_.get()[aClause].fetch_add(1, std::memory_order_relaxed);

@@ -256,7 +256,7 @@ int main(int argc, char* argv[]) {
       int64_t bestUnsat = formula.nClauses_+1;
       TrackingSet bestRevVertices;
       constexpr const int64_t knCombine = 5;
-      const int64_t nSources = omp_get_max_threads();
+      const int64_t nSources = 1; // omp_get_max_threads();
       std::mutex muSeenMove, muSeenFront, muBestUnsat;
       #pragma omp parallel for num_threads(nSources)
       for(int64_t i=0; i<nSources; i++) {
@@ -342,15 +342,15 @@ int main(int argc, char* argv[]) {
                 if(stepUnsat < nStartUnsat) {
                   std::cout << "+";
                   std::cout.flush();
+                  parFront[omp_get_thread_num()] = newFront;
+                  continue;
                 }
-                parFront[omp_get_thread_num()] = newFront;
-                continue;
               }
             }
             // Flip back
             for(l=0; l<nToInclude; l++) {
               next[omp_get_thread_num()].Flip(incl[l]);
-              satTrackers[l].FlipVar(incl[l] * (next[omp_get_thread_num()][incl[l]] ? 1 : -1), nullptr, nullptr);
+              satTrackers[omp_get_thread_num()].FlipVar(incl[l] * (next[omp_get_thread_num()][incl[l]] ? 1 : -1), nullptr, nullptr);
               parRevVars[omp_get_thread_num()].Flip(incl[l]);
             }
           }
@@ -403,9 +403,10 @@ int main(int argc, char* argv[]) {
       // Indicate a walk step
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
       std::cout << ">";
+      std::cout.flush();
 
-      if(bestRevVertices.set_.size() >= 2) {
-        while(seenMove.size() - lastGD > std::sqrt(formula.nClauses_)/(nStartUnsat+1) + 1) {
+      if(bestRevVertices.set_.size() >= 3) {
+        while(seenMove.size() - lastGD > 100) {
           std::cout << "G";
           std::cout.flush();
           nGD++;
@@ -415,9 +416,9 @@ int main(int argc, char* argv[]) {
           std::cout << oldNUnsat << "/" << newUnsat << "D";
           std::cout.flush();
           assert(unsatClauses.set_.size() == newUnsat);
-          if(newUnsat > oldNUnsat - std::sqrt(oldNUnsat+4)) {
-            lastGD = seenMove.size();
-          }
+          //if(newUnsat > oldNUnsat - std::sqrt(oldNUnsat+4)) {
+          lastGD = seenMove.size();
+          //}
           // Limit the size of the stack
           if(dfs.size() > formula.nVars_) {
             dfs.pop_front();
