@@ -279,9 +279,6 @@ template<typename TCounter> struct SatTracker {
           std::mt19937_64 rng(seed);
           std::shuffle(combs.begin(), combs.end(), rng);
         }
-        std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
-          return a.second > b.second;
-        });
         const int64_t subNUnsat = ParallelGD(
           preferMove, varsAtOnce, combs, next, seenMove, unsatClauses, startFront, revVertices, minUnsat, level-1);
         if(subNUnsat < minUnsat + (preferMove ? 1 : 0)) {

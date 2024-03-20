@@ -220,9 +220,6 @@ int main(int argc, char* argv[]) {
       } else {
         std::shuffle(combs.begin(), combs.end(), rng);
       }
-      std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
-        return a.second > b.second;
-      });
 
       const int64_t endNIncl = std::min<int64_t>(combs.size(), 5);
       std::cout << "P" << combs.size() << "," << unsatClauses.set_.size();
