@@ -85,7 +85,6 @@ int main(int argc, char* argv[]) {
   omp_set_max_active_levels(omp_get_supported_active_levels());
 
   std::mutex muUnsatClauses;
-  std::mutex muFront;
   Formula formula;
   formula.Load(argv[1]);
 
@@ -225,19 +224,19 @@ int main(int argc, char* argv[]) {
         return a.second > b.second;
       });
 
-      const int64_t endNIncl = std::min<int64_t>(combs.size(), 4);
+      const int64_t endNIncl = std::min<int64_t>(combs.size(), 5);
       std::cout << "P" << combs.size() << "," << unsatClauses.set_.size();
       std::cout.flush();
-      int64_t nCombs = 0;
-      int64_t nIncl=1;
+      int64_t nIncl=2;
       for(; nIncl<=endNIncl; nIncl++) {
         next = formula.ans_;
         TrackingSet stepRevs;
         const int64_t curNUnsat = satTr.ParallelGD(
-          true, nIncl, combs, next, seenMove, nullptr, front, stepRevs, satTr.UnsatCount() * 2, 2);
+          true, nIncl, combs, next, seenMove, nullptr, front, stepRevs, 
+          std::max<int64_t>(satTr.UnsatCount() * 2, nStartUnsat + std::sqrt(formula.nVars_)),
+          0);
         nParallelGD++;
         satTr = origSatTr;
-        nCombs += combs.size() / nIncl;
         if( curNUnsat < bestUnsat ) {
           bestUnsat = curNUnsat;
           bestRevVertices = stepRevs;
@@ -302,9 +301,12 @@ int main(int argc, char* argv[]) {
         formula.ans_.Flip(revV);
         satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
       }
-      const int64_t strUnsat = satTr.UnsatCount();
+      const int64_t realUnsat = satTr.UnsatCount();
+      // TODO: remove the heavy operation below
+      TrackingSet trueUnsat = satTr.GetUnsat();
+      assert(realUnsat == bestUnsat);
+      assert(unsatClauses == trueUnsat);
       assert(unsatClauses.set_.size() == bestUnsat);
-      assert(strUnsat == bestUnsat);
       // Indicate a walk step
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
 
@@ -330,6 +332,7 @@ int main(int argc, char* argv[]) {
         dfs.push_back(Point(formula.ans_));
       } while(newUnsat < oldUnsat);
       assert(newUnsat == oldUnsat); // must not increase
+      assert(newUnsat == satTr.UnsatCount());
       std::cout << nInARow << "," << satTr.UnsatCount() << "} ";
       std::cout.flush();
     }

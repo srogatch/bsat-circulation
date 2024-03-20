@@ -42,10 +42,13 @@ struct TrackingSet {
   }
 
   void Flip(const int64_t item) {
-    if(set_.find(item) == set_.end()) {
-      Add(item);
+    auto it = set_.find(item);
+    if(it == set_.end()) {
+      set_.emplace(item);
+      hash_ ^= item * kHashBase;
     } else {
-      Remove(item);
+      set_.erase(it);
+      hash_ ^= item * kHashBase;
     }
   }
 

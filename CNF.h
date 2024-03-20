@@ -268,7 +268,7 @@ release:
   }
 
   BitVector SetGreedy1() const {
-    BitVector ans(nVars_); // Init to false
+    BitVector ans(nVars_+1); // Init to false
     std::vector<std::pair<int64_t, int64_t>> counts_;
     #pragma omp parallel for
     for(int64_t i=1; i<=nVars_; i++) {
@@ -292,8 +292,8 @@ release:
   }
 
   BitVector SetGreedy2() const {
-    BitVector ans(nVars_); // Init to false
-    BitVector knownClauses(nClauses_); // Init to false
+    BitVector ans(nVars_+1); // Init to false
+    BitVector knownClauses(nClauses_+1); // Init to false
     #pragma omp parallel for
     for(int64_t i=1; i<=nVars_; i++) {
       auto it = var2clause_.find(i);
@@ -315,9 +315,9 @@ release:
 
   // Disable it as it gives inferior results, but is also single-threaded / slow
   BitVector SetDfs() const {
-    BitVector ans(nVars_); // Init to false
-    BitVector visitedVars(nVars_); // Init to false
-    BitVector knownClauses(nClauses_); // Init to false
+    BitVector ans(nVars_+1); // Init to false
+    BitVector visitedVars(nVars_+1); // Init to false
+    BitVector knownClauses(nClauses_+1); // Init to false
     std::vector<int64_t> trail;
     std::mt19937 rng;
 

@@ -56,7 +56,7 @@ struct BitVector {
     // memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
     #pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=0; i<nQwords_; i++) {
-      bits_.get()[i] = fellow.bits_.get()[i];
+      bits_[i] = fellow.bits_[i];
     }
     hash_ = fellow.hash_;
   }
@@ -90,7 +90,7 @@ struct BitVector {
   }
 
   bool operator[](const int64_t index) const {
-    return bits_[index/64] & (1ULL<<(index&63));
+    return (bits_[index/64] & (1ULL<<(index&63))) != 0;
   }
 
   bool operator==(const BitVector& fellow) const {

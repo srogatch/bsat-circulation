@@ -14,8 +14,8 @@ template<typename TCounter> struct SatTracker {
   static constexpr const int64_t kSyncContention = 37; // 37 per CPU
   std::unique_ptr<TCounter[]> nSat_;
   std::unique_ptr<std::atomic_flag[]> syncs_;
-  Formula *pFormula_;
-  std::atomic<int64_t> totSat_ = -1;
+  Formula *pFormula_ = nullptr;
+  std::atomic<int64_t> totSat_ = 0;
 
   explicit SatTracker(Formula& formula)
   : pFormula_(&formula)
@@ -37,15 +37,8 @@ template<typename TCounter> struct SatTracker {
     totSat_.store(src.totSat_.load(std::memory_order_relaxed), std::memory_order_relaxed);
 
     #pragma omp parallel for schedule(static, kRamPageBytes)
-    for(int64_t i=0; i<=DivUp(pFormula_->nClauses_+1, cParChunkSize); i++) {
-      const int64_t iFirst = i*cParChunkSize;
-      const int64_t iLimit = std::min((i+1) * cParChunkSize, pFormula_->nClauses_+1);
-      if(iFirst < iLimit) {
-        memcpy(
-          nSat_.get()+iFirst, src.nSat_.get()+iFirst,
-          (iLimit-iFirst) * cParChunkSize * sizeof(nSat_[0])
-        );
-      }
+    for(int64_t i=0; i<=pFormula_->nClauses_; i++) {
+      nSat_[i] = src.nSat_[i];
     }
   }
 
@@ -222,12 +215,12 @@ template<typename TCounter> struct SatTracker {
   int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
     const std::vector<std::pair<int64_t, int64_t>>& weightedVars,
     BitVector& next, std::unordered_set<std::pair<uint128, uint128>>& seenMove,
-    TrackingSet* unsatClauses, TrackingSet& startFront, TrackingSet& revVertices,
-    int64_t minUnsat, int64_t level)
+    TrackingSet* unsatClauses, const TrackingSet& startFront,
+    TrackingSet& revVertices, int64_t minUnsat, int64_t level)
   {
-    for(int64_t i=0; i<weightedVars.size(); i+=varsAtOnce) {
+    for(int64_t i=0; i<int64_t(weightedVars.size()); i+=varsAtOnce) {
       std::vector<int64_t> selVars(varsAtOnce, 0);
-      const int64_t nVars = std::min<int64_t>(varsAtOnce, weightedVars.size() - i);
+      const int64_t nVars = std::min<int64_t>(varsAtOnce, int64_t(weightedVars.size()) - i);
       #pragma omp parallel for num_threads(nVars)
       for(int64_t j=0; j<nVars; j++) {
         int64_t aVar, iVar;
@@ -252,8 +245,8 @@ template<typename TCounter> struct SatTracker {
       for(int64_t j=0; j<nVars; j++) {
         const int64_t iVar = selVars[j];
         const int64_t aVar = llabs(iVar);
-        const int64_t nNewSat = FlipVar(-iVar, unsatClauses, &newFront);
         next.Flip(aVar);
+        FlipVar(aVar * (next[aVar] ? 1 : -1), unsatClauses, &newFront);
       }
       const int64_t newNUnsat = UnsatCount();
       if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
@@ -289,14 +282,10 @@ template<typename TCounter> struct SatTracker {
         std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
           return a.second > b.second;
         });
-        TrackingSet nextWaveRevs;
         const int64_t subNUnsat = ParallelGD(
-          preferMove, varsAtOnce, combs, next, seenMove, unsatClauses, newFront, nextWaveRevs, minUnsat, level-1);
+          preferMove, varsAtOnce, combs, next, seenMove, unsatClauses, startFront, revVertices, minUnsat, level-1);
         if(subNUnsat < minUnsat + (preferMove ? 1 : 0)) {
           minUnsat = subNUnsat;
-          for(const int64_t revV : nextWaveRevs.set_) {
-            revVertices.Flip(revV);
-          }
           continue;
         }
       }
@@ -306,7 +295,7 @@ template<typename TCounter> struct SatTracker {
         const int64_t iVar = selVars[j];
         const int64_t aVar = llabs(iVar);
         next.Flip(aVar);
-        const int64_t nNewSat = FlipVar(iVar, unsatClauses, nullptr);
+        const int64_t nNewSat = FlipVar(aVar * (next[aVar] ? 1 : -1), unsatClauses, nullptr);
         #pragma omp critical
         revVertices.Flip(aVar);
       }
