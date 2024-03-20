@@ -9,6 +9,16 @@
 constexpr const uint32_t kCacheLineSize = 64;
 constexpr const uint32_t kRamPageBytes = 4096;
 
+typedef unsigned __int128 uint128;
+
+constexpr const uint128 kHashBase =
+    (uint128(244)  * uint128(1000*1000*1000) * uint128(1000*1000*1000) + uint128(903443422803031898ULL)) * uint128(1000*1000*1000) * uint128(1000*1000*1000)
+    + uint128(471395581046679967ULL);
+
+template<typename T, typename U> constexpr T DivUp(const T a, const U b) {
+  return (a + T(b) - 1) / T(b);
+}
+
 namespace detail {
 
 template <typename F>
@@ -74,3 +84,13 @@ void ParallelShuffle(T* data, const size_t count) {
     }
   }
 }
+
+namespace std {
+
+template<> struct hash<pair<uint128, uint128>> {
+  bool operator()(const pair<uint128, uint128>& v) const {
+    return v.first * 1949 + v.second * 2011;
+  }
+};
+
+} // namespace std

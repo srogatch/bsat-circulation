@@ -60,12 +60,6 @@ uint64_t AccComb(const int64_t n, const int64_t k) {
   return mac;
 }
 
-struct MoveHash {
-  bool operator()(const std::pair<TrackingSet, TrackingSet>& v) const {
-    return v.first.hash_ * 1949 + v.second.hash_ * 2011;
-  }
-};
-
 struct Point {
   BitVector assignment_;
 
@@ -156,12 +150,11 @@ int main(int argc, char* argv[]) {
 
   satTr.Populate(formula.ans_);
 
-  std::unordered_map<uint128, int64_t> seenAssignment;
-
   BitVector maxPartial;
   bool maybeSat = true;
   bool provenUnsat = false;
   std::unordered_set<TrackingSet> seenFront;
+  std::unordered_set<std::pair<uint128, uint128>> seenMove;
   std::mt19937_64 rng;
   std::deque<Point> dfs;
   int64_t nStartUnsat;
@@ -233,33 +226,34 @@ int main(int argc, char* argv[]) {
       });
 
       const int64_t endNIncl = std::min<int64_t>(std::min<int64_t>(combs.size(), Formula::nCpus_), std::log2(formula.nClauses_+1));
-      std::cout << "P" << combs.size() << "," << endNIncl;
+      std::cout << "P" << combs.size();
       std::cout.flush();
       int64_t nCombs = 0;
-      for(int64_t nIncl=2; nIncl<=endNIncl; nIncl++) {
+      int64_t nIncl=1;
+      for(; nIncl<=endNIncl; nIncl++) {
         next = formula.ans_;
-        TrackingSet stepRevs;
-        const int64_t curNUnsat = satTr.ParallelGD(true, nIncl, combs, next, seenAssignment, &stepRevs);
+        TrackingSet stepRevs, oldUnsatClauses = unsatClauses;
+        const int64_t curNUnsat = satTr.ParallelGD(
+          true, nIncl, combs, next, seenMove, unsatClauses, front, stepRevs);
         nParallelGD++;
+        unsatClauses = oldUnsatClauses;
+        satTr = origSatTr;
         nCombs += combs.size() / nIncl;
         if( curNUnsat < bestUnsat ) {
           bestUnsat = curNUnsat;
           bestRevVertices = stepRevs;
-          if( bestUnsat < formula.nClauses_ ) {
-            if(bestUnsat < unsatClauses.set_.size() * 2 || bestUnsat < nStartUnsat + nCombs - 1 ) {
-              satTr = origSatTr;
-              break;
-            }
+          if(bestUnsat < nStartUnsat)
+          {
+            break;
           }
         }
-        satTr = origSatTr;
         if( combs.size() >= 2 * omp_get_max_threads() ) {
           ParallelShuffle(combs.data(), combs.size());
         } else {
           std::shuffle(combs.begin(), combs.end(), rng);
         }
       }
-      std::cout << "] ";
+      std::cout << "," << nIncl << "] ";
       std::cout.flush();
 
       if(bestUnsat >= formula.nClauses_) {
@@ -272,7 +266,6 @@ int main(int argc, char* argv[]) {
 
         if(front != unsatClauses) {
           // Retry with full/random front
-          satTr.Swap(origSatTr);
           front = unsatClauses;
           continue;
         }
@@ -299,12 +292,12 @@ int main(int argc, char* argv[]) {
       }
       dfs.push_back(Point(formula.ans_));
 
-      seenAssignment[formula.ans_.hash_] = bestUnsat;
-      satTr.Swap(origSatTr);
+      seenMove.emplace(front.hash_, bestRevVertices.hash_);
       front.Clear();
+      std::mutex muUCs, muFront;
       for(int64_t revV : bestRevVertices.set_) {
         formula.ans_.Flip(revV);
-        satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
+        satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &muUCs, &muFront, &unsatClauses, &front);
       }
       // Indicate a walk step
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
@@ -321,21 +314,9 @@ int main(int argc, char* argv[]) {
         TrackingSet newUSC = unsatClauses + front;
         front.Clear();
         newUnsat = satTr.GradientDescend(true, &newUSC, &front);
-        unsatClauses = satTr.GetUnsat();
+        unsatClauses = newUSC;
         nSequentialGD++;
         assert(newUnsat == unsatClauses.set_.size());
-
-        auto it = seenAssignment.find(oldHash);
-        if(it == seenAssignment.end()) {
-          seenAssignment[oldHash] = newUnsat;
-        } else {
-          if(newUnsat < it->second) {
-            it->second = newUnsat;
-          }
-          else {
-            oldUnsat = newUnsat;
-          }
-        }
 
         // Limit the size of the stack
         if(dfs.size() > formula.nVars_) {
@@ -343,10 +324,11 @@ int main(int argc, char* argv[]) {
         }
         dfs.push_back(Point(formula.ans_));
       } while(newUnsat < oldUnsat);
+      //} while(false);
       std::cout << nInARow << "} ";
       std::cout.flush();
     }
-    std::cout << "\n\tAssignments considered: " << seenAssignment.size()
+    std::cout << "\n\tWalk length: " << seenMove.size()
       << ", nParallelGD: " << nParallelGD << ", nSequentialGD: " << nSequentialGD << std::endl;
   }
 

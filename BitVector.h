@@ -9,17 +9,8 @@
 #include <immintrin.h>
 #include <atomic>
 
-typedef unsigned __int128 uint128;
-
-template<typename T, typename U> constexpr T DivUp(const T a, const U b) {
-  return (a + T(b) - 1) / T(b);
-}
-
 struct BitVector {
   static constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(uint64_t); // one cache line at a time
-  static constexpr const uint128 cHashBase =
-    (uint128(244)  * uint128(1000*1000*1000) * uint128(1000*1000*1000) + uint128(903443422803031898ULL)) * uint128(1000*1000*1000) * uint128(1000*1000*1000)
-    + uint128(471395581046679967ULL);
   static std::unique_ptr<uint128[]> hashSeries_;
   std::unique_ptr<uint64_t[]> bits_;
   int64_t nQwords_ = 0;
@@ -30,7 +21,7 @@ struct BitVector {
     hashSeries_.reset(new uint128[nVars+1]);
     hashSeries_[0] = 1;
     for(int64_t i=1; i<=nVars; i++) {
-      hashSeries_[i] = hashSeries_[i-1] * cHashBase;
+      hashSeries_[i] = hashSeries_[i-1] * kHashBase;
     }
   }
 

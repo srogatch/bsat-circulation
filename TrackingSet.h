@@ -1,17 +1,19 @@
 #pragma once
 
+#include "Utils.h"
+
 #include <unordered_set>
 #include <cstdint>
 
 struct TrackingSet {
   std::unordered_set<int64_t> set_;
-  std::size_t hash_ = 0;
+  uint128 hash_ = 0;
 
   void Add(const int64_t item) {
     auto it = set_.find(item);
     if(it == set_.end()) {
       set_.emplace(item);
-      hash_ ^= item * 18446744073709551557ULL;
+      hash_ ^= item * kHashBase;
     }
   }
 
@@ -19,7 +21,7 @@ struct TrackingSet {
     auto it = set_.find(item);
     if(it != set_.end()) {
       set_.erase(it);
-      hash_ ^= item * 18446744073709551557ULL;
+      hash_ ^= item * kHashBase;
     }
   }
 

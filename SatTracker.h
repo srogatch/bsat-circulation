@@ -7,6 +7,7 @@
 #include <memory>
 #include <atomic>
 #include <variant>
+#include <execution>
 
 template<typename TCounter> struct SatTracker {
   static constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(std::atomic<TCounter>);
@@ -76,8 +77,7 @@ template<typename TCounter> struct SatTracker {
 
   // The sign of iVar must reflect the new value of the variable.
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
-  int64_t FlipVar(const int64_t iVar, TrackingSet* unsatClauses, TrackingSet* front) {
-    std::mutex muUC, muFront;
+  int64_t FlipVar(const int64_t iVar, std::mutex *muUC, std::mutex *muFront, TrackingSet* unsatClauses, TrackingSet* front) {
     const std::vector<int64_t>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     int64_t ans = 0;
     #pragma omp parallel for reduction(+:ans)
@@ -90,11 +90,11 @@ template<typename TCounter> struct SatTracker {
         if(oldVal == 0) {
           ans++;
           if(unsatClauses != nullptr) {
-            std::unique_lock<std::mutex> lock(muUC);
+            std::unique_lock<std::mutex> lock(*muUC);
             unsatClauses->Remove(aClause);
           }
           if(front != nullptr) {
-            std::unique_lock<std::mutex> lock(muFront);
+            std::unique_lock<std::mutex> lock(*muFront);
             front->Remove(aClause);
           }
         }
@@ -105,11 +105,11 @@ template<typename TCounter> struct SatTracker {
         if(oldVal == 1) {
           ans--;
           if(unsatClauses != nullptr) {
-            std::unique_lock<std::mutex> lock(muUC);
+            std::unique_lock<std::mutex> lock(*muUC);
             unsatClauses->Add(aClause);
           }
           if(front != nullptr) {
-            std::unique_lock<std::mutex> lock(muFront);
+            std::unique_lock<std::mutex> lock(*muFront);
             front->Add(aClause);
           }
         }
@@ -184,16 +184,17 @@ template<typename TCounter> struct SatTracker {
 
     int64_t minUnsat = UnsatCount();
     assert( unsatClauses == nullptr || minUnsat == unsatClauses->set_.size() );
+    std::mutex muUCs, muFront;
     for(int64_t k=0; k<vVars.size(); k++) {
       assert(1 <= vVars[k] && vVars[k] <= pFormula_->nVars_);
       const int64_t iVar = vVars[k] * (pFormula_->ans_[vVars[k]] ? 1 : -1);
-      const int64_t nNewSat = FlipVar(-iVar, unsatClauses, front);
+      const int64_t nNewSat = FlipVar(-iVar, &muUCs, &muFront, unsatClauses, front);
       if(nNewSat >= (preferMove ? 0 : 1)) {
         minUnsat -= nNewSat;
         pFormula_->ans_.Flip(vVars[k]);
       } else {
         // Flip back
-        FlipVar(iVar, unsatClauses, front);
+        FlipVar(iVar, &muUCs, &muFront, unsatClauses, front);
       }
     }
     return minUnsat;
@@ -201,83 +202,109 @@ template<typename TCounter> struct SatTracker {
 
   int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
     const std::vector<std::pair<int64_t, int64_t>>& weightedVars,
-    BitVector& next, std::unordered_map<uint128, int64_t>& seenAssignment,
-    TrackingSet* revVertices)
+    BitVector& next, std::unordered_set<std::pair<uint128, uint128>>& seenMove,
+    TrackingSet& unsatClauses, TrackingSet& startFront, TrackingSet& revVertices,
+    int64_t level = 0)
   {
-    int64_t minUnsat = pFormula_->nClauses_ + 1;
-    std::vector<int64_t> front(varsAtOnce, 0);
-    const int64_t endK = DivUp(weightedVars.size(), varsAtOnce) * varsAtOnce;
-    #pragma omp parallel num_threads(varsAtOnce) shared(front)
-    for(int64_t k=omp_get_thread_num(); k<endK; k+=varsAtOnce) {
-      assert(omp_get_num_threads() == varsAtOnce);
-      int64_t aVar, iVar;
-      if(k < weightedVars.size()) {
-        aVar = weightedVars[k].first;
+    int64_t minUnsat = UnsatCount() * 2;
+    std::mutex muUC, muFront;
+    for(int64_t i=0; i<weightedVars.size(); i+=varsAtOnce) {
+      std::vector<int64_t> selVars(varsAtOnce, 0);
+      const int64_t nVars = std::min<int64_t>(varsAtOnce, weightedVars.size() - i);
+      #pragma omp parallel for num_threads(nVars)
+      for(int64_t j=0; j<nVars; j++) {
+        int64_t aVar, iVar;
+        aVar = weightedVars[i+j].first;
         assert(1 <= aVar && aVar <= pFormula_->nVars_);
         iVar = aVar * (next[aVar] ? 1 : -1);
-        const int64_t nNewSat = FlipVar(-iVar, nullptr, nullptr);
-        front[omp_get_thread_num()] = iVar;
-      }
-
-      #pragma omp barrier
-
-      #pragma omp single
-      do {
-        const int64_t newUSC = UnsatCount();
-        if(newUSC < minUnsat + (preferMove ? 1 : 0)) {
-          for(int64_t i=0; i<varsAtOnce; i++) {
-            const int64_t aFV = llabs(front[i]);
-            if(aFV == 0) {
-              continue;
-            }
-            next.Flip(aFV);
-          }
-          auto it = seenAssignment.find(pFormula_->ans_.hash_);
-          if(it != seenAssignment.end() && it->second <= newUSC) {
-            // Flip back
-            for(int64_t i=0; i<varsAtOnce; i++) {
-              const int64_t aFV = llabs(front[i]);
-              if(aFV == 0) {
-                continue;
-              }
-              next.Flip(aFV);
-            }
-            break;
-          }
-
-          seenAssignment[pFormula_->ans_.hash_] = newUSC;
-          minUnsat = newUSC;
-          for(int64_t i=0; i<varsAtOnce; i++) {
-            const int64_t aFV = llabs(front[i]);
-            if(aFV == 0) {
-              continue;
-            }
-            if(revVertices != nullptr) {
-              if(revVertices->set_.find(aFV) == revVertices->set_.end()) {
-                revVertices->Add(aFV);
-              } else {
-                revVertices->Remove(aFV);
-              }
-            }
-          }
-          for(int64_t i=0; i<varsAtOnce; i++) {
-            front[i] = 0;
+        selVars[j] = iVar;
+        #pragma omp critical
+        {
+          if(revVertices.set_.find(aVar) == revVertices.set_.end()) {
+            revVertices.Add(aVar);
+          } else {
+            revVertices.Remove(aVar);
           }
         }
-      } while(false);
-      
-
-      #pragma omp barrier
-
-      if(k < weightedVars.size()) {
-        if(front[omp_get_thread_num()] == iVar) {
-          // Flip back
-          FlipVar(iVar, nullptr, nullptr);
+      }
+      if(seenMove.find({startFront.hash_, revVertices.hash_}) != seenMove.end()) {
+        // Should be better sequential
+        for(int64_t j=0; j<nVars; j++) {
+          const int64_t iVar = selVars[j];
+          const int64_t aVar = llabs(iVar);
+          if(revVertices.set_.find(aVar) == revVertices.set_.end()) {
+            revVertices.Add(aVar);
+          } else {
+            revVertices.Remove(aVar);
+          }
         }
-        front[omp_get_thread_num()] = 0;
+        continue;
+      }
+      TrackingSet newFront;
+      #pragma omp parallel for num_threads(nVars)
+      for(int64_t j=0; j<nVars; j++) {
+        const int64_t iVar = selVars[j];
+        const int64_t aVar = llabs(iVar);
+        const int64_t nNewSat = FlipVar(-iVar, &muUC, &muFront, &unsatClauses, &newFront);
+        next.Flip(aVar);
+      }
+      const int64_t newNUnsat = UnsatCount();
+      if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
+        minUnsat = newNUnsat;
+        continue;
+      }
+      if(level < 0 && !newFront.set_.empty()) {
+        // Try to combine the variable assignments in the new front
+        std::unordered_map<int64_t, int64_t> candVs;
+        std::vector<int64_t> vFront(newFront.set_.begin(), newFront.set_.end());
+        #pragma omp parallel for
+        for(int64_t j=0; j<vFront.size(); j++) {
+          const int64_t originClause = vFront[j];
+          for(const int64_t iVar : pFormula_->clause2var_[originClause]) {
+            if( (iVar < 0 && next[-iVar]) || (iVar > 0 && !next[iVar]) ) {
+              // A dissatisfying arc
+              const int64_t revV = llabs(iVar);
+              #pragma omp critical
+              candVs[revV]++;
+            }
+          }
+        }
+
+        std::vector<std::pair<int64_t, int64_t>> combs(candVs.begin(), candVs.end());
+        if( combs.size() >= 2 * omp_get_max_threads() ) {
+          ParallelShuffle(combs.data(), combs.size());
+        } else {
+          unsigned long long seed;
+          while(!_rdrand64_step(&seed));
+          std::mt19937_64 rng(seed);
+          std::shuffle(combs.begin(), combs.end(), rng);
+        }
+        std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
+          return a.second > b.second;
+        });
+        const int64_t subNUnsat = ParallelGD(
+          preferMove, varsAtOnce, combs, next, seenMove, unsatClauses, newFront, revVertices, level+1);
+        if(subNUnsat < minUnsat + (preferMove ? 1 : 0)) {
+          minUnsat = subNUnsat;
+          continue;
+        }
       }
 
-      #pragma omp barrier
+      #pragma omp parallel for num_threads(nVars)
+      for(int64_t j=0; j<nVars; j++) {
+        const int64_t iVar = selVars[j];
+        const int64_t aVar = llabs(iVar);
+        next.Flip(aVar);
+        const int64_t nNewSat = FlipVar(iVar, &muUC, nullptr, &unsatClauses, nullptr);
+        #pragma omp critical
+        {
+          if(revVertices.set_.find(aVar) == revVertices.set_.end()) {
+            revVertices.Add(aVar);
+          } else {
+            revVertices.Remove(aVar);
+          }
+        }
+      }
     }
     return minUnsat;
   }
