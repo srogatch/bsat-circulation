@@ -301,15 +301,19 @@ int main(int argc, char* argv[]) {
               }
               parRevVars[omp_get_thread_num()].Flip(incl[l]);
             }
+            bool bSeenMove = false;
             {
               std::unique_lock<std::mutex> lock(muSeenMove);
               if(seenMove.find({parFront[omp_get_thread_num()].hash_, parRevVars[omp_get_thread_num()].hash_}) != seenMove.end()) {
-                // Flip back
-                for(l=0; l<nToInclude; l++) {
-                  parRevVars[omp_get_thread_num()].Flip(incl[l]);
-                }
-                continue;
+                bSeenMove = true;
               }
+            }
+            if(bSeenMove) {
+              // Flip back
+              for(l=0; l<nToInclude; l++) {
+                parRevVars[omp_get_thread_num()].Flip(incl[l]);
+              }
+              continue;
             }
             TrackingSet newFront;
             // Flip forward
