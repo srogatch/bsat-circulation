@@ -45,6 +45,23 @@ struct TrackingSet {
     }
     return ans;
   }
+
+  TrackingSet operator+(const TrackingSet& fellow) const {
+    if(set_.size() < fellow.set_.size()) {
+      TrackingSet ans = fellow;
+      for(const int64_t iClause : set_) {
+        ans.Add(iClause);
+      }
+      return ans;
+    }
+    else {
+      TrackingSet ans = *this;
+      for(const int64_t iClause : fellow.set_) {
+        ans.Add(iClause);
+      }
+      return ans;
+    }
+  }
 };
 
 namespace std {

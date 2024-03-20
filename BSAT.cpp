@@ -157,7 +157,6 @@ int main(int argc, char* argv[]) {
   satTr.Populate(formula.ans_);
 
   std::unordered_map<uint128, int64_t> seenAssignment;
-  seenAssignment[formula.ans_.hash_] = bestInit;
 
   BitVector maxPartial;
   bool maybeSat = true;
@@ -233,22 +232,35 @@ int main(int argc, char* argv[]) {
         return a.second > b.second;
       });
 
-      const int64_t endNIncl = std::min<int64_t>(combs.size(), Formula::nCpus_);
-      for(int64_t nIncl=1; nIncl<=endNIncl; nIncl++) {
+      const int64_t endNIncl = std::min<int64_t>(std::min<int64_t>(combs.size(), Formula::nCpus_), std::log2(formula.nClauses_+1));
+      std::cout << "P" << combs.size() << "," << endNIncl;
+      std::cout.flush();
+      int64_t nCombs = 0;
+      for(int64_t nIncl=2; nIncl<=endNIncl; nIncl++) {
         next = formula.ans_;
         TrackingSet stepRevs;
-        std::cout << "P" << nIncl;
-        std::cout.flush();
         const int64_t curNUnsat = satTr.ParallelGD(true, nIncl, combs, next, seenAssignment, &stepRevs);
         nParallelGD++;
+        nCombs += combs.size() / nIncl;
         if( curNUnsat < bestUnsat ) {
           bestUnsat = curNUnsat;
           bestRevVertices = stepRevs;
+          if( bestUnsat < formula.nClauses_ ) {
+            if(bestUnsat < unsatClauses.set_.size() * 2 || bestUnsat < nStartUnsat + nCombs - 1 ) {
+              satTr = origSatTr;
+              break;
+            }
+          }
         }
         satTr = origSatTr;
-        std::cout << "]";
-        std::cout.flush();
+        if( combs.size() >= 2 * omp_get_max_threads() ) {
+          ParallelShuffle(combs.data(), combs.size());
+        } else {
+          std::shuffle(combs.begin(), combs.end(), rng);
+        }
       }
+      std::cout << "] ";
+      std::cout.flush();
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
@@ -287,31 +299,52 @@ int main(int argc, char* argv[]) {
       }
       dfs.push_back(Point(formula.ans_));
 
+      seenAssignment[formula.ans_.hash_] = bestUnsat;
       satTr.Swap(origSatTr);
       front.Clear();
       for(int64_t revV : bestRevVertices.set_) {
         formula.ans_.Flip(revV);
         satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
       }
-      seenAssignment[formula.ans_.hash_] = bestUnsat;
       // Indicate a walk step
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
       std::cout << ">";
 
+      int64_t oldUnsat, newUnsat = unsatClauses.set_.size();
+      int64_t nInARow = 0;
       std::cout << "S";
       std::cout.flush();
-      front.Clear();
-      const int64_t newUnsat = satTr.GradientDescend(true, &unsatClauses, &front);
-      nSequentialGD++;
-      std::cout << "}";
-      std::cout.flush();
-      seenAssignment[formula.ans_.hash_] = unsatClauses.set_.size();
+      do {
+        oldUnsat = newUnsat;
+        nInARow++;
+        const uint128 oldHash = formula.ans_.hash_;
+        TrackingSet newUSC = unsatClauses + front;
+        front.Clear();
+        newUnsat = satTr.GradientDescend(true, &newUSC, &front);
+        unsatClauses = satTr.GetUnsat();
+        nSequentialGD++;
+        assert(newUnsat == unsatClauses.set_.size());
 
-      // Limit the size of the stack
-      if(dfs.size() > formula.nVars_) {
-        dfs.pop_front();
-      }
-      dfs.push_back(Point(formula.ans_));
+        auto it = seenAssignment.find(oldHash);
+        if(it == seenAssignment.end()) {
+          seenAssignment[oldHash] = newUnsat;
+        } else {
+          if(newUnsat < it->second) {
+            it->second = newUnsat;
+          }
+          else {
+            oldUnsat = newUnsat;
+          }
+        }
+
+        // Limit the size of the stack
+        if(dfs.size() > formula.nVars_) {
+          dfs.pop_front();
+        }
+        dfs.push_back(Point(formula.ans_));
+      } while(newUnsat < oldUnsat);
+      std::cout << nInARow << "} ";
+      std::cout.flush();
     }
     std::cout << "\n\tAssignments considered: " << seenAssignment.size()
       << ", nParallelGD: " << nParallelGD << ", nSequentialGD: " << nSequentialGD << std::endl;

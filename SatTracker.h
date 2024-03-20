@@ -201,7 +201,8 @@ template<typename TCounter> struct SatTracker {
 
   int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
     const std::vector<std::pair<int64_t, int64_t>>& weightedVars,
-    BitVector& next, const std::unordered_map<uint128, int64_t>& seenAssignment, TrackingSet* revVertices)
+    BitVector& next, std::unordered_map<uint128, int64_t>& seenAssignment,
+    TrackingSet* revVertices)
   {
     int64_t minUnsat = pFormula_->nClauses_ + 1;
     std::vector<int64_t> front(varsAtOnce, 0);
@@ -231,7 +232,8 @@ template<typename TCounter> struct SatTracker {
             }
             next.Flip(aFV);
           }
-          if(seenAssignment.find(next.hash_) != seenAssignment.end()) {
+          auto it = seenAssignment.find(pFormula_->ans_.hash_);
+          if(it != seenAssignment.end() && it->second <= newUSC) {
             // Flip back
             for(int64_t i=0; i<varsAtOnce; i++) {
               const int64_t aFV = llabs(front[i]);
@@ -243,6 +245,7 @@ template<typename TCounter> struct SatTracker {
             break;
           }
 
+          seenAssignment[pFormula_->ans_.hash_] = newUSC;
           minUnsat = newUSC;
           for(int64_t i=0; i<varsAtOnce; i++) {
             const int64_t aFV = llabs(front[i]);
