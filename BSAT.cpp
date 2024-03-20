@@ -170,10 +170,10 @@ int main(int argc, char* argv[]) {
   int64_t lastGD = 0;
   int64_t nGD = 0; // the number of times Gradient Descent was launched
 
-  std::vector<DefaultSatTracker> satTrackers(size_t(omp_get_num_threads()), satTr);
-  std::vector<BitVector> next(size_t(omp_get_num_threads()), formula.ans_);
-  std::vector<TrackingSet> parFront(omp_get_num_threads());
-  std::vector<TrackingSet> parRevVars(omp_get_num_threads());
+  std::vector<DefaultSatTracker> satTrackers(size_t(omp_get_max_threads()), satTr);
+  std::vector<BitVector> next(size_t(omp_get_max_threads()), formula.ans_);
+  std::vector<TrackingSet> parFront{size_t(omp_get_max_threads())};
+  std::vector<TrackingSet> parRevVars{size_t(omp_get_max_threads())};
   while(maybeSat) {
     TrackingSet unsatClauses = satTr.GetUnsat();
     nStartUnsat = unsatClauses.set_.size();
@@ -208,7 +208,6 @@ int main(int argc, char* argv[]) {
         std::cout.flush();
       }
 
-      DefaultSatTracker origSatTr(satTr);
       std::vector<std::pair<int64_t, int64_t>> varSplit(formula.nVars_);
       #pragma omp parallel for schedule(guided)
       for(int64_t i=0; i<formula.nVars_; i++) {
@@ -257,10 +256,10 @@ int main(int argc, char* argv[]) {
       int64_t bestUnsat = formula.nClauses_+1;
       TrackingSet bestRevVertices;
       constexpr const int64_t knCombine = 5;
-      const int64_t nIts = std::max<int64_t>(1, std::min<int64_t>( std::sqrt(formula.nVars_), (nZeroes+1) * (formula.nVars_-nZeroes+1) / 2 ));
+      const int64_t nSources = omp_get_max_threads();
       std::mutex muSeenMove, muSeenFront, muBestUnsat;
       #pragma omp parallel for
-      for(int64_t i=0; i<nIts; i++) {
+      for(int64_t i=0; i<nSources; i++) {
         int64_t baseFront = ((i+1) * BitVector::hashSeries_[0]) % (formula.nVars_-nZeroes);
         int64_t baseOut = ((i+2) * BitVector::hashSeries_[1]) % nZeroes;
         int64_t incl[knCombine];
@@ -272,13 +271,27 @@ int main(int argc, char* argv[]) {
             int64_t l=0;
             for(; l<nFrontVars; l++) {
               incl[l] = varSplit[nZeroes+baseFront%(formula.nVars_-nZeroes)].first;
-              parRevVars[omp_get_thread_num()].Flip(incl[l]);
               baseFront++;
+              for(int64_t m=0; m<l; m++) {
+                if(incl[m] == incl[l]) {
+                  // Avoid duplicates
+                  l--;
+                  continue;
+                }
+              }
+              parRevVars[omp_get_thread_num()].Flip(incl[l]);
             }
             for(; l<nToInclude; l++) {
               incl[l] = varSplit[baseOut%nZeroes].first;
-              parRevVars[omp_get_thread_num()].Flip(incl[l]);
               baseOut++;
+              for(int64_t m=nFrontVars; m<l; m++) {
+                if(incl[m] == incl[l]) {
+                  // Avoid duplicates
+                  l--;
+                  continue;
+                }
+              }
+              parRevVars[omp_get_thread_num()].Flip(incl[l]);
             }
             {
               std::unique_lock<std::mutex> lock(muSeenMove);
@@ -293,36 +306,39 @@ int main(int argc, char* argv[]) {
             TrackingSet newFront;
             // Flip forward
             for(l=0; l<nToInclude; l++) {
-              satTrackers[omp_get_thread_num()].FlipVar(incl[l] * (formula.ans_[incl[l]] ? -1 : 1), nullptr, &newFront);
               next[omp_get_thread_num()].Flip(incl[l]);
+              satTrackers[omp_get_thread_num()].FlipVar(incl[l] * (next[omp_get_thread_num()][incl[l]] ? 1 : -1), nullptr, &newFront);
             }
-            if(allowDuplicateFront || newFront.set_.empty()) {
-              bool bSeenFront;
+            bool bSeenFront = false;
+            if(!seenFront.empty() || allowDuplicateFront)
+            {
+              std::unique_lock<std::mutex> lock(muSeenFront);
+              bSeenFront = (seenFront.find(newFront.hash_) != seenFront.end());
+            }
+            if(!bSeenFront) {
+              const int64_t stepUnsat = satTrackers[omp_get_thread_num()].UnsatCount();
+              bool betterSol = false;
               {
-                std::unique_lock<std::mutex> lock(muSeenFront);
-                bSeenFront = (seenFront.find(newFront.hash_) != seenFront.end());
-              }
-              if(!bSeenFront) {
-                const int64_t stepUnsat = satTrackers[omp_get_thread_num()].UnsatCount();
-                {
-                  std::unique_lock<std::mutex> lock(muBestUnsat);
-                  if(stepUnsat < bestUnsat) {
-                    bestUnsat = stepUnsat;
-                    bestRevVertices = parRevVars[omp_get_thread_num()];
-                  }
+                std::unique_lock<std::mutex> lock(muBestUnsat);
+                if(stepUnsat < bestUnsat) {
+                  bestUnsat = stepUnsat;
+                  bestRevVertices = parRevVars[omp_get_thread_num()];
+                  betterSol = true;
                 }
+              }
+              if(betterSol) {
                 if(stepUnsat < nStartUnsat) {
-                  parFront[omp_get_thread_num()] = newFront;
                   std::cout << "+";
                   std::cout.flush();
-                  continue;
                 }
+                parFront[omp_get_thread_num()] = newFront;
+                continue;
               }
             }
             // Flip back
             for(l=0; l<nToInclude; l++) {
-              satTrackers[l].FlipVar(incl[l] * (formula.ans_[incl[l]] ? 1 : -1), nullptr, nullptr);
               next[omp_get_thread_num()].Flip(incl[l]);
+              satTrackers[l].FlipVar(incl[l] * (formula.ans_[incl[l]] ? 1 : -1), nullptr, nullptr);
               parRevVars[omp_get_thread_num()].Flip(incl[l]);
             }
           }
@@ -339,7 +355,6 @@ int main(int argc, char* argv[]) {
 
         if(front != unsatClauses) {
           // Retry with full/random front
-          satTr.Swap(origSatTr);
           front = unsatClauses;
           continue;
         }
@@ -367,7 +382,6 @@ int main(int argc, char* argv[]) {
       dfs.push_back(Point(formula.ans_));
 
       seenMove.emplace(front.hash_, bestRevVertices.hash_);
-      satTr.Swap(origSatTr);
       front.Clear();
       for(int64_t revV : bestRevVertices.set_) {
         formula.ans_.Flip(revV);
@@ -386,8 +400,9 @@ int main(int argc, char* argv[]) {
           front.Clear();
           const int64_t oldNUnsat = unsatClauses.set_.size();
           const int64_t newUnsat = satTr.GradientDescend(true, &unsatClauses, &front);
-          std::cout << "D";
+          std::cout << oldNUnsat << "/" << newUnsat << "D";
           std::cout.flush();
+          assert(unsatClauses.set_.size() == newUnsat);
           if(newUnsat > oldNUnsat - std::sqrt(oldNUnsat+4)) {
             lastGD = seenMove.size();
           }
