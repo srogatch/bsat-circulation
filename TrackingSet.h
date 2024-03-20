@@ -7,7 +7,23 @@
 
 struct TrackingSet {
   std::unordered_set<int64_t> set_;
+  mutable std::mutex sync_;
   uint128 hash_ = 0;
+
+  TrackingSet() = default;
+
+  TrackingSet(const TrackingSet& src) {
+    set_ = src.set_;
+    hash_ = src.hash_;
+  }
+
+  TrackingSet& operator=(const TrackingSet& src) {
+    if(this != &src) {
+      set_ = src.set_;
+      hash_ = src.hash_;
+    }
+    return *this;
+  }
 
   void Add(const int64_t item) {
     auto it = set_.find(item);
@@ -22,6 +38,14 @@ struct TrackingSet {
     if(it != set_.end()) {
       set_.erase(it);
       hash_ ^= item * kHashBase;
+    }
+  }
+
+  void Flip(const int64_t item) {
+    if(set_.find(item) == set_.end()) {
+      Add(item);
+    } else {
+      Remove(item);
     }
   }
 

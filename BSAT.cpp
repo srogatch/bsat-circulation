@@ -103,7 +103,7 @@ int main(int argc, char* argv[]) {
 
   TrackingSet initUSC = satTr.GetUnsat();
   TrackingSet initFront;
-  int64_t altNUnsat=satTr.GradientDescend(false, &initUSC, &initFront); // for init it's usually better if we don't move an extra time
+  int64_t altNUnsat=satTr.GradientDescend(false, &initUSC, nullptr, &initFront); // for init it's usually better if we don't move an extra time
   std::cout << "GradientDescent: " << altNUnsat << ", ";
   std::cout.flush();
   if(altNUnsat < bestInit) {
@@ -225,18 +225,17 @@ int main(int argc, char* argv[]) {
         return a.second > b.second;
       });
 
-      const int64_t endNIncl = std::min<int64_t>(std::min<int64_t>(combs.size(), Formula::nCpus_), std::log2(formula.nClauses_+1));
-      std::cout << "P" << combs.size();
+      const int64_t endNIncl = std::min<int64_t>(combs.size(), 4);
+      std::cout << "P" << combs.size() << "," << unsatClauses.set_.size();
       std::cout.flush();
       int64_t nCombs = 0;
       int64_t nIncl=1;
       for(; nIncl<=endNIncl; nIncl++) {
         next = formula.ans_;
-        TrackingSet stepRevs, oldUnsatClauses = unsatClauses;
+        TrackingSet stepRevs;
         const int64_t curNUnsat = satTr.ParallelGD(
-          true, nIncl, combs, next, seenMove, unsatClauses, front, stepRevs);
+          true, nIncl, combs, next, seenMove, nullptr, front, stepRevs, satTr.UnsatCount() * 2, 2);
         nParallelGD++;
-        unsatClauses = oldUnsatClauses;
         satTr = origSatTr;
         nCombs += combs.size() / nIncl;
         if( curNUnsat < bestUnsat ) {
@@ -247,13 +246,15 @@ int main(int argc, char* argv[]) {
             break;
           }
         }
-        if( combs.size() >= 2 * omp_get_max_threads() ) {
-          ParallelShuffle(combs.data(), combs.size());
-        } else {
-          std::shuffle(combs.begin(), combs.end(), rng);
+        if(nIncl < endNIncl) {
+          if( combs.size() >= 2 * omp_get_max_threads() ) {
+            ParallelShuffle(combs.data(), combs.size());
+          } else {
+            std::shuffle(combs.begin(), combs.end(), rng);
+          }
         }
       }
-      std::cout << "," << nIncl << "] ";
+      std::cout << "/" << bestUnsat << "] ";
       std::cout.flush();
 
       if(bestUnsat >= formula.nClauses_) {
@@ -292,29 +293,33 @@ int main(int argc, char* argv[]) {
       }
       dfs.push_back(Point(formula.ans_));
 
+      std::cout << ">";
+      std::cout.flush();
       seenMove.emplace(front.hash_, bestRevVertices.hash_);
       front.Clear();
-      std::mutex muUCs, muFront;
+      //TODO: parallelize
       for(int64_t revV : bestRevVertices.set_) {
         formula.ans_.Flip(revV);
-        satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &muUCs, &muFront, &unsatClauses, &front);
+        satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
       }
+      const int64_t strUnsat = satTr.UnsatCount();
+      assert(unsatClauses.set_.size() == bestUnsat);
+      assert(strUnsat == bestUnsat);
       // Indicate a walk step
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
-      std::cout << ">";
 
       int64_t oldUnsat, newUnsat = unsatClauses.set_.size();
       int64_t nInARow = 0;
       std::cout << "S";
       std::cout.flush();
       do {
+        assert(newUnsat == satTr.UnsatCount());
         oldUnsat = newUnsat;
         nInARow++;
         const uint128 oldHash = formula.ans_.hash_;
-        TrackingSet newUSC = unsatClauses + front;
+        TrackingSet consider = unsatClauses + front;
         front.Clear();
-        newUnsat = satTr.GradientDescend(true, &newUSC, &front);
-        unsatClauses = newUSC;
+        newUnsat = satTr.GradientDescend(true, &consider, &unsatClauses, &front);
         nSequentialGD++;
         assert(newUnsat == unsatClauses.set_.size());
 
@@ -324,8 +329,8 @@ int main(int argc, char* argv[]) {
         }
         dfs.push_back(Point(formula.ans_));
       } while(newUnsat < oldUnsat);
-      //} while(false);
-      std::cout << nInARow << "} ";
+      assert(newUnsat == oldUnsat); // must not increase
+      std::cout << nInARow << "," << satTr.UnsatCount() << "} ";
       std::cout.flush();
     }
     std::cout << "\n\tWalk length: " << seenMove.size()
