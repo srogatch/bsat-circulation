@@ -20,16 +20,33 @@ template<typename TCounter> struct SatTracker {
     nSat_.reset(new std::atomic<TCounter>[pFormula_->nClauses_+1]);
   }
 
-  SatTracker(const SatTracker& src) {
+  void CopyFrom(const SatTracker& src) {
     pFormula_ = src.pFormula_;
     totSat_.store(src.totSat_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     nSat_.reset(new std::atomic<TCounter>[pFormula_->nClauses_+1]);
 
-    // TODO: better split into memcpy() ranges?
-    #pragma omp parallel for
-    for(int64_t i=0; i<=pFormula_->nClauses_; i++) {
-      nSat_.get()[i].store(src.nSat_.get()[i].load(std::memory_order_relaxed), std::memory_order_relaxed);
+    #pragma omp parallel for schedule(static, kRamPageBytes)
+    for(int64_t i=0; i<=DivUp(pFormula_->nClauses_, cParChunkSize); i++) {
+      const int64_t iFirst = i*cParChunkSize;
+      const int64_t iLimit = std::min((i+1) * cParChunkSize, pFormula_->nClauses_);
+      if(iFirst < iLimit) {
+        memcpy(
+          nSat_.get()+iFirst, src.nSat_.get()+iFirst,
+          (iLimit-iFirst) * cParChunkSize * sizeof(std::atomic<TCounter>)
+        );
+      }
     }
+  }
+
+  SatTracker(const SatTracker& src) {
+    CopyFrom(src);
+  }
+
+  SatTracker& operator=(const SatTracker& src) {
+    if(this != &src) {
+      CopyFrom(src);
+    }
+    return *this;
   }
 
   void Swap(SatTracker& fellow) {

@@ -165,9 +165,22 @@ release:
     });
 
     std::thread addingThr([&] {
-      std::pair<int64_t, int64_t> entry;
-      while(bqAdding.Pop(entry)) {
-        Add(entry.first, entry.second);
+      std::mutex muC2V, muV2C;
+      #pragma omp parallel num_threads(4)
+      {
+        std::pair<int64_t, int64_t> entry;
+        while(bqAdding.Pop(entry)) {
+          //#pragma omp critical
+          //Add(entry.first, entry.second);
+          {
+            std::unique_lock<std::mutex> lock(muC2V);
+          clause2var_[entry.first].emplace(entry.second);
+          }
+          {
+            std::unique_lock<std::mutex> lock(muV2C);
+            var2clause_[llabs(entry.second)].emplace(int64_t(entry.first) * Signum(entry.second));
+          }
+        }
       }
       std::cout << "Finished linking clauses and variables." << std::endl;
     });

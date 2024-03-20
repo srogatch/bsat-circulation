@@ -156,25 +156,24 @@ int main(int argc, char* argv[]) {
 
   satTr.Populate(formula.ans_);
 
-  std::unordered_map<uint128, int64_t> bv2nUnsat;
-  bv2nUnsat[formula.ans_.hash_] = bestInit;
   BitVector maxPartial;
   bool maybeSat = true;
   bool provenUnsat = false;
-  std::unordered_set<std::pair<TrackingSet, TrackingSet>, MoveHash> seenMove;
-  std::unordered_set<TrackingSet> seenFront;
+  std::unordered_set<std::pair<uint128, uint128>> seenMove;
+  std::unordered_set<uint128> seenFront;
   std::mt19937_64 rng;
   int64_t lastFlush = formula.nClauses_ + 1;
   std::deque<Point> dfs;
   int64_t nStartUnsat;
-  // Define them here to avoid reallocations
-  std::vector<std::pair<int64_t, int64_t>> combs;
   std::vector<int64_t> vFront;
-  std::vector<int64_t> incl;
-  BitVector next;
   uint64_t cycleOffset = 0;
   int64_t lastGD = 0;
   int64_t nGD = 0; // the number of times Gradient Descent was launched
+
+  std::vector<DefaultSatTracker> satTrackers(size_t(omp_get_num_threads()), satTr);
+  std::vector<BitVector> next(size_t(omp_get_num_threads()), formula.ans_);
+  std::vector<TrackingSet> parFront(omp_get_num_threads());
+  std::vector<TrackingSet> parRevVars(omp_get_num_threads());
   while(maybeSat) {
     TrackingSet unsatClauses = satTr.GetUnsat();
     nStartUnsat = unsatClauses.set_.size();
@@ -200,165 +199,134 @@ int main(int argc, char* argv[]) {
     if(nStartUnsat == bestInit) {
       front = initFront;
     }
-    std::vector<int64_t> vClauses;
-    // avoid reallocations
-    vClauses.reserve(unsatClauses.set_.size() * 4);
     bool allowDuplicateFront = false;
     while(unsatClauses.set_.size() >= nStartUnsat) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
-      if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
+      if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front.hash_) != seenFront.end())) {
         front = unsatClauses;
         std::cout << "$";
         std::cout.flush();
       }
 
       DefaultSatTracker origSatTr(satTr);
-      std::unordered_map<int64_t, int64_t> candVs;
+      std::vector<std::pair<int64_t, int64_t>> varSplit(formula.nVars_);
+      #pragma omp parallel for schedule(guided)
+      for(int64_t i=0; i<formula.nVars_; i++) {
+        varSplit[i] = {i+1, 0};
+      }
       vFront.assign(front.set_.begin(), front.set_.end());
-      #pragma omp parallel for
+      #pragma omp parallel for schedule(guided)
       for(int64_t i=0; i<vFront.size(); i++) {
         const int64_t originClause = vFront[i];
         for(const int64_t iVar : formula.clause2var_[originClause]) {
           if( (iVar < 0 && formula.ans_[-iVar]) || (iVar > 0 && !formula.ans_[iVar]) ) {
             // A dissatisfying arc
             const int64_t revV = llabs(iVar);
-            #pragma omp critical
-            candVs[revV]++;
+            reinterpret_cast<std::atomic<int64_t>*>(&varSplit[revV-1].second)->fetch_add(1);
           }
         }
       }
+
+      ParallelShuffle(varSplit.data(), formula.nVars_);
+
+      std::atomic<int64_t> nZeroes(0);
+      #pragma omp parallel for schedule(guided)
+      for(int64_t i=0; i<formula.nVars_; i++) {
+        if(varSplit[i].second == 0) {
+          nZeroes.fetch_add(1);
+        }
+      }
+      std::atomic<int64_t> vsPos(0);
+      #pragma omp parallel for schedule(guided)
+      for(int64_t i=nZeroes; i<formula.nVars_; i++) {
+        while(varSplit[i].second == 0) {
+          int64_t pos = vsPos.fetch_add(1);
+          int64_t t = varSplit[i].first;
+          varSplit[i] = varSplit[pos];
+          varSplit[pos] = {t, 0};
+        }
+      }
+      #pragma omp parallel for
+      for(int64_t i=0; i<satTrackers.size(); i++) {
+        satTrackers[i] = satTr;
+        next[i] = formula.ans_;
+        parFront[i] = front;
+        parRevVars[i].Clear();
+      }
+      // now varSplit contains first variables with 0 counts (i.e. not in the front), then the variables in the front with front clause counts
       int64_t bestUnsat = formula.nClauses_+1;
       TrackingSet bestRevVertices;
-
-      combs.assign(candVs.begin(), candVs.end());
-      if( combs.size() <= std::log2(formula.nClauses_) ) {
-        if( combs.size() >= 2 * omp_get_max_threads() ) {
-          ParallelShuffle(combs.data(), combs.size());
-        } else {
-          std::shuffle(combs.begin(), combs.end(), rng);
-        }
-        std::stable_sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
-          return a.second > b.second;
-        });
-      } else {
-        std::sort(std::execution::par, combs.begin(), combs.end(), [](const auto& a, const auto& b) {
-          return a.second > b.second || (a.second == b.second && hash64(a.first) < hash64(b.first));
-        });
-      }
-
-      uint64_t nCombs = 0;
-      uint64_t prevBestAtCombs = 0;
-      next = formula.ans_;
-      TrackingSet stepRevs;
-      for(int64_t nIncl=1; nIncl<=combs.size(); nIncl++) {
-        if(AccComb(combs.size(), nIncl) > 100) {
-          std::cout << " C" << combs.size() << "," << nIncl << " ";
-          std::flush(std::cout);
-        }
-        incl.clear();
-        for(int64_t j=0; j<nIncl; j++) {
-          incl.push_back(j);
-        }
-        int64_t nBeforeCombs = nCombs;
-        for(;;) {
-          nCombs++;
-          TrackingSet newFront;
-          TrackingSet oldUnsatClauses = unsatClauses;
-          for(int64_t j=0; j<nIncl; j++) {
-            const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
-            auto it = stepRevs.set_.find(revV);
-            if(it == stepRevs.set_.end()) {
-              stepRevs.Add(revV);
-            } else {
-              stepRevs.Remove(revV);
+      constexpr const int64_t knCombine = 5;
+      const int64_t nIts = std::max<int64_t>(1, std::min<int64_t>( std::sqrt(formula.nVars_), (nZeroes+1) * (formula.nVars_-nZeroes+1) / 2 ));
+      std::mutex muSeenMove, muSeenFront, muBestUnsat;
+      #pragma omp parallel for
+      for(int64_t i=0; i<nIts; i++) {
+        int64_t baseFront = ((i+1) * BitVector::hashSeries_[0]) % (formula.nVars_-nZeroes);
+        int64_t baseOut = ((i+2) * BitVector::hashSeries_[1]) % nZeroes;
+        int64_t incl[knCombine];
+        for(int64_t j=2; j<knCombine && j < formula.nVars_; j++) { // number of vars to combine
+          for(int64_t k=1; k<j && k<formula.nVars_-nZeroes; k++) { // number of front vars to include
+            const int64_t nFrontVars = k;
+            const int64_t nOutVars = j-k;
+            const int64_t nToInclude = j;
+            int64_t l=0;
+            for(; l<nFrontVars; l++) {
+              incl[l] = varSplit[nZeroes+baseFront%(formula.nVars_-nZeroes)].first;
+              parRevVars[omp_get_thread_num()].Flip(incl[l]);
+              baseFront++;
             }
-            next.Flip(revV);
-            satTr.FlipVar(revV * (next[revV] ? 1 : -1), &unsatClauses, &newFront);
-          }
-
-          {
-            auto unflip = Finally([&combs, &incl, &stepRevs, &next, &unsatClauses, &satTr, &oldUnsatClauses, nIncl, cycleOffset]() {
-              // Flip bits back
-              for(int64_t j=0; j<nIncl; j++) {
-                const int64_t revV = combs[(incl[j]+cycleOffset) % combs.size()].first;
-                auto it = stepRevs.set_.find(revV);
-                if(it == stepRevs.set_.end()) {
-                  stepRevs.Add(revV);
-                } else {
-                  stepRevs.Remove(revV);
+            for(; l<nToInclude; l++) {
+              incl[l] = varSplit[baseOut%nZeroes].first;
+              parRevVars[omp_get_thread_num()].Flip(incl[l]);
+              baseOut++;
+            }
+            {
+              std::unique_lock<std::mutex> lock(muSeenMove);
+              if(seenMove.find({parFront[omp_get_thread_num()].hash_, parRevVars[omp_get_thread_num()].hash_}) != seenMove.end()) {
+                // Flip back
+                for(l=0; l<nToInclude; l++) {
+                  parRevVars[omp_get_thread_num()].Flip(incl[l]);
                 }
-                next.Flip(revV);
-                satTr.FlipVar(revV * (next[revV] ? 1 : -1), nullptr, nullptr);
+                continue;
               }
-              unsatClauses = oldUnsatClauses;
-            });
-
-            auto it = bv2nUnsat.find(next.hash_);
-            bool maybeSuperior = (it == bv2nUnsat.end() || it->second < bestUnsat);
-            if(!maybeSuperior) {
-              // This combination has been too lightweight to count
-              prevBestAtCombs++;
             }
-            if( maybeSuperior && (seenMove.find({front, stepRevs}) == seenMove.end()) ) {
-              const int64_t stepUnsat = unsatClauses.set_.size();
-              bv2nUnsat[next.hash_] = stepUnsat;
-              //TODO: shall this condition include a check for an empty front too?
-              if(allowDuplicateFront || newFront.set_.empty() || seenFront.find(newFront) == seenFront.end()) {
-                if(stepUnsat < bestUnsat) {
-                  bestUnsat = stepUnsat;
-                  bestRevVertices = stepRevs;
-
-                  if(bestUnsat < nStartUnsat) {
-                    prevBestAtCombs = nCombs;
-                    unflip.Disable();
-                    front = newFront;
-                    std::cout << "+";
-                    std::cout.flush();
+            TrackingSet newFront;
+            // Flip forward
+            for(l=0; l<nToInclude; l++) {
+              satTrackers[omp_get_thread_num()].FlipVar(incl[l] * (formula.ans_[incl[l]] ? -1 : 1), nullptr, &newFront);
+              next[omp_get_thread_num()].Flip(incl[l]);
+            }
+            if(allowDuplicateFront || newFront.set_.empty()) {
+              bool bSeenFront;
+              {
+                std::unique_lock<std::mutex> lock(muSeenFront);
+                bSeenFront = (seenFront.find(newFront.hash_) != seenFront.end());
+              }
+              if(!bSeenFront) {
+                const int64_t stepUnsat = satTrackers[omp_get_thread_num()].UnsatCount();
+                {
+                  std::unique_lock<std::mutex> lock(muBestUnsat);
+                  if(stepUnsat < bestUnsat) {
+                    bestUnsat = stepUnsat;
+                    bestRevVertices = parRevVars[omp_get_thread_num()];
                   }
                 }
+                if(stepUnsat < nStartUnsat) {
+                  parFront[omp_get_thread_num()] = newFront;
+                  std::cout << "+";
+                  std::cout.flush();
+                  continue;
+                }
               }
             }
-          }
-          if(bestUnsat < nStartUnsat
-            // These little combinations are considered a light operation
-            && nCombs - prevBestAtCombs > std::log2(formula.nVars_+1))
-          {
-            break;
-          }
-          int64_t j;
-          for(j=nIncl-1; j>=0; j--) {
-            if(incl[j]+(nIncl-j) >= combs.size()) {
-              continue;
+            // Flip back
+            for(l=0; l<nToInclude; l++) {
+              satTrackers[l].FlipVar(incl[l] * (formula.ans_[incl[l]] ? 1 : -1), nullptr, nullptr);
+              next[omp_get_thread_num()].Flip(incl[l]);
+              parRevVars[omp_get_thread_num()].Flip(incl[l]);
             }
-            break;
-          }
-          if(j < 0) {
-            // All combinations with nIncl elements exhausted
-            break;
-          }
-          incl[j]++;
-          for(int64_t k=j+1; k<nIncl; k++) {
-            incl[k] = incl[k-1] + 1;
           }
         }
-        // Let the next traversal start from the combination we left on
-        cycleOffset += nCombs - nBeforeCombs;
-        if( bestUnsat < formula.nClauses_ ) {
-          if(bestUnsat < nStartUnsat) {
-            cycleOffset -= bestRevVertices.set_.size();
-            break;
-          }
-          if(bestUnsat < unsatClauses.set_.size() * 2) {
-            break;
-          }
-          if( bestUnsat < nStartUnsat + nCombs - 1 ) {
-            break;
-          }
-        }
-      }
-      if(nCombs > 100) {
-        std::cout << " N" << nCombs << " ";
-        std::cout.flush();
       }
 
       if(bestUnsat >= formula.nClauses_) {
@@ -366,7 +334,7 @@ int main(int argc, char* argv[]) {
 
         //std::cout << "The front of " << front.size() << " clauses doesn't lead anywhere." << std::endl;
         if(!allowDuplicateFront) {
-          seenFront.emplace(front);
+          seenFront.emplace(front.hash_);
         }
 
         if(front != unsatClauses) {
@@ -398,7 +366,7 @@ int main(int argc, char* argv[]) {
       }
       dfs.push_back(Point(formula.ans_));
 
-      seenMove.emplace(front, bestRevVertices);
+      seenMove.emplace(front.hash_, bestRevVertices.hash_);
       satTr.Swap(origSatTr);
       front.Clear();
       for(int64_t revV : bestRevVertices.set_) {
@@ -410,33 +378,28 @@ int main(int argc, char* argv[]) {
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
       std::cout << ">";
 
-      if(bestRevVertices.set_.size() >= 3 && unsatClauses.set_.size() >= std::sqrt(formula.nVars_)/std::log2(formula.nClauses_)) {
-        if(seenMove.size() - lastGD > std::sqrt(formula.nClauses_) / unsatClauses.set_.size()) {
+      if(bestRevVertices.set_.size() >= 2) {
+        while(seenMove.size() - lastGD > std::sqrt(formula.nClauses_)/(nStartUnsat+1) + 1) {
           std::cout << "G";
           std::cout.flush();
-          satTr.Populate(formula.ans_);
           nGD++;
-          SatTracker backup(satTr);
           front.Clear();
+          const int64_t oldNUnsat = unsatClauses.set_.size();
           const int64_t newUnsat = satTr.GradientDescend(true, &unsatClauses, &front);
           std::cout << "D";
           std::cout.flush();
-          if(newUnsat > nStartUnsat - std::sqrt(nStartUnsat)) {
+          if(newUnsat > oldNUnsat - std::sqrt(oldNUnsat+4)) {
             lastGD = seenMove.size();
           }
-          bv2nUnsat[formula.ans_.hash_] = unsatClauses.set_.size();
           // Limit the size of the stack
           if(dfs.size() > formula.nVars_) {
             dfs.pop_front();
           }
           dfs.push_back(Point(formula.ans_));
-          if(newUnsat < nStartUnsat) {
-            break;
-          }
         }
       }
     }
-    std::cout << "\n\tTraversal size: " << seenMove.size() << ", assignments considered: " << bv2nUnsat.size()
+    std::cout << "\n\tTraversal size: " << seenMove.size()
       << ", Gradient Descents: " << nGD << std::endl;
   }
 
