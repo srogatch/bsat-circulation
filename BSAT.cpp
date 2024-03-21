@@ -2,6 +2,7 @@
 #include "TrackingSet.h"
 #include "Utils.h"
 #include "SatTracker.h"
+#include "Traversal.h"
 
 #include <iostream>
 #include <mutex>
@@ -60,14 +61,6 @@ uint64_t AccComb(const int64_t n, const int64_t k) {
   return mac;
 }
 
-struct Point {
-  BitVector assignment_;
-
-  Point(const BitVector& assignment)
-  : assignment_(assignment)
-  { }
-};
-
 const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
 
@@ -87,8 +80,8 @@ int main(int argc, char* argv[]) {
   std::mutex muUnsatClauses;
   Formula formula;
   formula.Load(argv[1]);
-
   int64_t prevNUnsat = formula.nClauses_;
+  Traversal trav;
 
   // Now there are some clause bitvectors
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
@@ -100,16 +93,21 @@ int main(int argc, char* argv[]) {
   std::cout << "All false: " << bestInit << ", ";
   std::cout.flush();
 
-  TrackingSet initUSC = satTr.GetUnsat();
+  int64_t altNUnsat;
   TrackingSet initFront;
-  int64_t altNUnsat=satTr.GradientDescend(false, &initUSC, nullptr, &initFront); // for init it's usually better if we don't move an extra time
-  std::cout << "GradientDescent: " << altNUnsat << ", ";
-  std::cout.flush();
-  if(altNUnsat < bestInit) {
-    bestInit = altNUnsat;
-  } else {
-    // Revert to all false
-    formula.ans_ = BitVector(formula.nVars_+1);
+
+  {
+    TrackingSet initUnsatClauses = satTr.GetUnsat();
+    // for init it's usually better if we don't move an extra time
+    altNUnsat = satTr.GradientDescend(false, trav, nullptr, initUnsatClauses, initFront, formula.nClauses_);
+    std::cout << "GradientDescent: " << altNUnsat << ", ";
+    std::cout.flush();
+    if(altNUnsat < bestInit) {
+      bestInit = altNUnsat;
+    } else {
+      // Revert to all false
+      formula.ans_ = BitVector(formula.nVars_+1);
+    }
   }
 
   BitVector altAsg = formula.SetGreedy1();
@@ -147,15 +145,12 @@ int main(int argc, char* argv[]) {
     formula.ans_ = altAsg;
   }
 
-  satTr.Populate(formula.ans_);
+  TrackingSet unsatClauses = satTr.Populate(formula.ans_);
 
   BitVector maxPartial;
   bool maybeSat = true;
   bool provenUnsat = false;
-  std::unordered_set<TrackingSet> seenFront;
-  std::unordered_set<std::pair<uint128, uint128>> seenMove;
   std::mt19937_64 rng;
-  std::deque<Point> dfs;
   int64_t nStartUnsat;
   // Define them here to avoid reallocations
   std::vector<std::pair<int64_t, int64_t>> combs;
@@ -163,7 +158,8 @@ int main(int argc, char* argv[]) {
   BitVector next;
   int64_t nParallelGD = 0, nSequentialGD = 0;
   while(maybeSat) {
-    TrackingSet unsatClauses = satTr.GetUnsat();
+    //TODO: this is a heavy assert
+    assert(unsatClauses == satTr.GetUnsat());
     nStartUnsat = unsatClauses.set_.size();
     maxPartial = formula.ans_;
     if(nStartUnsat == 0) {
@@ -190,7 +186,7 @@ int main(int argc, char* argv[]) {
     bool allowDuplicateFront = false;
     while(unsatClauses.set_.size() >= nStartUnsat) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
-      if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
+      if(front.set_.empty() || (!allowDuplicateFront && trav.IsSeenFront(front))) {
         front = unsatClauses;
         std::cout << "$";
         std::cout.flush();
@@ -230,7 +226,7 @@ int main(int argc, char* argv[]) {
         TrackingSet stepRevs;
         bool moved = false;
         const int64_t curNUnsat = satTr.ParallelGD(
-          true, nIncl, combs, next, seenMove, nullptr, front, stepRevs, 
+          true, nIncl, combs, next, trav, nullptr, front, stepRevs, 
           std::max<int64_t>(satTr.UnsatCount() * 2, nStartUnsat + std::sqrt(formula.nVars_)),
           moved, 2);
         nParallelGD++;
@@ -259,7 +255,7 @@ int main(int argc, char* argv[]) {
 
         //std::cout << "The front of " << front.size() << " clauses doesn't lead anywhere." << std::endl;
         if(!allowDuplicateFront) {
-          seenFront.emplace(front);
+          trav.OnFrontExhausted(front);
         }
 
         if(front != unsatClauses) {
@@ -268,13 +264,16 @@ int main(int argc, char* argv[]) {
           continue;
         }
 
-        if(!dfs.empty()) {
-          formula.ans_ = std::move(dfs.back().assignment_);
-          dfs.pop_back();
-          satTr.Populate(formula.ans_);
-          unsatClauses = satTr.GetUnsat();
+        if(trav.StepBack(formula.ans_)) {
+          unsatClauses = satTr.Populate(formula.ans_);
           front = unsatClauses;
           std::cout << "@";
+          continue;
+        }
+
+        if(!allowDuplicateFront) {
+          allowDuplicateFront = true;
+          std::cout << "X";
           continue;
         }
 
@@ -284,15 +283,8 @@ int main(int argc, char* argv[]) {
         break;
       }
 
-      // Limit the size of the stack
-      if(dfs.size() > formula.nVars_) {
-        dfs.pop_front();
-      }
-      dfs.push_back(Point(formula.ans_));
-
       std::cout << ">";
       std::cout.flush();
-      seenMove.emplace(front.hash_, bestRevVertices.hash_);
       front.Clear();
       //TODO: parallelize
       for(int64_t revV : bestRevVertices.set_) {
@@ -310,28 +302,25 @@ int main(int argc, char* argv[]) {
       std::cout << "S";
       std::cout.flush();
       do {
+        std::cout << "/" << newUnsat;
+        std::cout.flush();
         assert(newUnsat == satTr.UnsatCount());
         oldUnsat = newUnsat;
         nInARow++;
         const uint128 oldHash = formula.ans_.hash_;
         //TrackingSet consider = unsatClauses + front;
         front.Clear();
-        newUnsat = satTr.GradientDescend(true, nullptr, &unsatClauses, &front);
+        newUnsat = satTr.GradientDescend( true, trav, nullptr, unsatClauses, front,
+          std::max<int64_t>( unsatClauses.set_.size() * 2, nStartUnsat + rng() % int64_t(std::sqrt(formula.nVars_+1)) )
+        );
         nSequentialGD++;
         assert(newUnsat == unsatClauses.set_.size());
-
-        // Limit the size of the stack
-        if(dfs.size() > formula.nVars_) {
-          dfs.pop_front();
-        }
-        dfs.push_back(Point(formula.ans_));
-        std::cout << "/" << newUnsat;
       } while(newUnsat < oldUnsat && newUnsat >= nStartUnsat);
       assert(newUnsat == satTr.UnsatCount());
       std::cout << "} ";
       std::cout.flush();
     }
-    std::cout << "\n\tWalk length: " << seenMove.size()
+    std::cout << "\n\tWalk length: " << trav.seenMove_.size() << ", Stack length: " << trav.dfs_.size()
       << ", nParallelGD: " << nParallelGD << ", nSequentialGD: " << nSequentialGD << std::endl;
   }
 
