@@ -184,8 +184,8 @@ int main(int argc, char* argv[]) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
       if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
         front = unsatClauses;
-        std::cout << "$";
-        std::cout.flush();
+        std::cout << "%";
+        //std::cout.flush();
       }
 
       int64_t bestUnsat = formula.nClauses_+1;
@@ -194,8 +194,8 @@ int main(int argc, char* argv[]) {
       std::vector<int64_t> varFront = formula.ClauseFrontToVars(front, formula.ans_);
       const int64_t startNIncl = 1;
       const int64_t endNIncl = std::min<int64_t>(varFront.size(), 5);
-      std::cout << "P" << varFront.size() << "," << unsatClauses.Size();
-      std::cout.flush();
+      std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
+      //std::cout.flush();
       #pragma omp parallel for schedule(dynamic, 1)
       for(int64_t nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
         std::vector<int64_t> locVarFront = varFront;
@@ -215,8 +215,8 @@ int main(int argc, char* argv[]) {
         }
       }
       nParallelGD+=endNIncl-startNIncl+1;
-      std::cout << "/" << bestUnsat << "] ";
-      std::cout.flush();
+      //std::cout << "/" << bestUnsat << "] ";
+      //std::cout.flush();
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
@@ -253,9 +253,9 @@ int main(int argc, char* argv[]) {
       }
 
       std::cout << ">";
-      std::cout.flush();
-      front.Clear();
+      //std::cout.flush();
 
+      front.Clear();
       std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
       #pragma omp parallel for
       for(int64_t i=0; i<vBestRevVars.size(); i++) {
@@ -273,10 +273,10 @@ int main(int argc, char* argv[]) {
       int64_t oldUnsat, newUnsat = unsatClauses.Size();
       int64_t nInARow = 0;
       std::cout << "S";
-      std::cout.flush();
+      //std::cout.flush();
       bool moved;
       do {
-        std::cout << "/" << newUnsat;
+        //std::cout << "/" << newUnsat;
         if(newUnsat < nStartUnsat) {
           break;
         }
@@ -292,8 +292,8 @@ int main(int argc, char* argv[]) {
         nSequentialGD++;
         assert(!moved || newUnsat == unsatClauses.Size());
       } while(moved && newUnsat <= oldUnsat);
-      std::cout << "} ";
-      std::cout.flush();
+      //std::cout << "} ";
+      //std::cout.flush();
     }
     std::cout << "\n\tWalk: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
       << ", Known assignments: " << trav.seenAssignment_.Size()
