@@ -26,7 +26,7 @@ struct Traversal {
   mutable std::mutex muSeenMove_;
   mutable std::mutex muDfs_;
 
-  void FoundMove(const TrackingSet& front, const TrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat)
+  void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat)
   {
     { // Move
       std::unique_lock<std::mutex> lock(muSeenMove_);  
@@ -47,14 +47,14 @@ struct Traversal {
     }
   }
 
-  bool IsSeenMove(const TrackingSet& front, const TrackingSet& revVars) const {
+  bool IsSeenMove(const VCTrackingSet& front, const VCTrackingSet& revVars) const {
     assert(front.Size() > 0);
     std::unique_lock<std::mutex> lock(muSeenMove_);
     return seenMove_.find({front.hash_, revVars.hash_}) != seenMove_.end();
   }
 
   // This is not (yet) thread-safe
-  bool IsSeenFront(const TrackingSet& front) const {
+  bool IsSeenFront(const VCTrackingSet& front) const {
     return seenFront_.find(front.hash_) != seenFront_.end();
   }
 
@@ -64,7 +64,7 @@ struct Traversal {
   }
 
   // This is not (yet) thread-safe
-  void OnFrontExhausted(const TrackingSet& front) {
+  void OnFrontExhausted(const VCTrackingSet& front) {
     seenFront_.emplace(front.hash_);
   }
 

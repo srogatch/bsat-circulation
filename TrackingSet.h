@@ -7,33 +7,38 @@
 #include <mutex>
 #include <cassert>
 
-struct Bucket {
+template<typename TItem> struct Bucket {
   std::mutex sync_;
-  std::unordered_set<int64_t> set_;
+  std::unordered_set<TItem> set_;
   int64_t prefixSum_;
 };
 
-struct TrackingSet {
-  static constexpr const int64_t kSyncContention = 37;
-  static const uint32_t nCpus_;
+template<typename TItem> struct MulKHashBaseWithSalt {
+  uint128 operator()(const TItem& item) const {
+    return item * kHashBase + 37;
+  }
+};
 
-  std::unique_ptr<Bucket[]> buckets_ = std::make_unique<Bucket[]>(kSyncContention * nCpus_);
+template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct TrackingSet {
+  static constexpr const int64_t kSyncContention = 37;
+
+  std::unique_ptr<Bucket<TItem>[]> buckets_ = std::make_unique<Bucket<TItem>[]>(kSyncContention * nSysCpus);
   uint128 hash_ = 0;
   std::atomic<int64_t> size_ = 0;
 
   TrackingSet() = default;
 
-  void UpdateHash(const int64_t item) {
-    const uint128 t = item * kHashBase;
-    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[0].fetch_xor(t & (-1LL));
-    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[1].fetch_xor(t >> 64);
+  void UpdateHash(const TItem& item) {
+    const uint128 h = THasher()(item);
+    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[0].fetch_xor(h & (-1LL));
+    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[1].fetch_xor(h >> 64);
   }
 
   void CopyFrom(const TrackingSet& src) {
     hash_ = src.hash_;
     size_ = src.Size();
     #pragma omp parallel for
-    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
       buckets_[i].set_ = src.buckets_[i].set_;
     }
   }
@@ -49,17 +54,16 @@ struct TrackingSet {
     return *this;
   }
 
-  Bucket& GetBucket(const int64_t item) {
-    return buckets_[(item*kHashBase) % (kSyncContention * nCpus_)];
+  Bucket<TItem>& GetBucket(const TItem& item) {
+    return buckets_[THasher()(item) % (kSyncContention * nSysCpus)];
   }
 
-  const Bucket& GetBucket(const int64_t item) const {
-    return buckets_[(item*kHashBase) % (kSyncContention * nCpus_)];
+  const Bucket<TItem>& GetBucket(const TItem& item) const {
+    return buckets_[THasher()(item) % (kSyncContention * nSysCpus)];
   }
 
-  void Add(const int64_t item) {
-    assert(item != 0);
-    Bucket& b = GetBucket(item);
+  void Add(const TItem& item) {
+    Bucket<TItem>& b = GetBucket(item);
     bool bAdded = false;
     {
       std::unique_lock<std::mutex> lock(b.sync_);
@@ -76,9 +80,8 @@ struct TrackingSet {
     }
   }
 
-  void Remove(const int64_t item) {
-    assert(item != 0);
-    Bucket& b = GetBucket(item);
+  void Remove(const TItem& item) {
+    Bucket<TItem>& b = GetBucket(item);
     bool bRemoved = false;
     {
       std::unique_lock<std::mutex> lock(b.sync_);
@@ -95,9 +98,8 @@ struct TrackingSet {
     }
   }
 
-  void Flip(const int64_t item) {
-    assert(item != 0);
-    Bucket& b = GetBucket(item);
+  void Flip(const TItem& item) {
+    Bucket<TItem>& b = GetBucket(item);
     int sizeMod = 0;
     {
       std::unique_lock<std::mutex> lock(b.sync_);
@@ -116,14 +118,14 @@ struct TrackingSet {
   }
 
   // Not thread-safe: no sense in making it thread-safe because it's volatile
-  bool Contains(const int64_t item) const {
-    const Bucket& b = GetBucket(item);
+  bool Contains(const TItem& item) const {
+    const Bucket<TItem>& b = GetBucket(item);
     return b.set_.find(item) != b.set_.end();
   }
 
   void Clear() {
     #pragma omp parallel for
-    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
       buckets_[i].set_.clear();
     }
     hash_ = 0;
@@ -139,7 +141,7 @@ struct TrackingSet {
     }
     bool isEqual = true;
     #pragma omp parallel for shared(isEqual)
-    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
       if(buckets_[i].set_ != fellow.buckets_[i].set_) {
         isEqual = false;
         #pragma omp cancel for
@@ -154,7 +156,7 @@ struct TrackingSet {
     }
     bool differ = false;
     #pragma omp parallel for
-    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
       if(buckets_[i].set_ != fellow.buckets_[i].set_) {
         differ = true;
         #pragma omp cancel for
@@ -167,8 +169,8 @@ struct TrackingSet {
   TrackingSet operator-(const TrackingSet& fellow) const {
     TrackingSet ans;
     #pragma omp parallel for
-    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
-      for(const int64_t item : buckets_[i].set_) {
+    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
+      for(const TItem& item : buckets_[i].set_) {
         if(!fellow.Contains(item)) {
           ans.Add(item);
         }
@@ -181,8 +183,8 @@ struct TrackingSet {
     if(Size() <= fellow.Size()) {
       TrackingSet ans = fellow;
       #pragma omp parallel for
-      for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
-        for(const int64_t item : buckets_[i].set_) {
+      for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
+        for(const TItem& item : buckets_[i].set_) {
           ans.Add(item);
         }
       }
@@ -197,14 +199,13 @@ struct TrackingSet {
     std::vector<int64_t> ans(Size());
     buckets_[0].prefixSum_ = 0;
     //TODO: use parallel prefix sum computation?
-    for(int64_t i=1; i<kSyncContention * nCpus_; i++) {
+    for(int64_t i=1; i<kSyncContention * nSysCpus; i++) {
       buckets_[i].prefixSum_ = buckets_[i-1].prefixSum_ + buckets_[i-1].set_.size();
     }
     #pragma omp parallel for
-    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
       int64_t j=buckets_[i].prefixSum_;
-      for(const int64_t item : buckets_[i].set_) {
-        assert(item != 0);
+      for(const TItem& item : buckets_[i].set_) {
         ans[j] = item;
         j++;
       }
@@ -213,9 +214,11 @@ struct TrackingSet {
   }
 };
 
+using VCTrackingSet = TrackingSet<int64_t>;
+
 namespace std {
-  template<> struct hash<TrackingSet> {
-    bool operator()(const TrackingSet& ts) const {
+  template<> struct hash<VCTrackingSet> {
+    std::size_t operator()(const VCTrackingSet& ts) const {
       return ts.hash_;
     }
   };

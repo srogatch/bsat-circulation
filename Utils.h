@@ -9,6 +9,8 @@
 constexpr const uint32_t kCacheLineSize = 64;
 constexpr const uint32_t kRamPageBytes = 4096;
 
+static const uint32_t nSysCpus = std::thread::hardware_concurrency();
+
 typedef unsigned __int128 uint128;
 
 constexpr const uint128 kHashBase =

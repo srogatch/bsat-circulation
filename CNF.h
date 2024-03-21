@@ -271,8 +271,8 @@ release:
     return false;
   }
 
-  TrackingSet ComputeUnsatClauses() const {
-    TrackingSet ans;
+  VCTrackingSet ComputeUnsatClauses() const {
+    VCTrackingSet ans;
     #pragma omp parallel for
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, ans_)) {
@@ -417,8 +417,8 @@ release:
   }
 
   // For a set of clauses, return the set of variables that dissatisfy the clauses
-  std::vector<int64_t> ClauseFrontToVars(const TrackingSet& clauseFront, const BitVector& assignment) {
-    TrackingSet varFront;
+  std::vector<int64_t> ClauseFrontToVars(const VCTrackingSet& clauseFront, const BitVector& assignment) {
+    VCTrackingSet varFront;
     std::vector<int64_t> vClauseFront = clauseFront.ToVector();
     #pragma omp parallel for
     for(int64_t i=0; i<vClauseFront.size(); i++) {
@@ -437,8 +437,8 @@ release:
   }
 
   // For a set of variables, return the set of clauses that are dissatisfied by the variables
-  std::vector<int64_t> VarFrontToClauses(const TrackingSet& varFront, const BitVector& assignment) {
-    TrackingSet clauseFront;
+  std::vector<int64_t> VarFrontToClauses(const VCTrackingSet& varFront, const BitVector& assignment) {
+    VCTrackingSet clauseFront;
     std::vector<int64_t> vVarFront = varFront.ToVector();
     #pragma omp parallel for
     for(int64_t i=0; i<vVarFront.size(); i++) {

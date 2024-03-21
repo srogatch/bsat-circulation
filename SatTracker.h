@@ -21,7 +21,7 @@ template<typename TCounter> struct SatTracker {
 
   void Init(Formula* pFormula) {
     pFormula_ = pFormula;
-    syncs_.reset(new std::atomic_flag[kSyncContention * TrackingSet::nCpus_]);
+    syncs_.reset(new std::atomic_flag[kSyncContention * nSysCpus]);
     vVars_.resize(pFormula->nVars_);
     constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars_[0]);
     #pragma omp parallel for schedule(static, cParChunkSize)
@@ -71,8 +71,8 @@ template<typename TCounter> struct SatTracker {
     fellow.totSat_.store(t, std::memory_order_relaxed);
   }
 
-  TrackingSet Populate(const BitVector& assignment) {
-    TrackingSet ans;
+  VCTrackingSet Populate(const BitVector& assignment) {
+    VCTrackingSet ans;
     int64_t curTot = 0;
     nSat_[0] = 1;
     #pragma omp parallel for schedule(static, cParChunkSize) reduction(+:curTot)
@@ -95,17 +95,17 @@ template<typename TCounter> struct SatTracker {
   }
 
   void Lock(const int64_t iClause) {
-    while(syncs_[iClause % (kSyncContention * TrackingSet::nCpus_)].test_and_set(std::memory_order_acq_rel)) {
+    while(syncs_[iClause % (kSyncContention * nSysCpus)].test_and_set(std::memory_order_acq_rel)) {
       std::this_thread::yield();
     }
   }
   void Unlock(const int64_t iClause) {
-    syncs_[iClause % (kSyncContention * TrackingSet::nCpus_)].clear(std::memory_order_release);
+    syncs_[iClause % (kSyncContention * nSysCpus)].clear(std::memory_order_release);
   }
 
   // The sign of iVar must reflect the new value of the variable.
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
-  int64_t FlipVar(const int64_t iVar, TrackingSet* unsatClauses, TrackingSet* front) {
+  int64_t FlipVar(const int64_t iVar, VCTrackingSet* unsatClauses, VCTrackingSet* front) {
     const std::vector<int64_t>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     int64_t ans = 0;
     #pragma omp parallel for reduction(+:ans)
@@ -147,8 +147,8 @@ template<typename TCounter> struct SatTracker {
     return ans;
   }
 
-  TrackingSet GetUnsat() const {
-    TrackingSet ans;
+  VCTrackingSet GetUnsat() const {
+    VCTrackingSet ans;
     #pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       if(nSat_[i] == 0) {
@@ -159,8 +159,8 @@ template<typename TCounter> struct SatTracker {
     return ans;
   }
 
-  TrackingSet GetUnsat(const SatTracker& oldSatTr, TrackingSet& newFront) const {
-    TrackingSet ans;
+  VCTrackingSet GetUnsat(const SatTracker& oldSatTr, VCTrackingSet& newFront) const {
+    VCTrackingSet ans;
     #pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       if(nSat_.get()[i].load(std::memory_order_relaxed) == 0) {
@@ -178,7 +178,7 @@ template<typename TCounter> struct SatTracker {
   }
 
   // int64_t Divergence(const bool preferMove, Traversal& trav,
-  //   const TrackingSet* considerClauses, TrackingSet& unsatClauses,
+  //   const VCTrackingSet* considerClauses, VCTrackingSet& unsatClauses,
   //   int64_t minUnsat)
   // {
   //   std::vector<int64_t> subsetVars, *pvVars = nullptr;
@@ -190,7 +190,7 @@ template<typename TCounter> struct SatTracker {
   //     subsetVars = pFormula_->ClauseFrontToVars(*considerClauses, pFormula_->ans_);
   //     pvVars = &subsetVars;
   //   }
-  //   TrackingSet revVars;
+  //   VCTrackingSet revVars;
   //   std::mutex muState;
   //   #pragma omp parallel for schedule(dynamic, 1)
   //   for(int64_t i=0; i<pvVars->size(); i++) {
@@ -219,8 +219,8 @@ template<typename TCounter> struct SatTracker {
   // }
 
   int64_t GradientDescend(const bool preferMove, Traversal& trav,
-    const TrackingSet* considerClauses, TrackingSet& unsatClauses, const TrackingSet& startFront,
-    TrackingSet& front, int64_t minUnsat, bool& moved)
+    const VCTrackingSet* considerClauses, VCTrackingSet& unsatClauses, const VCTrackingSet& startFront,
+    VCTrackingSet& front, int64_t minUnsat, bool& moved)
   {
     std::vector<int64_t> subsetVars, *pvVars = nullptr;
     if(considerClauses == nullptr) {
@@ -232,7 +232,7 @@ template<typename TCounter> struct SatTracker {
       pvVars = &subsetVars;
     }
 
-    TrackingSet revVars;
+    VCTrackingSet revVars;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
     for(int64_t k=0; k<pvVars->size(); k++) {
       const int64_t aVar = (*pvVars)[k];
@@ -267,8 +267,8 @@ template<typename TCounter> struct SatTracker {
 
   int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
     const std::vector<int64_t>& varFront, BitVector& next, Traversal& trav,
-    TrackingSet* unsatClauses, const TrackingSet& startClauseFront,
-    TrackingSet& revVars, int64_t minUnsat, bool& moved, int64_t level)
+    VCTrackingSet* unsatClauses, const VCTrackingSet& startClauseFront,
+    VCTrackingSet& revVars, int64_t minUnsat, bool& moved, int64_t level)
   {
     for(int64_t i=0; i<int64_t(varFront.size()); i+=varsAtOnce) {
       std::vector<int64_t> selVars(varsAtOnce, 0);
@@ -293,7 +293,7 @@ template<typename TCounter> struct SatTracker {
         continue;
       }
       
-      TrackingSet newClauseFront;
+      VCTrackingSet newClauseFront;
       #pragma omp parallel for num_threads(nVars)
       for(int64_t j=0; j<nVars; j++) {
         const int64_t iVar = selVars[j];

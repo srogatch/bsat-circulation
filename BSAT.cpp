@@ -60,7 +60,6 @@ uint64_t AccComb(const int64_t n, const int64_t k) {
   return mac;
 }
 
-const uint32_t TrackingSet::nCpus_ = std::thread::hardware_concurrency();
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
 
 int main(int argc, char* argv[]) {
@@ -72,7 +71,7 @@ int main(int argc, char* argv[]) {
   }
 
   // TODO: does it override the environment variable?
-  omp_set_num_threads(TrackingSet::nCpus_);
+  omp_set_num_threads(nSysCpus);
   // Enable nested parallelism
   omp_set_max_active_levels(omp_get_supported_active_levels());
 
@@ -92,11 +91,11 @@ int main(int argc, char* argv[]) {
   std::cout.flush();
 
   int64_t altNUnsat;
-  TrackingSet initFront;
+  VCTrackingSet initFront;
 
   {
-    TrackingSet initUnsatClauses = satTr.GetUnsat();
-    TrackingSet startFront = initUnsatClauses;
+    VCTrackingSet initUnsatClauses = satTr.GetUnsat();
+    VCTrackingSet startFront = initUnsatClauses;
     // for init it's usually better if we don't move an extra time
     bool moved = false;
     altNUnsat = satTr.GradientDescend(
@@ -146,7 +145,7 @@ int main(int argc, char* argv[]) {
     formula.ans_ = altAsg;
   }
 
-  TrackingSet unsatClauses = satTr.Populate(formula.ans_);
+  VCTrackingSet unsatClauses = satTr.Populate(formula.ans_);
 
   BitVector maxPartial;
   bool maybeSat = true;
@@ -176,7 +175,7 @@ int main(int argc, char* argv[]) {
     tmStart = tmEnd;
     prevNUnsat = nStartUnsat;
     
-    TrackingSet front;
+    VCTrackingSet front;
     if(nStartUnsat == bestInit) {
       front = initFront;
     }
@@ -190,7 +189,7 @@ int main(int argc, char* argv[]) {
       }
 
       int64_t bestUnsat = formula.nClauses_+1;
-      TrackingSet bestRevVars;
+      VCTrackingSet bestRevVars;
 
       std::vector<int64_t> varFront = formula.ClauseFrontToVars(front, formula.ans_);
       const int64_t startNIncl = 1;
@@ -203,7 +202,7 @@ int main(int argc, char* argv[]) {
         ParallelShuffle(locVarFront.data(), locVarFront.size());
         BitVector next = formula.ans_;
         DefaultSatTracker newSatTr = satTr;
-        TrackingSet stepRevs;
+        VCTrackingSet stepRevs;
         bool moved = false;
         const int64_t curNUnsat = newSatTr.ParallelGD(
           true, nIncl, locVarFront, next, trav, nullptr, front, stepRevs, 
@@ -284,7 +283,7 @@ int main(int argc, char* argv[]) {
         assert(newUnsat == satTr.UnsatCount());
         oldUnsat = newUnsat;
         nInARow++;
-        TrackingSet oldFront = front;
+        VCTrackingSet oldFront = front;
         front.Clear();
         moved = false;
         newUnsat = satTr.GradientDescend( true, trav, &oldFront, unsatClauses, oldFront, front,
