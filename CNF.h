@@ -28,6 +28,7 @@ template <typename T> constexpr int Signum(const T val) {
 }
 
 struct Formula {
+  // TODO: replace with vectors and allow parallel build
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> clause2var_;
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> var2clause_;
   std::unordered_map<uint64_t, std::vector<int64_t>> listVar2Clause_;
