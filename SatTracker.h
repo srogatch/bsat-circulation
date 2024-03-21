@@ -94,6 +94,31 @@ template<typename TCounter> struct SatTracker {
     return ans;
   }
 
+  bool Verify(const BitVector& assignment) {
+    int64_t curTot = 0;
+    if(nSat_[0] != 1) {
+      return false;
+    }
+    for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
+      int64_t curSat = 0;
+      for(const int64_t iVar : pFormula_->clause2var_.find(i)->second) {
+        if( (iVar < 0 && !assignment[-iVar]) || (iVar > 0 && assignment[iVar]) ) {
+          curSat++;
+        }
+      }
+      if(curSat > 0) {
+        curTot++;
+      }
+      if(nSat_[i] != curSat) {
+        return false;
+      }
+    }
+    if(totSat_ != curTot) {
+      return false;
+    }
+    return true;
+  }
+
   void Lock(const int64_t iClause) {
     while(syncs_[iClause % (kSyncContention * nSysCpus)].test_and_set(std::memory_order_acq_rel)) {
       std::this_thread::yield();
@@ -109,7 +134,7 @@ template<typename TCounter> struct SatTracker {
     const std::vector<int64_t>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     int64_t ans = 0;
     #pragma omp parallel for reduction(+:ans)
-    for(int64_t i=0; i<clauses.size(); i++) {
+    for(int64_t i=0; i<int64_t(clauses.size()); i++) {
       const int64_t iClause = clauses[i];
       const int64_t aClause = llabs(iClause);
       if(iClause * iVar > 0) {
@@ -234,7 +259,7 @@ template<typename TCounter> struct SatTracker {
 
     VCTrackingSet revVars;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
-    for(int64_t k=0; k<pvVars->size(); k++) {
+    for(int64_t k=0; k<int64_t(pvVars->size()); k++) {
       const int64_t aVar = (*pvVars)[k];
       assert(1 <= aVar && aVar <= pFormula_->nVars_);
       const int64_t iVar = aVar * (pFormula_->ans_[aVar] ? 1 : -1);
@@ -335,7 +360,7 @@ template<typename TCounter> struct SatTracker {
         const int64_t iVar = selVars[j];
         const int64_t aVar = llabs(iVar);
         next.Flip(aVar);
-        const int64_t nNewSat = FlipVar(aVar * (next[aVar] ? 1 : -1), unsatClauses, nullptr);
+        FlipVar(aVar * (next[aVar] ? 1 : -1), unsatClauses, nullptr);
         #pragma omp critical
         revVars.Flip(aVar);
       }

@@ -111,7 +111,7 @@ public:
             }
             assert(augFlow >= 0);
             if(augFlow == 0) {
-              for(int64_t i=0; i<path.size(); i++) {
+              for(int64_t i=0; i<int64_t(path.size()); i++) {
                 prev[path[i]] = Graph::INVALID_VERTEX;
               }
               continue;
@@ -124,7 +124,7 @@ public:
             }
             result_ += augFlow;
             int64_t iWeak = -1;
-            for(int64_t i=0; i+1<path.size(); i++) {
+            for(int64_t i=0; i+1<int64_t(path.size()); i++) {
               const int64_t vNext = path[i];
               const int64_t vPrev = path[i+1];
               if(incFlow[i]) {
@@ -145,7 +145,7 @@ public:
               prev[path[i]] = Graph::INVALID_VERTEX;
             }
             augmented = true;
-            if(iWeak == path.size()-1) {
+            if(iWeak == int64_t(path.size())-1) {
               finished = true;
               break;
             }

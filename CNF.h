@@ -37,6 +37,8 @@ struct Formula {
   BitVector dummySat_;
 
   void Add(const uint64_t iClause, const int64_t iVar) {
+    assert(1 <= int64_t(iClause) && int64_t(iClause) <= nClauses_);
+    assert(1 <= llabs(iVar) && llabs(iVar) <= nVars_);
     clause2var_[iClause].emplace(iVar);
     var2clause_[llabs(iVar)].emplace(int64_t(iClause) * Signum(iVar));
   }
@@ -110,13 +112,13 @@ struct Formula {
 
       for(;;) {
         std::vector<std::string> lines;
-        while(lines.size() < halfCpus) {
+        while(int64_t(lines.size()) < halfCpus) {
           if(!bqParsing.Pop(line)) {
             break;
           }
           bool isComment = false;
           int64_t j=0;
-          for(; j<line.size(); j++) {
+          for(; j<int64_t(line.size()); j++) {
             if(line[j] == 'c') {
               isComment = true;
               break;
@@ -125,13 +127,13 @@ struct Formula {
               break;
             }
           }
-          if(isComment || j >= line.size()) {
+          if( isComment || j >= int64_t(line.size()) ) {
             continue;
           }
           lines.emplace_back(std::move(line));
         }
         #pragma omp parallel for num_threads(halfCpus)
-        for(int64_t i=0; i<lines.size(); i++) {
+        for(int64_t i=0; i<int64_t(lines.size()); i++) {
           const int64_t locClause = iClause + 1 + i;
           if(locClause > nClauses_) {
             std::cerr << "Too many clauses: check the input DIMACS." << std::endl;
@@ -152,7 +154,7 @@ struct Formula {
           }
         }
         iClause += lines.size();
-        if(lines.size() < halfCpus) {
+        if(int64_t(lines.size()) < halfCpus) {
           break;
         }
         if(iClause > nClauses_) {
@@ -175,6 +177,8 @@ release:
         while(bqsAdding[omp_get_thread_num()].Pop(entry)) {
           const int64_t iClause = entry.first;
           const int64_t iVar = entry.second;
+          assert(1 <= llabs(iClause) && llabs(iClause) <= nClauses_);
+          assert(1 <= llabs(iVar) && llabs(iVar) <= nVars_);
           {
             std::unique_lock<std::mutex> lock(muC2V);
             clause2var_[iClause].emplace(iVar);
@@ -204,10 +208,10 @@ release:
         dummySat_.Flip(i);
         continue;
       }
-      for(int64_t iVar : clause2var_[i]) {
-        if(clause2var_[i].find(-iVar) != clause2var_[i].end()) {
+      auto& varSet = it->second;
+      for(int64_t iVar : varSet) {
+        if(varSet.find(-iVar) != varSet.end()) {
           dummySat_.Flip(i);
-          clause2var_.erase(i);
           var2clause_[llabs(iVar)].erase(i);
           var2clause_[llabs(iVar)].erase(-i);
           break;
@@ -232,6 +236,9 @@ release:
 
   bool SolWorks() {
     for(const auto& dj : clause2var_) {
+      if(dummySat_[dj.first]) {
+        continue; // satisfied because the clause contains a variable and its negation
+      }
       bool satisfied = false;
       for(const int64_t iVar : dj.second) {
         if( (iVar > 0 && ans_[iVar]) || (iVar < 0 && !ans_[-iVar]) ) {
@@ -421,9 +428,11 @@ release:
     VCTrackingSet varFront;
     std::vector<int64_t> vClauseFront = clauseFront.ToVector();
     #pragma omp parallel for
-    for(int64_t i=0; i<vClauseFront.size(); i++) {
+    for(int64_t i=0; i<int64_t(vClauseFront.size()); i++) {
       const int64_t originClause = vClauseFront[i];
-      for(const int64_t iVar : clause2var_[originClause]) {
+      assert(1 <= originClause && originClause <= nClauses_);
+      for(const int64_t iVar : clause2var_.find(originClause)->second) {
+        assert(1 <= llabs(iVar) && llabs(iVar) <= nVars_);
         if( (iVar < 0 && assignment[-iVar]) || (iVar > 0 && !assignment[iVar]) ) {
           // A dissatisfying arc
           const int64_t revV = llabs(iVar);
@@ -441,10 +450,12 @@ release:
     VCTrackingSet clauseFront;
     std::vector<int64_t> vVarFront = varFront.ToVector();
     #pragma omp parallel for
-    for(int64_t i=0; i<vVarFront.size(); i++) {
+    for(int64_t i=0; i<int64_t(vVarFront.size()); i++) {
       const int64_t originVar = vVarFront[i];
+      assert(1 <= originVar && originVar <= nVars_);
       const int64_t iVar = assignment[originVar] ? originVar : -originVar;
       for(const int64_t iClause : listVar2Clause_[originVar]) {
+        assert(1 <= iClause && iClause <= nClauses_);
         if(iVar * iClause < 0) {
           // A dissatisfying arc
           const int64_t dissatClause = llabs(iClause);

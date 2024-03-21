@@ -26,7 +26,7 @@ uint64_t Comb(const int64_t n, const int64_t k) {
   if(k == 1) {
     return n;
   }
-  while(memComb.size()+1 < n) {
+  while(int64_t(memComb.size())+1 < n) {
     memComb.emplace_back(memComb.size()+1);
   }
   uint64_t& mc = memComb[n-2][k-2];
@@ -50,7 +50,7 @@ uint64_t AccComb(const int64_t n, const int64_t k) {
   if(n == 1) {
     return 0;
   }
-  while(memAccComb.size()+1 < n) {
+  while(int64_t(memAccComb.size())+1 < n) {
     memAccComb.emplace_back(memAccComb.size()+1);
   }
   uint64_t& mac = memAccComb[n-2][k-2];
@@ -206,17 +206,18 @@ int main(int argc, char* argv[]) {
         bool moved = false;
         const int64_t curNUnsat = newSatTr.ParallelGD(
           true, nIncl, locVarFront, next, trav, nullptr, front, stepRevs, 
-          std::max<int64_t>( unsatClauses.Size() * 2, unsatClauses.Size() + std::log2(formula.nClauses_) ), moved, 0);
-        
+          std::max<int64_t>( unsatClauses.Size() * 2, DivUp(formula.nVars_, unsatClauses.Size()) ), moved, 0);
+
+        // TODO: this is too heavy
+        assert( newSatTr.Verify(next) );
+
         #pragma omp critical
         if( moved && curNUnsat < bestUnsat ) {
           bestUnsat = curNUnsat;
           bestRevVars = stepRevs;
         }
       }
-      nParallelGD+=endNIncl-startNIncl+1;
-      //std::cout << "/" << bestUnsat << "] ";
-      //std::cout.flush();
+      nParallelGD += endNIncl - startNIncl + 1;
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
@@ -253,47 +254,44 @@ int main(int argc, char* argv[]) {
       }
 
       std::cout << ">";
-      //std::cout.flush();
 
       front.Clear();
       std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
       #pragma omp parallel for
-      for(int64_t i=0; i<vBestRevVars.size(); i++) {
+      for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
         const int64_t revV = vBestRevVars[i];
         formula.ans_.Flip(revV);
         satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
       }
       assert(satTr.UnsatCount() == bestUnsat);
       assert(unsatClauses.Size() == bestUnsat);
+      // TODO: this is too heavy
+      assert(satTr.Verify(formula.ans_));
 
       if(unsatClauses.Size() < nStartUnsat) {
         break;
       }
 
       int64_t oldUnsat, newUnsat = unsatClauses.Size();
-      int64_t nInARow = 0;
       std::cout << "S";
-      //std::cout.flush();
       bool moved;
       do {
-        //std::cout << "/" << newUnsat;
         if(newUnsat < nStartUnsat) {
           break;
         }
         assert(newUnsat == satTr.UnsatCount());
         oldUnsat = newUnsat;
-        nInARow++;
         VCTrackingSet oldFront = front;
         front.Clear();
         moved = false;
         newUnsat = satTr.GradientDescend( true, trav, &oldFront, unsatClauses, oldFront, front,
-          std::max<int64_t>( unsatClauses.Size() * 2, unsatClauses.Size() + std::log2(formula.nClauses_) ),
+          std::max<int64_t>( unsatClauses.Size() * 2, DivUp(formula.nVars_, unsatClauses.Size()) ),
           moved );
         nSequentialGD++;
         assert(!moved || newUnsat == unsatClauses.Size());
       } while(moved && newUnsat <= oldUnsat);
-      //std::cout << "} ";
-      //std::cout.flush();
+      // TODO: this is too heavy
+      assert(satTr.Verify(formula.ans_));
     }
     std::cout << "\n\tWalk: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
       << ", Known assignments: " << trav.seenAssignment_.Size()

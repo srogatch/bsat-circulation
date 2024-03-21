@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cassert>
+
 #include "Graph.h"
 #include "CNF.h"
 #include "MaxFlow.h"
@@ -19,7 +21,9 @@ struct Reduction {
       if(src.dummySat_[clause.first]) {
         continue; // don't add arcs for dummy-satisfied clauses
       }
+      assert(1 <= int64_t(clause.first) && int64_t(clause.first) <= formula_.nClauses_);
       for(int64_t iVar : clause.second) {
+        assert(1 <= llabs(iVar) && llabs(iVar) <= formula_.nVars_);
         if( (iVar < 0 && !formula_.ans_[-iVar]) || (iVar > 0 && formula_.ans_[iVar]) ) {
           // The value assigned to this variable satisfies the clause:
           // An arc from the variable to the clause.
@@ -82,7 +86,7 @@ struct Reduction {
     return true; // there is a circulation, but maybe the formula is still unsatisfiable if there are contradictions
   }
 
-  bool AssignVars(int64_t& nAssigned) {
+  bool AssignVars() {
     for(int64_t i=1; i<=formula_.nVars_; i++) {
       for(const auto& dst : fGraph_.links_[i]) {
         if(dst.second->flow_ > 0) {
