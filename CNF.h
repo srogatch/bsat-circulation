@@ -414,4 +414,45 @@ release:
       });
     }
   }
+
+  // For a set of clauses, return the set of variables that dissatisfy the clauses
+  std::vector<int64_t> ClauseFrontToVars(const TrackingSet& clauseFront, const BitVector& assignment) {
+    TrackingSet varFront;
+    std::vector<int64_t> vClauseFront = clauseFront.ToVector();
+    #pragma omp parallel for
+    for(int64_t i=0; i<vClauseFront.size(); i++) {
+      const int64_t originClause = vClauseFront[i];
+      for(const int64_t iVar : clause2var_[originClause]) {
+        if( (iVar < 0 && assignment[-iVar]) || (iVar > 0 && !assignment[iVar]) ) {
+          // A dissatisfying arc
+          const int64_t revV = llabs(iVar);
+          varFront.Add(revV);
+        }
+      }
+    }
+    std::vector<int64_t> vVarFront = varFront.ToVector();
+    ParallelShuffle(vVarFront.data(), vVarFront.size());
+    return vVarFront;
+  }
+
+  // For a set of variables, return the set of clauses that are dissatisfied by the variables
+  std::vector<int64_t> VarFrontToClauses(const TrackingSet& varFront, const BitVector& assignment) {
+    TrackingSet clauseFront;
+    std::vector<int64_t> vVarFront = varFront.ToVector();
+    #pragma omp parallel for
+    for(int64_t i=0; i<vVarFront.size(); i++) {
+      const int64_t originVar = vVarFront[i];
+      const int64_t iVar = assignment[originVar] ? originVar : -originVar;
+      for(const int64_t iClause : listVar2Clause_[originVar]) {
+        if(iVar * iClause < 0) {
+          // A dissatisfying arc
+          const int64_t dissatClause = llabs(iClause);
+          clauseFront.Add(dissatClause);
+        }
+      }
+    }
+    std::vector<int64_t> vClauseFront = clauseFront.ToVector();
+    ParallelShuffle(vClauseFront.data(), vClauseFront.size());
+    return vVarFront;
+  }
 };

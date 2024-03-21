@@ -228,25 +228,24 @@ template<typename TCounter> struct SatTracker {
   }
 
   int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
-    const std::vector<std::pair<int64_t, int64_t>>& weightedVars,
-    BitVector& next, Traversal& trav,
-    TrackingSet* unsatClauses, const TrackingSet& startFront,
+    const std::vector<int64_t>& varFront, BitVector& next, Traversal& trav,
+    TrackingSet* unsatClauses, const TrackingSet& startClauseFront,
     TrackingSet& revVars, int64_t minUnsat, bool& moved, int64_t level)
   {
-    for(int64_t i=0; i<int64_t(weightedVars.size()); i+=varsAtOnce) {
+    for(int64_t i=0; i<int64_t(varFront.size()); i+=varsAtOnce) {
       std::vector<int64_t> selVars(varsAtOnce, 0);
-      const int64_t nVars = std::min<int64_t>(varsAtOnce, int64_t(weightedVars.size()) - i);
+      const int64_t nVars = std::min<int64_t>(varsAtOnce, int64_t(varFront.size()) - i);
       #pragma omp parallel for num_threads(nVars)
       for(int64_t j=0; j<nVars; j++) {
         int64_t aVar, iVar;
-        aVar = weightedVars[i+j].first;
+        aVar = varFront[i+j];
         assert(1 <= aVar && aVar <= pFormula_->nVars_);
         iVar = aVar * (next[aVar] ? 1 : -1);
         selVars[j] = iVar;
         #pragma omp critical
         revVars.Flip(aVar);
       }
-      if( trav.IsSeenMove(startFront, revVars) ) {
+      if( trav.IsSeenMove(startClauseFront, revVars) ) {
         // Should be better sequential
         for(int64_t j=0; j<nVars; j++) {
           const int64_t iVar = selVars[j];
@@ -255,16 +254,16 @@ template<typename TCounter> struct SatTracker {
         }
         continue;
       }
-      TrackingSet newFront;
+      TrackingSet newClauseFront;
       #pragma omp parallel for num_threads(nVars)
       for(int64_t j=0; j<nVars; j++) {
         const int64_t iVar = selVars[j];
         const int64_t aVar = llabs(iVar);
         next.Flip(aVar);
-        FlipVar(aVar * (next[aVar] ? 1 : -1), unsatClauses, &newFront);
+        FlipVar(aVar * (next[aVar] ? 1 : -1), unsatClauses, &newClauseFront);
       }
       const int64_t newNUnsat = UnsatCount();
-      trav.FoundMove(startFront, revVars, next, newNUnsat);
+      trav.FoundMove(startClauseFront, revVars, next, newNUnsat);
       if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
         moved = true;
         minUnsat = newNUnsat;
@@ -273,37 +272,13 @@ template<typename TCounter> struct SatTracker {
         }
         continue;
       }
-      if(level > 0 && newFront.Size() > 0) {
-        // Try to combine the variable assignments in the new front
-        std::unordered_map<int64_t, int64_t> candVs;
-        std::vector<int64_t> vFront = newFront.ToVector();
-        #pragma omp parallel for
-        for(int64_t j=0; j<vFront.size(); j++) {
-          const int64_t originClause = vFront[j];
-          for(const int64_t iVar : pFormula_->clause2var_[originClause]) {
-            if( (iVar < 0 && next[-iVar]) || (iVar > 0 && !next[iVar]) ) {
-              // A dissatisfying arc
-              const int64_t revV = llabs(iVar);
-              #pragma omp critical
-              candVs[revV]++;
-            }
-          }
-        }
-
-        std::vector<std::pair<int64_t, int64_t>> combs(candVs.begin(), candVs.end());
-        // TODO: generalize this into a shuffle selector
-        if( combs.size() >= 2 * omp_get_max_threads() ) {
-          ParallelShuffle(combs.data(), combs.size());
-        } else {
-          // TODO: generalize this into a GetSeededRandom()
-          unsigned long long seed;
-          while(!_rdrand64_step(&seed));
-          std::mt19937_64 rng(seed);
-          std::shuffle(combs.begin(), combs.end(), rng);
-        }
+      if(level > 0 && newClauseFront.Size() > 0) {
+        std::vector<int64_t> newVarFront = pFormula_->ClauseFrontToVars(newClauseFront, next);
         bool nextMoved = false;
         const int64_t subNUnsat = ParallelGD(
-          preferMove, varsAtOnce, combs, next, trav, unsatClauses, startFront, revVars, minUnsat, nextMoved, level-1);
+          preferMove, varsAtOnce, newVarFront, next, trav, unsatClauses, startClauseFront,
+          revVars, minUnsat, nextMoved, level-1
+        );
         if(subNUnsat < minUnsat || (preferMove && nextMoved && subNUnsat == minUnsat)) {
           minUnsat = subNUnsat;
           moved = true;

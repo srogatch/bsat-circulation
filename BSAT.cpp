@@ -144,15 +144,13 @@ int main(int argc, char* argv[]) {
   }
 
   TrackingSet unsatClauses = satTr.Populate(formula.ans_);
+  DefaultSatTracker origSatTr(formula);
 
   BitVector maxPartial;
   bool maybeSat = true;
   bool provenUnsat = false;
   std::mt19937_64 rng;
   int64_t nStartUnsat;
-  // Define them here to avoid reallocations
-  std::vector<std::pair<int64_t, int64_t>> combs;
-  std::vector<int64_t> vFront;
   BitVector next;
   int64_t nParallelGD = 0, nSequentialGD = 0;
   while(maybeSat) {
@@ -190,33 +188,13 @@ int main(int argc, char* argv[]) {
         std::cout.flush();
       }
 
-      DefaultSatTracker origSatTr(satTr);
-      std::unordered_map<int64_t, int64_t> candVs;
-      vFront = front.ToVector();
-      #pragma omp parallel for
-      for(int64_t i=0; i<vFront.size(); i++) {
-        const int64_t originClause = vFront[i];
-        for(const int64_t iVar : formula.clause2var_[originClause]) {
-          if( (iVar < 0 && formula.ans_[-iVar]) || (iVar > 0 && !formula.ans_[iVar]) ) {
-            // A dissatisfying arc
-            const int64_t revV = llabs(iVar);
-            #pragma omp critical
-            candVs[revV]++;
-          }
-        }
-      }
+      origSatTr = satTr;
+
+      std::vector<int64_t> varFront = formula.ClauseFrontToVars(front, formula.ans_);
       int64_t bestUnsat = formula.nClauses_+1;
       TrackingSet bestRevVars;
-
-      combs.assign(candVs.begin(), candVs.end());
-      if( combs.size() >= 2 * omp_get_max_threads() ) {
-        ParallelShuffle(combs.data(), combs.size());
-      } else {
-        std::shuffle(combs.begin(), combs.end(), rng);
-      }
-
-      const int64_t endNIncl = std::min<int64_t>(combs.size(), 3);
-      std::cout << "P" << combs.size() << "," << unsatClauses.Size();
+      const int64_t endNIncl = std::min<int64_t>(varFront.size(), 3);
+      std::cout << "P" << varFront.size() << "," << unsatClauses.Size();
       std::cout.flush();
       int64_t nIncl=2;
       for(; nIncl<=endNIncl; nIncl++) {
@@ -224,8 +202,8 @@ int main(int argc, char* argv[]) {
         TrackingSet stepRevs;
         bool moved = false;
         const int64_t curNUnsat = satTr.ParallelGD(
-          true, nIncl, combs, next, trav, nullptr, front, stepRevs, 
-          std::max<int64_t>(satTr.UnsatCount() * 2, nStartUnsat + std::sqrt(formula.nVars_)),
+          true, nIncl, varFront, next, trav, nullptr, front, stepRevs, 
+          std::max<int64_t>(satTr.UnsatCount() * 2, satTr.UnsatCount() + std::log2(formula.nClauses_)),
           moved, 0);
         nParallelGD++;
         satTr = origSatTr;
@@ -237,13 +215,7 @@ int main(int argc, char* argv[]) {
             break;
           }
         }
-        if(nIncl < endNIncl) {
-          if( combs.size() >= 2 * omp_get_max_threads() ) {
-            ParallelShuffle(combs.data(), combs.size());
-          } else {
-            std::shuffle(combs.begin(), combs.end(), rng);
-          }
-        }
+        ParallelShuffle(varFront.data(), varFront.size());
       }
       std::cout << "/" << bestUnsat << "] ";
       std::cout.flush();
@@ -303,6 +275,9 @@ int main(int argc, char* argv[]) {
       do {
         std::cout << "/" << newUnsat;
         std::cout.flush();
+        if(newUnsat < nStartUnsat) {
+          break;
+        }
         assert(newUnsat == satTr.UnsatCount());
         oldUnsat = newUnsat;
         nInARow++;
@@ -310,11 +285,12 @@ int main(int argc, char* argv[]) {
         //TrackingSet consider = unsatClauses + front;
         front.Clear();
         newUnsat = satTr.GradientDescend( true, trav, &unsatClauses, unsatClauses, front,
-          std::max<int64_t>( unsatClauses.Size() * 2, nStartUnsat + rng() % int64_t(std::sqrt(formula.nVars_+1)) )
+          std::max<int64_t>( unsatClauses.Size() * 2, unsatClauses.Size() + std::log2(formula.nClauses_) )
         );
         nSequentialGD++;
         assert(newUnsat == unsatClauses.Size());
-      } while(newUnsat < oldUnsat && newUnsat >= nStartUnsat);
+      } while(newUnsat < oldUnsat);
+
       assert(newUnsat == satTr.UnsatCount());
       std::cout << "} ";
       std::cout.flush();
