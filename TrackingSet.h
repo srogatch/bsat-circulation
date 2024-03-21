@@ -8,7 +8,7 @@
 #include <cassert>
 
 template<typename TItem> struct Bucket {
-  std::mutex sync_;
+  mutable std::mutex sync_;
   std::unordered_set<TItem> set_;
   int64_t prefixSum_;
 };
@@ -62,7 +62,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     return buckets_[THasher()(item) % (kSyncContention * nSysCpus)];
   }
 
-  void Add(const TItem& item) {
+  bool Add(const TItem& item) {
     Bucket<TItem>& b = GetBucket(item);
     bool bAdded = false;
     {
@@ -78,6 +78,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
       [[maybe_unused]] const int64_t oldSize = size_.fetch_add(1, std::memory_order_relaxed);
       assert(oldSize >= 0);
     }
+    return bAdded;
   }
 
   void Remove(const TItem& item) {
@@ -117,9 +118,9 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     assert(oldSize + sizeMod >= 0);
   }
 
-  // Not thread-safe: no sense in making it thread-safe because it's volatile
   bool Contains(const TItem& item) const {
     const Bucket<TItem>& b = GetBucket(item);
+    std::unique_lock<std::mutex> lock(b.sync_);
     return b.set_.find(item) != b.set_.end();
   }
 

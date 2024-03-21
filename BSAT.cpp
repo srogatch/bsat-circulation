@@ -295,8 +295,8 @@ int main(int argc, char* argv[]) {
       std::cout << "} ";
       std::cout.flush();
     }
-    std::cout << "\n\tWalk: " << trav.seenMove_.size() << ", Stack: " << trav.dfs_.size()
-      << ", Known assignments: " << trav.seenAssignment_.size()
+    std::cout << "\n\tWalk: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
+      << ", Known assignments: " << trav.seenAssignment_.Size()
       << ", nParallelGD: " << nParallelGD << ", nSequentialGD: " << nSequentialGD << std::endl;
   }
 

@@ -101,7 +101,7 @@ void ParallelShuffle(T* data, const size_t count) {
 namespace std {
 
 template<> struct hash<pair<uint128, uint128>> {
-  bool operator()(const pair<uint128, uint128>& v) const {
+  uint128 operator()(const pair<uint128, uint128>& v) const {
     return v.first * 1949 + v.second * 2011;
   }
 };

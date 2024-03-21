@@ -14,61 +14,69 @@ struct Point {
   Point(const BitVector& assignment, const int64_t nUnsat)
   : assignment_(assignment), nUnsat_(nUnsat)
   { }
+
+  Point(Point&& src) : assignment_(std::move(src.assignment_)), nUnsat_(std::move(src.nUnsat_))
+  {}
+
+  Point& operator=(Point&& src) {
+    if(this != &src) {
+      assignment_ = std::move(src.assignment_);
+      nUnsat_ = std::move(src.nUnsat_);
+    }
+    return *this;
+  }
 };
 
 // TODO: thread safety
 struct Traversal {
-  std::unordered_set<uint128> seenFront_;
-  std::unordered_set<uint128> seenAssignment_;
-  std::unordered_set<std::pair<uint128, uint128>> seenMove_;
+  TrackingSet<uint128> seenFront_;
+  TrackingSet<uint128> seenAssignment_;
+  TrackingSet<std::pair<uint128, uint128>, std::hash<std::pair<uint128, uint128>>> seenMove_;
   std::deque<Point> dfs_;
-  mutable std::mutex muSeenAsg_;
-  mutable std::mutex muSeenMove_;
   mutable std::mutex muDfs_;
 
   void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat)
   {
-    { // Move
-      std::unique_lock<std::mutex> lock(muSeenMove_);  
-      seenMove_.emplace(front.hash_, revVars.hash_);
-    }
-    { // Assignment
-      std::unique_lock<std::mutex> lock(muSeenAsg_);
-      if(seenAssignment_.find(assignment.hash_) != seenAssignment_.end()) {
-        return; // don't put it to DFS
-      }
-      seenAssignment_.emplace(assignment.hash_);
+    seenMove_.Add(std::make_pair(front.hash_, revVars.hash_));
+    if(!seenAssignment_.Add(assignment.hash_)) {
+      return; // added earlier, perhaps concurrently by another thread - don't put it to DFS here thus
     }
     { // DFS
       std::unique_lock<std::mutex> lock(muDfs_);
+      if(!dfs_.empty() && nUnsat > dfs_.back().nUnsat_) {
+        return;
+      }
+    }
+    {
+      Point p(assignment, nUnsat);
+      std::unique_lock<std::mutex> lock(muDfs_);
       if(dfs_.empty() || nUnsat <= dfs_.back().nUnsat_) {
-        dfs_.push_back(Point(assignment, nUnsat));
+        dfs_.push_back(std::move(p));
       }
     }
   }
 
   bool IsSeenMove(const VCTrackingSet& front, const VCTrackingSet& revVars) const {
     assert(front.Size() > 0);
-    std::unique_lock<std::mutex> lock(muSeenMove_);
-    return seenMove_.find({front.hash_, revVars.hash_}) != seenMove_.end();
+    return seenMove_.Contains(std::make_pair(front.hash_, revVars.hash_));
   }
 
   // This is not (yet) thread-safe
   bool IsSeenFront(const VCTrackingSet& front) const {
-    return seenFront_.find(front.hash_) != seenFront_.end();
+    return seenFront_.Contains(front.hash_);
   }
 
   bool IsSeenAssignment(const BitVector& assignment) const {
-    std::unique_lock<std::mutex> lock(muSeenAsg_);
-    return seenAssignment_.find(assignment.hash_) != seenAssignment_.end();
+    return seenAssignment_.Contains(assignment.hash_);
   }
 
   // This is not (yet) thread-safe
   void OnFrontExhausted(const VCTrackingSet& front) {
-    seenFront_.emplace(front.hash_);
+    seenFront_.Add(front.hash_);
   }
 
   bool StepBack(BitVector& backup) {
+    std::unique_lock<std::mutex> lock(muDfs_);
     if(dfs_.empty()) {
       return false;
     }
