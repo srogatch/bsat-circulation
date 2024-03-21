@@ -198,11 +198,16 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
 
   std::vector<int64_t> ToVector() const {
     std::vector<int64_t> ans(Size());
-    buckets_[0].prefixSum_ = 0;
+    int64_t prefSum = 0;
+    buckets_[0].prefixSum_ = prefSum;
+    prefSum += buckets_[0].set_.size();
     //TODO: use parallel prefix sum computation?
     for(int64_t i=1; i<kSyncContention * nSysCpus; i++) {
-      buckets_[i].prefixSum_ = buckets_[i-1].prefixSum_ + buckets_[i-1].set_.size();
+      buckets_[i].prefixSum_ = prefSum;
+      prefSum += buckets_[i].set_.size();
     }
+    assert( prefSum == Size() );
+
     #pragma omp parallel for
     for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
       int64_t j=buckets_[i].prefixSum_;
