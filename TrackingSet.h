@@ -9,6 +9,7 @@
 struct Bucket {
   std::mutex sync_;
   std::unordered_set<int64_t> set_;
+  int64_t prefixSum_;
 };
 
 struct TrackingSet {
@@ -118,25 +119,31 @@ struct TrackingSet {
     if(hash_ != fellow.hash_) {
       return false;
     }
-    #pragma omp parallel for
+    bool isEqual = true;
+    #pragma omp parallel for shared(isEqual)
     for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
       if(buckets_[i].set_ != fellow.buckets_[i].set_) {
-        return false;
+        isEqual = false;
+        #pragma omp cancel for
       }
+      #pragma omp cancellation point for
     }
-    return true;
+    return isEqual;
   }
   bool operator!=(const TrackingSet& fellow) const {
     if(hash_ != fellow.hash_) {
       return true;
     }
+    bool differ = false;
     #pragma omp parallel for
     for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
       if(buckets_[i].set_ != fellow.buckets_[i].set_) {
-        return true;
+        differ = true;
+        #pragma omp cancel for
       }
+      #pragma omp cancellation point for
     }
-    return false;
+    return differ;
   }
 
   TrackingSet operator-(const TrackingSet& fellow) const {
@@ -170,7 +177,20 @@ struct TrackingSet {
 
   std::vector<int64_t> ToVector() const {
     std::vector<int64_t> ans(size_.load());
-
+    buckets_[0].prefixSum_ = 0;
+    //TODO: use parallel prefix sum computation
+    for(int64_t i=1; i<kSyncContention * nCpus_; i++) {
+      buckets_[i].prefixSum_ = buckets_[i-1].prefixSum_ + buckets_[i].set_.size();
+    }
+    #pragma omp parallel for
+    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+      int64_t j=buckets_[i].prefixSum_;
+      for(const int64_t item : buckets_[i].set_) {
+        ans[j] = item;
+        j++;
+      }
+    }
+    return ans;
   }
 };
 

@@ -9,9 +9,10 @@
 
 struct Point {
   BitVector assignment_;
+  int64_t nUnsat_;
 
-  Point(const BitVector& assignment)
-  : assignment_(assignment)
+  Point(const BitVector& assignment, const int64_t nUnsat)
+  : assignment_(assignment), nUnsat_(nUnsat)
   { }
 };
 
@@ -20,9 +21,11 @@ struct Traversal {
   std::unordered_set<std::pair<uint128, uint128>> seenMove_;
   std::deque<Point> dfs_;
 
-  void FoundMove(const TrackingSet& front, const TrackingSet& revVars, const BitVector& assignment) {
+  void FoundMove(const TrackingSet& front, const TrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat) {
     seenMove_.emplace(front.hash_, revVars.hash_);
-    dfs_.push_back(Point(assignment));
+    if(nUnsat < dfs_.back().nUnsat_) {
+      dfs_.push_back(Point(assignment, nUnsat));
+    }
   }
 
   bool IsSeenMove(const TrackingSet& front, const TrackingSet& revVars) const {
