@@ -52,10 +52,10 @@ struct Formula {
     ifs.rdbuf()->pubsetbuf(buffer.get(), cBufSize);
 
     BlockingQueue<std::string> bqParsing;
-    BlockingQueue<std::pair<int64_t, int64_t>> bqAdding;
+    const int halfCpus = std::max<int>(1, std::thread::hardware_concurrency() / 2 - 1);
+    std::vector<BlockingQueue<std::pair<int64_t, int64_t>>> bqsAdding(halfCpus);
 
     std::thread parsingThr([&] {
-      const int remainingCpus = std::max<int>(1, std::thread::hardware_concurrency() / 2);
       bool probDefRead = false;
       int64_t iClause = 0;
       std::string line;
@@ -105,12 +105,12 @@ struct Formula {
           std::cerr << "Variable value out of range: " << iVar << std::endl;
           throw std::runtime_error("Incorrect input");
         }
-        bqAdding.Push(std::make_pair(iClause, iVar));
+        bqsAdding[llabs(iVar) % halfCpus].Push(std::make_pair(iClause, iVar));
       } while(iss >> cmd);
 
       for(;;) {
         std::vector<std::string> lines;
-        while(lines.size() < remainingCpus) {
+        while(lines.size() < halfCpus) {
           if(!bqParsing.Pop(line)) {
             break;
           }
@@ -130,7 +130,7 @@ struct Formula {
           }
           lines.emplace_back(std::move(line));
         }
-        #pragma omp parallel for num_threads(remainingCpus)
+        #pragma omp parallel for num_threads(halfCpus)
         for(int64_t i=0; i<lines.size(); i++) {
           const int64_t locClause = iClause + 1 + i;
           if(locClause > nClauses_) {
@@ -148,11 +148,11 @@ struct Formula {
               std::cerr << "Variable value out of range: " << iVar << std::endl;
               throw std::runtime_error("Incorrect input");
             }
-            bqAdding.Push(std::make_pair(locClause, iVar));
+            bqsAdding[omp_get_thread_num()].Push(std::make_pair(locClause, iVar));
           }
         }
         iClause += lines.size();
-        if(lines.size() < remainingCpus) {
+        if(lines.size() < halfCpus) {
           break;
         }
         if(iClause > nClauses_) {
@@ -160,14 +160,30 @@ struct Formula {
         }
       }
 release:
-      bqAdding.RequestShutdown();
+      #pragma omp parallel for num_threads(halfCpus)
+      for(int i=0; i<halfCpus; i++) {
+        bqsAdding[i].RequestShutdown();
+      }
       std::cout << "Finished parsing the input file lines." << std::endl;
     });
 
     std::thread addingThr([&] {
-      std::pair<int64_t, int64_t> entry;
-      while(bqAdding.Pop(entry)) {
-        Add(entry.first, entry.second);
+      std::mutex muC2V, muV2C;
+      #pragma omp parallel num_threads(halfCpus)
+      {
+        std::pair<int64_t, int64_t> entry;
+        while(bqsAdding[omp_get_thread_num()].Pop(entry)) {
+          const int64_t iClause = entry.first;
+          const int64_t iVar = entry.second;
+          {
+            std::unique_lock<std::mutex> lock(muC2V);
+            clause2var_[iClause].emplace(iVar);
+          }
+          {
+            std::unique_lock<std::mutex> lock(muV2C);
+            var2clause_[llabs(iVar)].emplace(int64_t(iClause) * Signum(iVar));
+          }
+        }
       }
       std::cout << "Finished linking clauses and variables." << std::endl;
     });

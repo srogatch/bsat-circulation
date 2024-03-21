@@ -217,7 +217,7 @@ int main(int argc, char* argv[]) {
         std::shuffle(combs.begin(), combs.end(), rng);
       }
 
-      const int64_t endNIncl = std::min<int64_t>(combs.size(), 5);
+      const int64_t endNIncl = std::min<int64_t>(combs.size(), 3);
       std::cout << "P" << combs.size() << "," << unsatClauses.set_.size();
       std::cout.flush();
       int64_t nIncl=2;
@@ -228,7 +228,7 @@ int main(int argc, char* argv[]) {
         const int64_t curNUnsat = satTr.ParallelGD(
           true, nIncl, combs, next, trav, nullptr, front, stepRevs, 
           std::max<int64_t>(satTr.UnsatCount() * 2, nStartUnsat + std::sqrt(formula.nVars_)),
-          moved, 2);
+          moved, 0);
         nParallelGD++;
         satTr = origSatTr;
         if( curNUnsat < bestUnsat ) {
@@ -310,7 +310,7 @@ int main(int argc, char* argv[]) {
         const uint128 oldHash = formula.ans_.hash_;
         //TrackingSet consider = unsatClauses + front;
         front.Clear();
-        newUnsat = satTr.GradientDescend( true, trav, nullptr, unsatClauses, front,
+        newUnsat = satTr.GradientDescend( true, trav, &unsatClauses, unsatClauses, front,
           std::max<int64_t>( unsatClauses.set_.size() * 2, nStartUnsat + rng() % int64_t(std::sqrt(formula.nVars_+1)) )
         );
         nSequentialGD++;

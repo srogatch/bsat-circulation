@@ -68,6 +68,7 @@
     "thread": "cpp",
     "shared_mutex": "cpp",
     "cfenv": "cpp",
-    "set": "cpp"
+    "set": "cpp",
+    "bitset": "cpp"
   }
 }
