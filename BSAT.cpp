@@ -5,7 +5,6 @@
 #include "Traversal.h"
 
 #include <iostream>
-#include <mutex>
 #include <algorithm>
 #include <execution>
 #include <cmath>
@@ -77,7 +76,6 @@ int main(int argc, char* argv[]) {
   // Enable nested parallelism
   omp_set_max_active_levels(omp_get_supported_active_levels());
 
-  std::mutex muUnsatClauses;
   Formula formula;
   formula.Load(argv[1]);
   int64_t prevNUnsat = formula.nClauses_;
@@ -160,7 +158,7 @@ int main(int argc, char* argv[]) {
   while(maybeSat) {
     //TODO: this is a heavy assert
     assert(unsatClauses == satTr.GetUnsat());
-    nStartUnsat = unsatClauses.set_.size();
+    nStartUnsat = unsatClauses.Size();
     maxPartial = formula.ans_;
     if(nStartUnsat == 0) {
       std::cout << "Satisfied" << std::endl;
@@ -184,9 +182,9 @@ int main(int argc, char* argv[]) {
       front = initFront;
     }
     bool allowDuplicateFront = false;
-    while(unsatClauses.set_.size() >= nStartUnsat) {
+    while(unsatClauses.Size() >= nStartUnsat) {
       assert(formula.ComputeUnsatClauses() == unsatClauses);
-      if(front.set_.empty() || (!allowDuplicateFront && trav.IsSeenFront(front))) {
+      if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
         front = unsatClauses;
         std::cout << "$";
         std::cout.flush();
@@ -194,7 +192,7 @@ int main(int argc, char* argv[]) {
 
       DefaultSatTracker origSatTr(satTr);
       std::unordered_map<int64_t, int64_t> candVs;
-      vFront.assign(front.set_.begin(), front.set_.end());
+      vFront = front.ToVector();
       #pragma omp parallel for
       for(int64_t i=0; i<vFront.size(); i++) {
         const int64_t originClause = vFront[i];
@@ -208,7 +206,7 @@ int main(int argc, char* argv[]) {
         }
       }
       int64_t bestUnsat = formula.nClauses_+1;
-      TrackingSet bestRevVertices;
+      TrackingSet bestRevVars;
 
       combs.assign(candVs.begin(), candVs.end());
       if( combs.size() >= 2 * omp_get_max_threads() ) {
@@ -218,7 +216,7 @@ int main(int argc, char* argv[]) {
       }
 
       const int64_t endNIncl = std::min<int64_t>(combs.size(), 3);
-      std::cout << "P" << combs.size() << "," << unsatClauses.set_.size();
+      std::cout << "P" << combs.size() << "," << unsatClauses.Size();
       std::cout.flush();
       int64_t nIncl=2;
       for(; nIncl<=endNIncl; nIncl++) {
@@ -233,7 +231,7 @@ int main(int argc, char* argv[]) {
         satTr = origSatTr;
         if( curNUnsat < bestUnsat ) {
           bestUnsat = curNUnsat;
-          bestRevVertices = stepRevs;
+          bestRevVars = stepRevs;
           if(bestUnsat < nStartUnsat)
           {
             break;
@@ -286,18 +284,19 @@ int main(int argc, char* argv[]) {
       std::cout << ">";
       std::cout.flush();
       front.Clear();
-      //TODO: parallelize
-      for(int64_t revV : bestRevVertices.set_) {
+
+      std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
+      #pragma omp parallel for
+      for(int64_t i=0; i<vBestRevVars.size(); i++) {
+        const int64_t revV = vBestRevVars[i];
         formula.ans_.Flip(revV);
         satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
       }
       const int64_t realUnsat = satTr.UnsatCount();
       assert(realUnsat == bestUnsat);
-      assert(unsatClauses.set_.size() == bestUnsat);
-      // Indicate a walk step
-      //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
+      assert(unsatClauses.Size() == bestUnsat);
 
-      int64_t oldUnsat, newUnsat = unsatClauses.set_.size();
+      int64_t oldUnsat, newUnsat = unsatClauses.Size();
       int64_t nInARow = 0;
       std::cout << "S";
       std::cout.flush();
@@ -311,10 +310,10 @@ int main(int argc, char* argv[]) {
         //TrackingSet consider = unsatClauses + front;
         front.Clear();
         newUnsat = satTr.GradientDescend( true, trav, &unsatClauses, unsatClauses, front,
-          std::max<int64_t>( unsatClauses.set_.size() * 2, nStartUnsat + rng() % int64_t(std::sqrt(formula.nVars_+1)) )
+          std::max<int64_t>( unsatClauses.Size() * 2, nStartUnsat + rng() % int64_t(std::sqrt(formula.nVars_+1)) )
         );
         nSequentialGD++;
-        assert(newUnsat == unsatClauses.set_.size());
+        assert(newUnsat == unsatClauses.Size());
       } while(newUnsat < oldUnsat && newUnsat >= nStartUnsat);
       assert(newUnsat == satTr.UnsatCount());
       std::cout << "} ";

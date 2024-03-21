@@ -74,7 +74,6 @@ template<typename TCounter> struct SatTracker {
         curTot++;
       } else {
         // Unsatisfied clause
-        std::unique_lock<std::mutex> lock(ans.sync_);
         ans.Add(i);
       }
     }
@@ -107,11 +106,9 @@ template<typename TCounter> struct SatTracker {
         if(nSat_[aClause] == 1) { // just became satisfied
           ans++;
           if(unsatClauses != nullptr) {
-            std::unique_lock<std::mutex> lock(unsatClauses->sync_);
             unsatClauses->Remove(aClause);
           }
-          if(front != nullptr) {
-            std::unique_lock<std::mutex> lock(front->sync_);
+          if(front != nullptr && front != unsatClauses) {
             front->Remove(aClause);
           }
         }
@@ -124,11 +121,9 @@ template<typename TCounter> struct SatTracker {
         if(nSat_[aClause] == 0) { // just became unsatisfied
           ans--;
           if(unsatClauses != nullptr) {
-            std::unique_lock<std::mutex> lock(unsatClauses->sync_);
             unsatClauses->Add(aClause);
           }
-          if(front != nullptr) {
-            std::unique_lock<std::mutex> lock(front->sync_);
+          if(front != nullptr && front != unsatClauses) {
             front->Add(aClause);
           }
         }
@@ -153,15 +148,12 @@ template<typename TCounter> struct SatTracker {
 
   TrackingSet GetUnsat(const SatTracker& oldSatTr, TrackingSet& newFront) const {
     TrackingSet ans;
-    std::mutex muFront, muAns;
     #pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       if(nSat_.get()[i].load(std::memory_order_relaxed) == 0) {
         if(oldSatTr.nSat_.get()[i].load(std::memory_order_relaxed) > 0) {
-          std::unique_lock<std::mutex> lock(muFront);
           newFront.Add(i);
         }
-        std::unique_lock<std::mutex> lock(muAns);
         ans.Add(i);
       }
     }
@@ -185,7 +177,7 @@ template<typename TCounter> struct SatTracker {
       }
     }
     else {
-      std::vector<int64_t> vClauses(considerClauses->set_.begin(), considerClauses->set_.end());
+      std::vector<int64_t> vClauses = considerClauses->ToVector();
       BitVector useVar(pFormula_->nVars_+1);
       #pragma omp parallel for
       for(int64_t i=0; i<vClauses.size(); i++) {
@@ -219,7 +211,7 @@ template<typename TCounter> struct SatTracker {
       // TODO: instead of flipping directly the formula, shall we pass an arbitrary assignment as a parameter?
       pFormula_->ans_.Flip(aVar);
       FlipVar(-iVar, &unsatClauses, &front);
-      trav.FoundMove(unsatClauses, revVars, pFormula_->ans_);
+      trav.FoundMove(unsatClauses, revVars, pFormula_->ans_, unsatClauses.Size());
 
       int64_t newUnsat = UnsatCount();
       if(newUnsat < minUnsat + (preferMove ? 1 : 0)) {
@@ -271,8 +263,8 @@ template<typename TCounter> struct SatTracker {
         next.Flip(aVar);
         FlipVar(aVar * (next[aVar] ? 1 : -1), unsatClauses, &newFront);
       }
-      trav.FoundMove(startFront, revVars, next);
       const int64_t newNUnsat = UnsatCount();
+      trav.FoundMove(startFront, revVars, next, newNUnsat);
       if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
         moved = true;
         minUnsat = newNUnsat;
@@ -281,10 +273,10 @@ template<typename TCounter> struct SatTracker {
         }
         continue;
       }
-      if(level > 0 && !newFront.set_.empty()) {
+      if(level > 0 && newFront.Size() > 0) {
         // Try to combine the variable assignments in the new front
         std::unordered_map<int64_t, int64_t> candVs;
-        std::vector<int64_t> vFront(newFront.set_.begin(), newFront.set_.end());
+        std::vector<int64_t> vFront = newFront.ToVector();
         #pragma omp parallel for
         for(int64_t j=0; j<vFront.size(); j++) {
           const int64_t originClause = vFront[j];

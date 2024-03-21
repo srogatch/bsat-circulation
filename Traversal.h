@@ -23,13 +23,13 @@ struct Traversal {
 
   void FoundMove(const TrackingSet& front, const TrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat) {
     seenMove_.emplace(front.hash_, revVars.hash_);
-    if(nUnsat < dfs_.back().nUnsat_) {
+    if(dfs_.empty() || nUnsat < dfs_.back().nUnsat_) {
       dfs_.push_back(Point(assignment, nUnsat));
     }
   }
 
   bool IsSeenMove(const TrackingSet& front, const TrackingSet& revVars) const {
-    assert(!front.set_.empty());
+    assert(front.Size() > 0);
     return seenMove_.find({front.hash_, revVars.hash_}) != seenMove_.end();
   }
 

@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <cstdint>
 #include <mutex>
+#include <cassert>
 
 struct Bucket {
   std::mutex sync_;
@@ -17,7 +18,6 @@ struct TrackingSet {
   static const uint32_t nCpus_;
 
   std::unique_ptr<Bucket[]> buckets_ = std::make_unique<Bucket[]>(kSyncContention * nCpus_);
-  mutable std::mutex sync_;
   uint128 hash_ = 0;
   std::atomic<int64_t> size_ = 0;
 
@@ -31,7 +31,7 @@ struct TrackingSet {
 
   void CopyFrom(const TrackingSet& src) {
     hash_ = src.hash_;
-    size_ = src.size_.load();
+    size_ = src.Size();
     #pragma omp parallel for
     for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
       buckets_[i].set_ = src.buckets_[i].set_;
@@ -58,6 +58,7 @@ struct TrackingSet {
   }
 
   void Add(const int64_t item) {
+    assert(item != 0);
     Bucket& b = GetBucket(item);
     bool bAdded = false;
     {
@@ -65,14 +66,18 @@ struct TrackingSet {
       auto it = b.set_.find(item);
       if(it == b.set_.end()) {
         b.set_.emplace(item);
+        bAdded = true;
       }
     }
     if(bAdded) {
       UpdateHash(item);
+      [[maybe_unused]] const int64_t oldSize = size_.fetch_add(1, std::memory_order_relaxed);
+      assert(oldSize >= 0);
     }
   }
 
   void Remove(const int64_t item) {
+    assert(item != 0);
     Bucket& b = GetBucket(item);
     bool bRemoved = false;
     {
@@ -85,20 +90,29 @@ struct TrackingSet {
     }
     if(bRemoved) {
       UpdateHash(item);
+      [[maybe_unused]] const int64_t oldSize = size_.fetch_sub(1, std::memory_order_relaxed);
+      assert(oldSize >= 1);
     }
   }
 
   void Flip(const int64_t item) {
+    assert(item != 0);
     Bucket& b = GetBucket(item);
+    int sizeMod = 0;
     {
+      std::unique_lock<std::mutex> lock(b.sync_);
       auto it = b.set_.find(item);
       if(it == b.set_.end()) {
         b.set_.emplace(item);
+        sizeMod = 1;
       } else {
         b.set_.erase(it);
+        sizeMod = -1;
       }
     }
     UpdateHash(item);
+    [[maybe_unused]] const int64_t oldSize = size_.fetch_add(sizeMod, std::memory_order_relaxed);
+    assert(oldSize + sizeMod >= 0);
   }
 
   // Not thread-safe: no sense in making it thread-safe because it's volatile
@@ -113,6 +127,10 @@ struct TrackingSet {
       buckets_[i].set_.clear();
     }
     hash_ = 0;
+  }
+
+  int64_t Size() const {
+    return size_.load(std::memory_order_relaxed);
   }
 
   bool operator==(const TrackingSet& fellow) const {
@@ -160,7 +178,7 @@ struct TrackingSet {
   }
 
   TrackingSet operator+(const TrackingSet& fellow) const {
-    if(size_.load() <= fellow.size_.load()) {
+    if(Size() <= fellow.Size()) {
       TrackingSet ans = fellow;
       #pragma omp parallel for
       for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
@@ -176,16 +194,17 @@ struct TrackingSet {
   }
 
   std::vector<int64_t> ToVector() const {
-    std::vector<int64_t> ans(size_.load());
+    std::vector<int64_t> ans(Size());
     buckets_[0].prefixSum_ = 0;
-    //TODO: use parallel prefix sum computation
+    //TODO: use parallel prefix sum computation?
     for(int64_t i=1; i<kSyncContention * nCpus_; i++) {
-      buckets_[i].prefixSum_ = buckets_[i-1].prefixSum_ + buckets_[i].set_.size();
+      buckets_[i].prefixSum_ = buckets_[i-1].prefixSum_ + buckets_[i-1].set_.size();
     }
     #pragma omp parallel for
     for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
       int64_t j=buckets_[i].prefixSum_;
       for(const int64_t item : buckets_[i].set_) {
+        assert(item != 0);
         ans[j] = item;
         j++;
       }
