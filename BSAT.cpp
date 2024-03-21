@@ -96,8 +96,9 @@ int main(int argc, char* argv[]) {
 
   {
     TrackingSet initUnsatClauses = satTr.GetUnsat();
+    TrackingSet startFront = initUnsatClauses;
     // for init it's usually better if we don't move an extra time
-    altNUnsat = satTr.GradientDescend(false, trav, nullptr, initUnsatClauses, initFront, formula.nClauses_);
+    altNUnsat = satTr.GradientDescend(false, trav, nullptr, initUnsatClauses, startFront, initFront, formula.nClauses_);
     std::cout << "GradientDescent: " << altNUnsat << ", ";
     std::cout.flush();
     if(altNUnsat < bestInit) {
@@ -283,8 +284,9 @@ int main(int argc, char* argv[]) {
         nInARow++;
         const uint128 oldHash = formula.ans_.hash_;
         //TrackingSet consider = unsatClauses + front;
+        TrackingSet oldFront = front;
         front.Clear();
-        newUnsat = satTr.GradientDescend( true, trav, &unsatClauses, unsatClauses, front,
+        newUnsat = satTr.GradientDescend( true, trav, &unsatClauses, unsatClauses, oldFront, front,
           std::max<int64_t>( unsatClauses.Size() * 2, unsatClauses.Size() + std::log2(formula.nClauses_) )
         );
         nSequentialGD++;

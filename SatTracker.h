@@ -219,8 +219,8 @@ template<typename TCounter> struct SatTracker {
   // }
 
   int64_t GradientDescend(const bool preferMove, Traversal& trav,
-    const TrackingSet* considerClauses, TrackingSet& unsatClauses, TrackingSet& front,
-    int64_t minUnsat)
+    const TrackingSet* considerClauses, TrackingSet& unsatClauses, const TrackingSet& startFront,
+    TrackingSet& front, int64_t minUnsat)
   {
     std::vector<int64_t> subsetVars, *pvVars = nullptr;
     if(considerClauses == nullptr) {
@@ -239,7 +239,7 @@ template<typename TCounter> struct SatTracker {
       assert(1 <= aVar && aVar <= pFormula_->nVars_);
       const int64_t iVar = aVar * (pFormula_->ans_[aVar] ? 1 : -1);
       revVars.Flip(aVar);
-      if( trav.IsSeenMove(unsatClauses, revVars) ) {
+      if( trav.IsSeenMove(startFront, revVars) ) {
         revVars.Flip(aVar);
         continue;
       }
@@ -248,7 +248,7 @@ template<typename TCounter> struct SatTracker {
       FlipVar(-iVar, &unsatClauses, &front);
 
       if(!trav.IsSeenAssignment(pFormula_->ans_)) {
-        trav.FoundMove(unsatClauses, revVars, pFormula_->ans_, unsatClauses.Size());
+        trav.FoundMove(startFront, revVars, pFormula_->ans_, unsatClauses.Size());
         int64_t newUnsat = UnsatCount();
         if(newUnsat < minUnsat + (preferMove ? 1 : 0)) {
           minUnsat = newUnsat;
