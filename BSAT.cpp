@@ -299,10 +299,7 @@ int main(int argc, char* argv[]) {
         satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
       }
       const int64_t realUnsat = satTr.UnsatCount();
-      // TODO: remove the heavy operation below
-      TrackingSet trueUnsat = satTr.GetUnsat();
       assert(realUnsat == bestUnsat);
-      assert(unsatClauses == trueUnsat);
       assert(unsatClauses.set_.size() == bestUnsat);
       // Indicate a walk step
       //std::cout << " F" << front.set_.size() << ":B" << bestFront.set_.size() << ":U" << unsatClauses.set_.size() << " ";
@@ -316,9 +313,9 @@ int main(int argc, char* argv[]) {
         oldUnsat = newUnsat;
         nInARow++;
         const uint128 oldHash = formula.ans_.hash_;
-        TrackingSet consider = unsatClauses + front;
+        //TrackingSet consider = unsatClauses + front;
         front.Clear();
-        newUnsat = satTr.GradientDescend(true, &consider, &unsatClauses, &front);
+        newUnsat = satTr.GradientDescend(true, nullptr, &unsatClauses, &front);
         nSequentialGD++;
         assert(newUnsat == unsatClauses.set_.size());
 
@@ -327,10 +324,10 @@ int main(int argc, char* argv[]) {
           dfs.pop_front();
         }
         dfs.push_back(Point(formula.ans_));
-      } while(newUnsat < oldUnsat);
-      assert(newUnsat == oldUnsat); // must not increase
+        std::cout << "/" << newUnsat;
+      } while(newUnsat < oldUnsat && newUnsat >= nStartUnsat);
       assert(newUnsat == satTr.UnsatCount());
-      std::cout << nInARow << "," << satTr.UnsatCount() << "} ";
+      std::cout << "} ";
       std::cout.flush();
     }
     std::cout << "\n\tWalk length: " << seenMove.size()
