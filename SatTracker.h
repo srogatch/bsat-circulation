@@ -216,7 +216,7 @@ template<typename TCounter> struct SatTracker {
     const std::vector<std::pair<int64_t, int64_t>>& weightedVars,
     BitVector& next, std::unordered_set<std::pair<uint128, uint128>>& seenMove,
     TrackingSet* unsatClauses, const TrackingSet& startFront,
-    TrackingSet& revVertices, int64_t minUnsat, int64_t level)
+    TrackingSet& revVertices, int64_t minUnsat, bool& moved, int64_t level)
   {
     for(int64_t i=0; i<int64_t(weightedVars.size()); i+=varsAtOnce) {
       std::vector<int64_t> selVars(varsAtOnce, 0);
@@ -250,7 +250,11 @@ template<typename TCounter> struct SatTracker {
       }
       const int64_t newNUnsat = UnsatCount();
       if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
+        moved = true;
         minUnsat = newNUnsat;
+        if(minUnsat == 0) {
+          break;
+        }
         continue;
       }
       if(level > 0 && !newFront.set_.empty()) {
@@ -279,10 +283,15 @@ template<typename TCounter> struct SatTracker {
           std::mt19937_64 rng(seed);
           std::shuffle(combs.begin(), combs.end(), rng);
         }
+        bool nextMoved = false;
         const int64_t subNUnsat = ParallelGD(
-          preferMove, varsAtOnce, combs, next, seenMove, unsatClauses, startFront, revVertices, minUnsat, level-1);
-        if(subNUnsat < minUnsat + (preferMove ? 1 : 0)) {
+          preferMove, varsAtOnce, combs, next, seenMove, unsatClauses, startFront, revVertices, minUnsat, nextMoved, level-1);
+        if(subNUnsat < minUnsat || (preferMove && nextMoved && subNUnsat == minUnsat)) {
           minUnsat = subNUnsat;
+          moved = true;
+          if(minUnsat == 0) {
+            break;
+          }
           continue;
         }
       }

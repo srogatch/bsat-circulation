@@ -228,10 +228,11 @@ int main(int argc, char* argv[]) {
       for(; nIncl<=endNIncl; nIncl++) {
         next = formula.ans_;
         TrackingSet stepRevs;
+        bool moved = false;
         const int64_t curNUnsat = satTr.ParallelGD(
           true, nIncl, combs, next, seenMove, nullptr, front, stepRevs, 
           std::max<int64_t>(satTr.UnsatCount() * 2, nStartUnsat + std::sqrt(formula.nVars_)),
-          0);
+          moved, 2);
         nParallelGD++;
         satTr = origSatTr;
         if( curNUnsat < bestUnsat ) {
