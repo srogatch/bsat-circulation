@@ -220,7 +220,7 @@ template<typename TCounter> struct SatTracker {
 
   int64_t GradientDescend(const bool preferMove, Traversal& trav,
     const TrackingSet* considerClauses, TrackingSet& unsatClauses, const TrackingSet& startFront,
-    TrackingSet& front, int64_t minUnsat)
+    TrackingSet& front, int64_t minUnsat, bool& moved)
   {
     std::vector<int64_t> subsetVars, *pvVars = nullptr;
     if(considerClauses == nullptr) {
@@ -251,6 +251,7 @@ template<typename TCounter> struct SatTracker {
         trav.FoundMove(startFront, revVars, pFormula_->ans_, unsatClauses.Size());
         int64_t newUnsat = UnsatCount();
         if(newUnsat < minUnsat + (preferMove ? 1 : 0)) {
+          moved = true;
           minUnsat = newUnsat;
           continue;
         }

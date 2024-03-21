@@ -98,7 +98,9 @@ int main(int argc, char* argv[]) {
     TrackingSet initUnsatClauses = satTr.GetUnsat();
     TrackingSet startFront = initUnsatClauses;
     // for init it's usually better if we don't move an extra time
-    altNUnsat = satTr.GradientDescend(false, trav, nullptr, initUnsatClauses, startFront, initFront, formula.nClauses_);
+    bool moved = false;
+    altNUnsat = satTr.GradientDescend(
+      false, trav, nullptr, initUnsatClauses, startFront, initFront, initUnsatClauses.Size(), moved);
     std::cout << "GradientDescent: " << altNUnsat << ", ";
     std::cout.flush();
     if(altNUnsat < bestInit) {
@@ -205,11 +207,10 @@ int main(int argc, char* argv[]) {
         bool moved = false;
         const int64_t curNUnsat = newSatTr.ParallelGD(
           true, nIncl, locVarFront, next, trav, nullptr, front, stepRevs, 
-          std::max<int64_t>(newSatTr.UnsatCount() * 2, newSatTr.UnsatCount() + std::log2(formula.nClauses_)),
-          moved, 0);
+          std::max<int64_t>( unsatClauses.Size() * 2, unsatClauses.Size() + std::log2(formula.nClauses_) ), moved, 0);
         
         #pragma omp critical
-        if( curNUnsat < bestUnsat ) {
+        if( moved && curNUnsat < bestUnsat ) {
           bestUnsat = curNUnsat;
           bestRevVars = stepRevs;
         }
@@ -235,6 +236,7 @@ int main(int argc, char* argv[]) {
         if(trav.StepBack(formula.ans_)) {
           unsatClauses = satTr.Populate(formula.ans_);
           front = unsatClauses;
+          assert(satTr.UnsatCount() == unsatClauses.Size());
           std::cout << "@";
           continue;
         }
@@ -273,27 +275,24 @@ int main(int argc, char* argv[]) {
       int64_t nInARow = 0;
       std::cout << "S";
       std::cout.flush();
+      bool moved;
       do {
         std::cout << "/" << newUnsat;
-        std::cout.flush();
         if(newUnsat < nStartUnsat) {
           break;
         }
         assert(newUnsat == satTr.UnsatCount());
         oldUnsat = newUnsat;
         nInARow++;
-        const uint128 oldHash = formula.ans_.hash_;
-        //TrackingSet consider = unsatClauses + front;
         TrackingSet oldFront = front;
         front.Clear();
-        newUnsat = satTr.GradientDescend( true, trav, &unsatClauses, unsatClauses, oldFront, front,
-          std::max<int64_t>( unsatClauses.Size() * 2, unsatClauses.Size() + std::log2(formula.nClauses_) )
-        );
+        moved = false;
+        newUnsat = satTr.GradientDescend( true, trav, &oldFront, unsatClauses, oldFront, front,
+          std::max<int64_t>( unsatClauses.Size() * 2, unsatClauses.Size() + std::log2(formula.nClauses_) ),
+          moved );
         nSequentialGD++;
-        assert(newUnsat == unsatClauses.Size());
-      } while(newUnsat < oldUnsat);
-
-      assert(newUnsat == satTr.UnsatCount());
+        assert(!moved || newUnsat == unsatClauses.Size());
+      } while(moved && newUnsat <= oldUnsat);
       std::cout << "} ";
       std::cout.flush();
     }
