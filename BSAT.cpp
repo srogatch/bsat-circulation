@@ -264,9 +264,12 @@ int main(int argc, char* argv[]) {
         formula.ans_.Flip(revV);
         satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
       }
-      const int64_t realUnsat = satTr.UnsatCount();
-      assert(realUnsat == bestUnsat);
+      assert(satTr.UnsatCount() == bestUnsat);
       assert(unsatClauses.Size() == bestUnsat);
+
+      if(unsatClauses.Size() < nStartUnsat) {
+        break;
+      }
 
       int64_t oldUnsat, newUnsat = unsatClauses.Size();
       int64_t nInARow = 0;
