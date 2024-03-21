@@ -144,14 +144,12 @@ int main(int argc, char* argv[]) {
   }
 
   TrackingSet unsatClauses = satTr.Populate(formula.ans_);
-  DefaultSatTracker origSatTr(formula);
 
   BitVector maxPartial;
   bool maybeSat = true;
   bool provenUnsat = false;
   std::mt19937_64 rng;
   int64_t nStartUnsat;
-  BitVector next;
   int64_t nParallelGD = 0, nSequentialGD = 0;
   while(maybeSat) {
     //TODO: this is a heavy assert
@@ -188,35 +186,33 @@ int main(int argc, char* argv[]) {
         std::cout.flush();
       }
 
-      origSatTr = satTr;
-
-      std::vector<int64_t> varFront = formula.ClauseFrontToVars(front, formula.ans_);
       int64_t bestUnsat = formula.nClauses_+1;
       TrackingSet bestRevVars;
-      const int64_t endNIncl = std::min<int64_t>(varFront.size(), 3);
+
+      std::vector<int64_t> varFront = formula.ClauseFrontToVars(front, formula.ans_);
+      const int64_t startNIncl = 1;
+      const int64_t endNIncl = std::min<int64_t>(varFront.size(), 5);
       std::cout << "P" << varFront.size() << "," << unsatClauses.Size();
       std::cout.flush();
-      int64_t nIncl=2;
-      for(; nIncl<=endNIncl; nIncl++) {
-        next = formula.ans_;
+      #pragma omp parallel for schedule(dynamic, 1) shared(bestUnsat)
+      for(int64_t nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
+        std::vector<int64_t> locVarFront = varFront;
+        ParallelShuffle(locVarFront.data(), locVarFront.size());
+        BitVector next = formula.ans_;
+        DefaultSatTracker newSatTr = satTr;
         TrackingSet stepRevs;
         bool moved = false;
-        const int64_t curNUnsat = satTr.ParallelGD(
-          true, nIncl, varFront, next, trav, nullptr, front, stepRevs, 
-          std::max<int64_t>(satTr.UnsatCount() * 2, satTr.UnsatCount() + std::log2(formula.nClauses_)),
+        const int64_t curNUnsat = newSatTr.ParallelGD(
+          true, nIncl, locVarFront, next, trav, nullptr, front, stepRevs, 
+          std::max<int64_t>(newSatTr.UnsatCount() * 2, newSatTr.UnsatCount() + std::log2(formula.nClauses_)),
           moved, 0);
-        nParallelGD++;
-        satTr = origSatTr;
         if( curNUnsat < bestUnsat ) {
+          #pragma omp critical
           bestUnsat = curNUnsat;
           bestRevVars = stepRevs;
-          if(bestUnsat < nStartUnsat)
-          {
-            break;
-          }
         }
-        ParallelShuffle(varFront.data(), varFront.size());
       }
+      nParallelGD+=endNIncl-startNIncl+1;
       std::cout << "/" << bestUnsat << "] ";
       std::cout.flush();
 

@@ -19,9 +19,10 @@ template<typename TCounter> struct SatTracker {
   Formula *pFormula_ = nullptr;
   std::atomic<int64_t> totSat_ = 0;
 
-  void Init() {
+  void Init(Formula* pFormula) {
+    pFormula_ = pFormula;
     syncs_.reset(new std::atomic_flag[kSyncContention * TrackingSet::nCpus_]);
-    vVars_.resize(pFormula_->nVars_);
+    vVars_.resize(pFormula->nVars_);
     constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars_[0]);
     #pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=1; i<=pFormula_->nVars_; i++) {
@@ -30,14 +31,13 @@ template<typename TCounter> struct SatTracker {
   }
 
   explicit SatTracker(Formula& formula)
-  : pFormula_(&formula)
   {
+    Init(&formula);
     nSat_.reset(new TCounter[pFormula_->nClauses_+1]);
-    Init();
   }
 
   SatTracker(const SatTracker& src) {
-    Init();
+    Init(src.pFormula_);
     CopyFrom(src);
   }
 
@@ -177,11 +177,46 @@ template<typename TCounter> struct SatTracker {
     return pFormula_->nClauses_ - totSat_.load(std::memory_order_relaxed);
   }
 
-  int64_t Divergence(const bool preferMove, Traversal& trav,
-    const TrackingSet* considerClauses, TrackingSet& unsatClauses, TrackingSet& front,
-    int64_t minUnsat)
-  {
-  }
+  // int64_t Divergence(const bool preferMove, Traversal& trav,
+  //   const TrackingSet* considerClauses, TrackingSet& unsatClauses,
+  //   int64_t minUnsat)
+  // {
+  //   std::vector<int64_t> subsetVars, *pvVars = nullptr;
+  //   if(considerClauses == nullptr) {
+  //     ParallelShuffle(vVars_.data(), vVars_.size());
+  //     pvVars = &vVars_;
+  //   }
+  //   else {
+  //     subsetVars = pFormula_->ClauseFrontToVars(*considerClauses, pFormula_->ans_);
+  //     pvVars = &subsetVars;
+  //   }
+  //   TrackingSet revVars;
+  //   std::mutex muState;
+  //   #pragma omp parallel for schedule(dynamic, 1)
+  //   for(int64_t i=0; i<pvVars->size(); i++) {
+  //     const int64_t aVar = (*pvVars)[k];
+  //     assert(1 <= aVar && aVar <= pFormula_->nVars_);
+  //     // This works in parallel as long as there are no duplicate variables in the vector
+  //     const int64_t iVar = aVar * (pFormula_->ans_[aVar] ? 1 : -1);
+  //     {
+  //       std::unique_lock<std::mutex> lock(muState);
+  //       revVars.Flip(aVar);
+  //     }
+  //     pFormula_->ans_.Flip(aVar);
+  //     FlipVar(-iVar, nullptr, nullptr);
+  //     bool bSeenMove = false;
+  //     {
+  //       std::unique_lock<std::mutex> lock(muState);
+  //       if(trav.IsSeenMove(unsatClauses, revVars)) {
+  //         revVars.Flip(aVar);
+  //         bSeenMove = true;
+  //       }
+  //     }
+  //     if(!bSeenMove) {
+
+  //     }
+  //   }
+  // }
 
   int64_t GradientDescend(const bool preferMove, Traversal& trav,
     const TrackingSet* considerClauses, TrackingSet& unsatClauses, TrackingSet& front,
@@ -199,7 +234,7 @@ template<typename TCounter> struct SatTracker {
 
     TrackingSet revVars;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
-    for(int64_t k=0; k<pvVars.size(); k++) {
+    for(int64_t k=0; k<pvVars->size(); k++) {
       const int64_t aVar = (*pvVars)[k];
       assert(1 <= aVar && aVar <= pFormula_->nVars_);
       const int64_t iVar = aVar * (pFormula_->ans_[aVar] ? 1 : -1);
@@ -211,12 +246,14 @@ template<typename TCounter> struct SatTracker {
       // TODO: instead of flipping directly the formula, shall we pass an arbitrary assignment as a parameter?
       pFormula_->ans_.Flip(aVar);
       FlipVar(-iVar, &unsatClauses, &front);
-      trav.FoundMove(unsatClauses, revVars, pFormula_->ans_, unsatClauses.Size());
 
-      int64_t newUnsat = UnsatCount();
-      if(newUnsat < minUnsat + (preferMove ? 1 : 0)) {
-        minUnsat = newUnsat;
-        continue;
+      if(!trav.IsSeenAssignment(pFormula_->ans_)) {
+        trav.FoundMove(unsatClauses, revVars, pFormula_->ans_, unsatClauses.Size());
+        int64_t newUnsat = UnsatCount();
+        if(newUnsat < minUnsat + (preferMove ? 1 : 0)) {
+          minUnsat = newUnsat;
+          continue;
+        }
       }
 
       // Flip back
@@ -254,6 +291,7 @@ template<typename TCounter> struct SatTracker {
         }
         continue;
       }
+      
       TrackingSet newClauseFront;
       #pragma omp parallel for num_threads(nVars)
       for(int64_t j=0; j<nVars; j++) {
@@ -262,30 +300,32 @@ template<typename TCounter> struct SatTracker {
         next.Flip(aVar);
         FlipVar(aVar * (next[aVar] ? 1 : -1), unsatClauses, &newClauseFront);
       }
-      const int64_t newNUnsat = UnsatCount();
-      trav.FoundMove(startClauseFront, revVars, next, newNUnsat);
-      if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
-        moved = true;
-        minUnsat = newNUnsat;
-        if(minUnsat == 0) {
-          break;
-        }
-        continue;
-      }
-      if(level > 0 && newClauseFront.Size() > 0) {
-        std::vector<int64_t> newVarFront = pFormula_->ClauseFrontToVars(newClauseFront, next);
-        bool nextMoved = false;
-        const int64_t subNUnsat = ParallelGD(
-          preferMove, varsAtOnce, newVarFront, next, trav, unsatClauses, startClauseFront,
-          revVars, minUnsat, nextMoved, level-1
-        );
-        if(subNUnsat < minUnsat || (preferMove && nextMoved && subNUnsat == minUnsat)) {
-          minUnsat = subNUnsat;
+      if(!trav.IsSeenAssignment(next)) {
+        const int64_t newNUnsat = UnsatCount();
+        trav.FoundMove(startClauseFront, revVars, next, newNUnsat);
+        if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
           moved = true;
+          minUnsat = newNUnsat;
           if(minUnsat == 0) {
             break;
           }
           continue;
+        }
+        if(level > 0 && newClauseFront.Size() > 0) {
+          std::vector<int64_t> newVarFront = pFormula_->ClauseFrontToVars(newClauseFront, next);
+          bool nextMoved = false;
+          const int64_t subNUnsat = ParallelGD(
+            preferMove, varsAtOnce, newVarFront, next, trav, unsatClauses, startClauseFront,
+            revVars, minUnsat, nextMoved, level-1
+          );
+          if(subNUnsat < minUnsat || (preferMove && nextMoved && subNUnsat == minUnsat)) {
+            minUnsat = subNUnsat;
+            moved = true;
+            if(minUnsat == 0) {
+              break;
+            }
+            continue;
+          }
         }
       }
 
