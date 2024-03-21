@@ -194,7 +194,7 @@ int main(int argc, char* argv[]) {
       const int64_t endNIncl = std::min<int64_t>(varFront.size(), 5);
       std::cout << "P" << varFront.size() << "," << unsatClauses.Size();
       std::cout.flush();
-      #pragma omp parallel for schedule(dynamic, 1) shared(bestUnsat)
+      #pragma omp parallel for schedule(dynamic, 1)
       for(int64_t nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
         std::vector<int64_t> locVarFront = varFront;
         ParallelShuffle(locVarFront.data(), locVarFront.size());
@@ -206,8 +206,9 @@ int main(int argc, char* argv[]) {
           true, nIncl, locVarFront, next, trav, nullptr, front, stepRevs, 
           std::max<int64_t>(newSatTr.UnsatCount() * 2, newSatTr.UnsatCount() + std::log2(formula.nClauses_)),
           moved, 0);
+        
+        #pragma omp critical
         if( curNUnsat < bestUnsat ) {
-          #pragma omp critical
           bestUnsat = curNUnsat;
           bestRevVars = stepRevs;
         }
