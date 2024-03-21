@@ -4,92 +4,173 @@
 
 #include <unordered_set>
 #include <cstdint>
+#include <mutex>
+
+struct Bucket {
+  std::mutex sync_;
+  std::unordered_set<int64_t> set_;
+};
 
 struct TrackingSet {
-  std::unordered_set<int64_t> set_;
+  static constexpr const int64_t kSyncContention = 37;
+  static const uint32_t nCpus_;
+
+  std::unique_ptr<Bucket[]> buckets_ = std::make_unique<Bucket[]>(kSyncContention * nCpus_);
   mutable std::mutex sync_;
   uint128 hash_ = 0;
+  std::atomic<int64_t> size_ = 0;
 
   TrackingSet() = default;
 
-  TrackingSet(const TrackingSet& src) {
-    set_ = src.set_;
+  void UpdateHash(const int64_t item) {
+    const uint128 t = item * kHashBase;
+    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[0].fetch_xor(t & (-1LL));
+    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[1].fetch_xor(t >> 64);
+  }
+
+  void CopyFrom(const TrackingSet& src) {
     hash_ = src.hash_;
+    size_ = src.size_.load();
+    #pragma omp parallel for
+    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+      buckets_[i].set_ = src.buckets_[i].set_;
+    }
+  }
+
+  TrackingSet(const TrackingSet& src) {
+    CopyFrom(src);
   }
 
   TrackingSet& operator=(const TrackingSet& src) {
     if(this != &src) {
-      set_ = src.set_;
-      hash_ = src.hash_;
+      CopyFrom(src);
     }
     return *this;
   }
 
+  Bucket& GetBucket(const int64_t item) {
+    return buckets_[(item*kHashBase) % (kSyncContention * nCpus_)];
+  }
+
+  const Bucket& GetBucket(const int64_t item) const {
+    return buckets_[(item*kHashBase) % (kSyncContention * nCpus_)];
+  }
+
   void Add(const int64_t item) {
-    auto it = set_.find(item);
-    if(it == set_.end()) {
-      set_.emplace(item);
-      hash_ ^= item * kHashBase;
+    Bucket& b = GetBucket(item);
+    bool bAdded = false;
+    {
+      std::unique_lock<std::mutex> lock(b.sync_);
+      auto it = b.set_.find(item);
+      if(it == b.set_.end()) {
+        b.set_.emplace(item);
+      }
+    }
+    if(bAdded) {
+      UpdateHash(item);
     }
   }
 
   void Remove(const int64_t item) {
-    auto it = set_.find(item);
-    if(it != set_.end()) {
-      set_.erase(it);
-      hash_ ^= item * kHashBase;
+    Bucket& b = GetBucket(item);
+    bool bRemoved = false;
+    {
+      std::unique_lock<std::mutex> lock(b.sync_);
+      auto it = b.set_.find(item);
+      if(it != b.set_.end()) {
+        b.set_.erase(it);
+        bRemoved = true;
+      }
+    }
+    if(bRemoved) {
+      UpdateHash(item);
     }
   }
 
   void Flip(const int64_t item) {
-    auto it = set_.find(item);
-    if(it == set_.end()) {
-      set_.emplace(item);
-      hash_ ^= item * kHashBase;
-    } else {
-      set_.erase(it);
-      hash_ ^= item * kHashBase;
+    Bucket& b = GetBucket(item);
+    {
+      auto it = b.set_.find(item);
+      if(it == b.set_.end()) {
+        b.set_.emplace(item);
+      } else {
+        b.set_.erase(it);
+      }
     }
+    UpdateHash(item);
+  }
+
+  // Not thread-safe: no sense in making it thread-safe because it's volatile
+  bool Contains(const int64_t item) const {
+    const Bucket& b = GetBucket(item);
+    return b.set_.find(item) != b.set_.end();
   }
 
   void Clear() {
-    set_.clear();
+    #pragma omp parallel for
+    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+      buckets_[i].set_.clear();
+    }
     hash_ = 0;
   }
 
   bool operator==(const TrackingSet& fellow) const {
-    return hash_ == fellow.hash_ && set_ == fellow.set_;
+    if(hash_ != fellow.hash_) {
+      return false;
+    }
+    #pragma omp parallel for
+    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+      if(buckets_[i].set_ != fellow.buckets_[i].set_) {
+        return false;
+      }
+    }
+    return true;
   }
-
   bool operator!=(const TrackingSet& fellow) const {
-    return hash_ != fellow.hash_ || set_ != fellow.set_;
+    if(hash_ != fellow.hash_) {
+      return true;
+    }
+    #pragma omp parallel for
+    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+      if(buckets_[i].set_ != fellow.buckets_[i].set_) {
+        return true;
+      }
+    }
+    return false;
   }
 
   TrackingSet operator-(const TrackingSet& fellow) const {
     TrackingSet ans;
-    for(const int64_t iClause : set_) {
-      if(fellow.set_.find(iClause) == fellow.set_.end()) {
-        ans.Add(iClause);
+    #pragma omp parallel for
+    for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+      for(const int64_t item : buckets_[i].set_) {
+        if(!fellow.Contains(item)) {
+          ans.Add(item);
+        }
       }
     }
     return ans;
   }
 
   TrackingSet operator+(const TrackingSet& fellow) const {
-    if(set_.size() < fellow.set_.size()) {
+    if(size_.load() <= fellow.size_.load()) {
       TrackingSet ans = fellow;
-      for(const int64_t iClause : set_) {
-        ans.Add(iClause);
+      #pragma omp parallel for
+      for(int64_t i=0; i<kSyncContention * nCpus_; i++) {
+        for(const int64_t item : buckets_[i].set_) {
+          ans.Add(item);
+        }
       }
       return ans;
     }
     else {
-      TrackingSet ans = *this;
-      for(const int64_t iClause : fellow.set_) {
-        ans.Add(iClause);
-      }
-      return ans;
+      return fellow + *this;
     }
+  }
+
+  std::vector<int64_t> ToVector() const {
+    std::vector<int64_t> ans(size_.load());
+
   }
 };
 

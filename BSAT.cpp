@@ -61,7 +61,7 @@ uint64_t AccComb(const int64_t n, const int64_t k) {
   return mac;
 }
 
-const uint32_t Formula::nCpus_ = std::thread::hardware_concurrency();
+const uint32_t TrackingSet::nCpus_ = std::thread::hardware_concurrency();
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
 
 int main(int argc, char* argv[]) {
@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
   }
 
   // TODO: does it override the environment variable?
-  omp_set_num_threads(Formula::nCpus_);
+  omp_set_num_threads(TrackingSet::nCpus_);
   // Enable nested parallelism
   omp_set_max_active_levels(omp_get_supported_active_levels());
 

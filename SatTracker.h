@@ -22,11 +22,11 @@ template<typename TCounter> struct SatTracker {
   : pFormula_(&formula)
   {
     nSat_.reset(new TCounter[pFormula_->nClauses_+1]);
-    syncs_.reset(new std::atomic_flag[kSyncContention * Formula::nCpus_]);
+    syncs_.reset(new std::atomic_flag[kSyncContention * TrackingSet::nCpus_]);
   }
 
   SatTracker(const SatTracker& src) {
-    syncs_.reset(new std::atomic_flag[kSyncContention * Formula::nCpus_]);
+    syncs_.reset(new std::atomic_flag[kSyncContention * TrackingSet::nCpus_]);
     CopyFrom(src);
   }
 
@@ -83,12 +83,12 @@ template<typename TCounter> struct SatTracker {
   }
 
   void Lock(const int64_t iClause) {
-    while(syncs_[iClause % (kSyncContention * Formula::nCpus_)].test_and_set(std::memory_order_acq_rel)) {
+    while(syncs_[iClause % (kSyncContention * TrackingSet::nCpus_)].test_and_set(std::memory_order_acq_rel)) {
       std::this_thread::yield();
     }
   }
   void Unlock(const int64_t iClause) {
-    syncs_[iClause % (kSyncContention * Formula::nCpus_)].clear(std::memory_order_release);
+    syncs_[iClause % (kSyncContention * TrackingSet::nCpus_)].clear(std::memory_order_release);
   }
 
   // The sign of iVar must reflect the new value of the variable.
