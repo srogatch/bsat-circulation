@@ -21,13 +21,14 @@
 #include <cassert>
 #include <stack>
 #include <random>
+#include <algorithm>
 
 template <typename T> constexpr int Signum(const T val) {
   return (T(0) < val) - (val < T(0));
 }
 
 struct Formula {
-  static const uint32_t nCpus_;
+  // TODO: replace with vectors and allow parallel build
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> clause2var_;
   std::unordered_map<uint64_t, std::unordered_set<int64_t>> var2clause_;
   std::unordered_map<uint64_t, std::vector<int64_t>> listVar2Clause_;
@@ -36,6 +37,8 @@ struct Formula {
   BitVector dummySat_;
 
   void Add(const uint64_t iClause, const int64_t iVar) {
+    assert(1 <= int64_t(iClause) && int64_t(iClause) <= nClauses_);
+    assert(1 <= llabs(iVar) && llabs(iVar) <= nVars_);
     clause2var_[iClause].emplace(iVar);
     var2clause_[llabs(iVar)].emplace(int64_t(iClause) * Signum(iVar));
   }
@@ -51,10 +54,10 @@ struct Formula {
     ifs.rdbuf()->pubsetbuf(buffer.get(), cBufSize);
 
     BlockingQueue<std::string> bqParsing;
-    BlockingQueue<std::pair<int64_t, int64_t>> bqAdding;
+    const int halfCpus = std::max<int>(1, std::thread::hardware_concurrency() / 2 - 1);
+    std::vector<BlockingQueue<std::pair<int64_t, int64_t>>> bqsAdding(halfCpus);
 
     std::thread parsingThr([&] {
-      const int remainingCpus = std::max<int>(1, std::thread::hardware_concurrency() / 2);
       bool probDefRead = false;
       int64_t iClause = 0;
       std::string line;
@@ -104,18 +107,18 @@ struct Formula {
           std::cerr << "Variable value out of range: " << iVar << std::endl;
           throw std::runtime_error("Incorrect input");
         }
-        bqAdding.Push(std::make_pair(iClause, iVar));
+        bqsAdding[llabs(iVar) % halfCpus].Push(std::make_pair(iClause, iVar));
       } while(iss >> cmd);
 
       for(;;) {
         std::vector<std::string> lines;
-        while(lines.size() < remainingCpus) {
+        while(int64_t(lines.size()) < halfCpus) {
           if(!bqParsing.Pop(line)) {
             break;
           }
           bool isComment = false;
           int64_t j=0;
-          for(; j<line.size(); j++) {
+          for(; j<int64_t(line.size()); j++) {
             if(line[j] == 'c') {
               isComment = true;
               break;
@@ -124,13 +127,13 @@ struct Formula {
               break;
             }
           }
-          if(isComment || j >= line.size()) {
+          if( isComment || j >= int64_t(line.size()) ) {
             continue;
           }
           lines.emplace_back(std::move(line));
         }
-        #pragma omp parallel for num_threads(remainingCpus)
-        for(int64_t i=0; i<lines.size(); i++) {
+        #pragma omp parallel for num_threads(halfCpus)
+        for(int64_t i=0; i<int64_t(lines.size()); i++) {
           const int64_t locClause = iClause + 1 + i;
           if(locClause > nClauses_) {
             std::cerr << "Too many clauses: check the input DIMACS." << std::endl;
@@ -147,11 +150,11 @@ struct Formula {
               std::cerr << "Variable value out of range: " << iVar << std::endl;
               throw std::runtime_error("Incorrect input");
             }
-            bqAdding.Push(std::make_pair(locClause, iVar));
+            bqsAdding[omp_get_thread_num()].Push(std::make_pair(locClause, iVar));
           }
         }
         iClause += lines.size();
-        if(lines.size() < remainingCpus) {
+        if(int64_t(lines.size()) < halfCpus) {
           break;
         }
         if(iClause > nClauses_) {
@@ -159,14 +162,32 @@ struct Formula {
         }
       }
 release:
-      bqAdding.RequestShutdown();
+      #pragma omp parallel for num_threads(halfCpus)
+      for(int i=0; i<halfCpus; i++) {
+        bqsAdding[i].RequestShutdown();
+      }
       std::cout << "Finished parsing the input file lines." << std::endl;
     });
 
     std::thread addingThr([&] {
-      std::pair<int64_t, int64_t> entry;
-      while(bqAdding.Pop(entry)) {
-        Add(entry.first, entry.second);
+      std::mutex muC2V, muV2C;
+      #pragma omp parallel num_threads(halfCpus)
+      {
+        std::pair<int64_t, int64_t> entry;
+        while(bqsAdding[omp_get_thread_num()].Pop(entry)) {
+          const int64_t iClause = entry.first;
+          const int64_t iVar = entry.second;
+          assert(1 <= llabs(iClause) && llabs(iClause) <= nClauses_);
+          assert(1 <= llabs(iVar) && llabs(iVar) <= nVars_);
+          {
+            std::unique_lock<std::mutex> lock(muC2V);
+            clause2var_[iClause].emplace(iVar);
+          }
+          {
+            std::unique_lock<std::mutex> lock(muV2C);
+            var2clause_[llabs(iVar)].emplace(int64_t(iClause) * Signum(iVar));
+          }
+        }
       }
       std::cout << "Finished linking clauses and variables." << std::endl;
     });
@@ -187,10 +208,10 @@ release:
         dummySat_.Flip(i);
         continue;
       }
-      for(int64_t iVar : clause2var_[i]) {
-        if(clause2var_[i].find(-iVar) != clause2var_[i].end()) {
+      auto& varSet = it->second;
+      for(int64_t iVar : varSet) {
+        if(varSet.find(-iVar) != varSet.end()) {
           dummySat_.Flip(i);
-          clause2var_.erase(i);
           var2clause_[llabs(iVar)].erase(i);
           var2clause_[llabs(iVar)].erase(-i);
           break;
@@ -204,9 +225,7 @@ release:
     }
     #pragma omp parallel for
     for(int64_t i=1; i<=nVars_; i++) {
-      unsigned long long seed;
-      while(!_rdrand64_step(&seed));
-      std::mt19937_64 rng(seed);
+      std::mt19937_64 rng = GetSeededRandom();
       std::vector<int64_t>& list = listVar2Clause_.find(i)->second;
       list.assign(var2clause_[i].begin(), var2clause_[i].end());
       std::shuffle(list.begin(), list.end(), rng);
@@ -215,6 +234,9 @@ release:
 
   bool SolWorks() {
     for(const auto& dj : clause2var_) {
+      if(dummySat_[dj.first]) {
+        continue; // satisfied because the clause contains a variable and its negation
+      }
       bool satisfied = false;
       for(const int64_t iVar : dj.second) {
         if( (iVar > 0 && ans_[iVar]) || (iVar < 0 && !ans_[-iVar]) ) {
@@ -254,8 +276,8 @@ release:
     return false;
   }
 
-  TrackingSet ComputeUnsatClauses() const {
-    TrackingSet ans;
+  VCTrackingSet ComputeUnsatClauses() const {
+    VCTrackingSet ans;
     #pragma omp parallel for
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, ans_)) {
@@ -267,7 +289,7 @@ release:
   }
 
   BitVector SetGreedy1() const {
-    BitVector ans(nVars_); // Init to false
+    BitVector ans(nVars_+1); // Init to false
     std::vector<std::pair<int64_t, int64_t>> counts_;
     #pragma omp parallel for
     for(int64_t i=1; i<=nVars_; i++) {
@@ -284,7 +306,6 @@ release:
         }
       }
       if(nPos > nNeg) {
-        #pragma omp critical
         ans.Flip(i);
       }
     }
@@ -292,8 +313,8 @@ release:
   }
 
   BitVector SetGreedy2() const {
-    BitVector ans(nVars_); // Init to false
-    BitVector knownClauses(nClauses_); // Init to false
+    BitVector ans(nVars_+1); // Init to false
+    BitVector knownClauses(nClauses_+1); // Init to false
     #pragma omp parallel for
     for(int64_t i=1; i<=nVars_; i++) {
       auto it = var2clause_.find(i);
@@ -301,16 +322,11 @@ release:
         continue;
       }
       for(const int64_t iClause : it->second) {
-        bool bBreak = false;
-        #pragma omp critical
         if(!knownClauses[llabs(iClause)]) {
           knownClauses.Flip(llabs(iClause));
           if(iClause > 0) {
             ans.Flip(i);
           }
-          bBreak = true;
-        }
-        if(bBreak) {
           break;
         }
       }
@@ -320,9 +336,9 @@ release:
 
   // Disable it as it gives inferior results, but is also single-threaded / slow
   BitVector SetDfs() const {
-    BitVector ans(nVars_); // Init to false
-    BitVector visitedVars(nVars_); // Init to false
-    BitVector knownClauses(nClauses_); // Init to false
+    BitVector ans(nVars_+1); // Init to false
+    BitVector visitedVars(nVars_+1); // Init to false
+    BitVector knownClauses(nClauses_+1); // Init to false
     std::vector<int64_t> trail;
     std::mt19937 rng;
 
@@ -403,5 +419,50 @@ release:
         return llabs(a) < llabs(b);
       });
     }
+  }
+
+  // For a set of clauses, return the set of variables that dissatisfy the clauses
+  std::vector<int64_t> ClauseFrontToVars(const VCTrackingSet& clauseFront, const BitVector& assignment) {
+    VCTrackingSet varFront;
+    std::vector<int64_t> vClauseFront = clauseFront.ToVector();
+    #pragma omp parallel for
+    for(int64_t i=0; i<int64_t(vClauseFront.size()); i++) {
+      const int64_t originClause = vClauseFront[i];
+      assert(1 <= originClause && originClause <= nClauses_);
+      for(const int64_t iVar : clause2var_.find(originClause)->second) {
+        assert(1 <= llabs(iVar) && llabs(iVar) <= nVars_);
+        if( (iVar < 0 && assignment[-iVar]) || (iVar > 0 && !assignment[iVar]) ) {
+          // A dissatisfying arc
+          const int64_t revV = llabs(iVar);
+          varFront.Add(revV);
+        }
+      }
+    }
+    std::vector<int64_t> vVarFront = varFront.ToVector();
+    // We don't serve shuffling here!
+    return vVarFront;
+  }
+
+  // For a set of variables, return the set of clauses that are dissatisfied by the variables
+  std::vector<int64_t> VarFrontToClauses(const VCTrackingSet& varFront, const BitVector& assignment) {
+    VCTrackingSet clauseFront;
+    std::vector<int64_t> vVarFront = varFront.ToVector();
+    #pragma omp parallel for
+    for(int64_t i=0; i<int64_t(vVarFront.size()); i++) {
+      const int64_t originVar = vVarFront[i];
+      assert(1 <= originVar && originVar <= nVars_);
+      const int64_t iVar = assignment[originVar] ? originVar : -originVar;
+      for(const int64_t iClause : listVar2Clause_[originVar]) {
+        assert(1 <= iClause && iClause <= nClauses_);
+        if(iVar * iClause < 0) {
+          // A dissatisfying arc
+          const int64_t dissatClause = llabs(iClause);
+          clauseFront.Add(dissatClause);
+        }
+      }
+    }
+    std::vector<int64_t> vClauseFront = clauseFront.ToVector();
+    // We don't serve shuffling here!
+    return vVarFront;
   }
 };

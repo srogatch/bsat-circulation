@@ -67,6 +67,8 @@
     "stop_token": "cpp",
     "thread": "cpp",
     "shared_mutex": "cpp",
-    "cfenv": "cpp"
+    "cfenv": "cpp",
+    "set": "cpp",
+    "bitset": "cpp"
   }
 }

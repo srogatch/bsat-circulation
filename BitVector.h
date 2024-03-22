@@ -7,18 +7,10 @@
 #include <cstring>
 #include <atomic>
 #include <immintrin.h>
-
-typedef unsigned __int128 uint128;
-
-template<typename T, typename U> constexpr T DivUp(const T a, const U b) {
-  return (a + T(b) - 1) / T(b);
-}
+#include <atomic>
 
 struct BitVector {
   static constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(uint64_t); // one cache line at a time
-  static constexpr const uint128 cHashBase =
-    (uint128(244)  * uint128(1000*1000*1000) * uint128(1000*1000*1000) + uint128(903443422803031898ULL)) * uint128(1000*1000*1000) * uint128(1000*1000*1000)
-    + uint128(471395581046679967ULL);
   static std::unique_ptr<uint128[]> hashSeries_;
   std::unique_ptr<uint64_t[]> bits_;
   int64_t nQwords_ = 0;
@@ -29,7 +21,7 @@ struct BitVector {
     hashSeries_.reset(new uint128[nVars+1]);
     hashSeries_[0] = 1;
     for(int64_t i=1; i<=nVars; i++) {
-      hashSeries_[i] = hashSeries_[i-1] * cHashBase;
+      hashSeries_[i] = hashSeries_[i-1] * kHashBase;
     }
   }
 
@@ -64,7 +56,7 @@ struct BitVector {
     // memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
     #pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=0; i<nQwords_; i++) {
-      bits_.get()[i] = fellow.bits_.get()[i];
+      bits_[i] = fellow.bits_[i];
     }
     hash_ = fellow.hash_;
   }
@@ -98,7 +90,7 @@ struct BitVector {
   }
 
   bool operator[](const int64_t index) const {
-    return bits_[index/64] & (1ULL<<(index&63));
+    return (bits_[index/64] & (1ULL<<(index&63))) != 0;
   }
 
   bool operator==(const BitVector& fellow) const {
@@ -121,8 +113,13 @@ struct BitVector {
   }
 
   void Flip(const int64_t index) {
-    bits_[index/64] ^= (1ULL<<(index&63));
-    hash_ ^= hashSeries_.get()[index];
+    reinterpret_cast<std::atomic<uint64_t>*>(&bits_[index/64])->fetch_xor( 1ULL<<(index&63) );
+    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[0].fetch_xor(reinterpret_cast<std::atomic<uint64_t>*>(&hashSeries_.get()[index])[0]);
+    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[1].fetch_xor(reinterpret_cast<std::atomic<uint64_t>*>(&hashSeries_.get()[index])[1]);
+  }
+
+  void NohashSet(const int64_t index) {
+    reinterpret_cast<std::atomic<uint64_t>*>(&bits_[index/64])->fetch_or(1ULL<<(index&63));
   }
 
   void Randomize() {
@@ -147,17 +144,6 @@ struct BitVector {
     Rehash();
   }
 };
-
-inline uint64_t hash64(uint64_t key) {
-  key = (~key) + (key << 21); // key = (key << 21) - key - 1;
-  key = key ^ (key >> 24);
-  key = (key + (key << 3)) + (key << 8); // key * 265
-  key = key ^ (key >> 14);
-  key = (key + (key << 2)) + (key << 4); // key * 21
-  key = key ^ (key >> 28);
-  key = key + (key << 31);
-  return key;
-}
 
 namespace std {
 
