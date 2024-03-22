@@ -118,7 +118,7 @@ int main(int argc, char* argv[]) {
     // for init it's usually better if we don't move an extra time
     bool moved = false;
     altNUnsat = satTr.GradientDescend(
-      false, trav, nullptr, initUnsatClauses, startFront, initFront, initUnsatClauses.Size(), moved, formula.ans_);
+      false, trav, &initUnsatClauses, initUnsatClauses, startFront, initFront, initUnsatClauses.Size(), moved, formula.ans_);
     std::cout << "GradientDescent: " << altNUnsat << ", ";
     std::cout.flush();
     if(altNUnsat < bestInit) {
@@ -299,6 +299,12 @@ int main(int argc, char* argv[]) {
       std::cout << "S";
       bool moved;
       for(;;) {
+        // std::cout << newUnsat << "/";
+        // std::cout.flush();
+        // TODO: this is just to see the progress of the largest 2023 formula
+        if(newUnsat < nStartUnsat) {
+          break;
+        }
         assert(newUnsat == satTr.UnsatCount());
         oldUnsat = newUnsat;
         VCTrackingSet oldFront;
