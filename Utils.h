@@ -62,7 +62,7 @@ struct SpinLock {
 
   SpinLock(std::atomic_flag& sync) : pSync_(&sync) {
     while(pSync_->test_and_set(std::memory_order_acq_rel)) {
-      while (pSync_->test(std::memory_order_relaxed)); // keep it hot in cache
+      _mm_pause();
     }
   }
 
@@ -82,8 +82,13 @@ inline std::mt19937_64 GetSeededRandom() {
 
 template <typename T>
 void ParallelShuffle(T* data, const size_t count) {
-  const uint32_t nThreads = std::max<int64_t>(1, std::min<int64_t>(omp_get_max_threads(), count/3));
+  if(count <= 64) { // Don't parallelize
+    std::mt19937_64 rng = GetSeededRandom();
+    std::shuffle(data, data+count, rng);
+    return;
+  }
 
+  const uint32_t nThreads = std::max<int64_t>(1, std::min<int64_t>(omp_get_max_threads(), count/3));
   std::atomic_flag* syncs = static_cast<std::atomic_flag*>(malloc(count * sizeof(std::atomic_flag)));
   auto clean_syncs = Finally([&]() { free(syncs); });
   #pragma omp parallel for schedule(static, kCacheLineSize / sizeof(std::atomic_flag))
@@ -109,12 +114,9 @@ void ParallelShuffle(T* data, const size_t count) {
       }
       const size_t sync1 = std::min(j, fellow);
       const size_t sync2 = j ^ fellow ^ sync1;
-      while (syncs[sync1].test_and_set(std::memory_order_acq_rel)) {
-        while (syncs[sync1].test(std::memory_order_relaxed)); // keep it hot in cache
-      }
-      while (syncs[sync2].test_and_set(std::memory_order_acq_rel)) {
-        while (syncs[sync2].test(std::memory_order_relaxed)); // keep it hot in cache
-      }
+
+      SpinLock lock1(syncs[sync1]);
+      SpinLock lock2(syncs[sync2]);
       std::swap(data[sync1], data[sync2]);
       syncs[sync2].clear(std::memory_order_release);
       syncs[sync1].clear(std::memory_order_release);
