@@ -361,7 +361,7 @@ template<typename TCounter> struct SatTracker {
   int64_t NextUnsatCap(const VCTrackingSet& unsatClauses, [[maybe_unused]] const int64_t nStartUnsat) const {
     return std::max<int64_t>(
       unsatClauses.Size() * 2,
-      DivUp(pFormula_->nVars_, unsatClauses.Size())
+      DivUp(pFormula_->nVars_, nStartUnsat)
     );
   }
 };

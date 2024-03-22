@@ -80,7 +80,8 @@ void signalHandler(int signum) {
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
 
 int main(int argc, char* argv[]) {
-  auto tmStart = std::chrono::high_resolution_clock::now();
+  auto tmStart = std::chrono::steady_clock::now();
+  const auto tmVeryStart = tmStart;
 
   if(argc < 3) {
     std::cerr << "Usage: " << argv[0] << " <input.dimacs> <output.dimacs>" << std::endl;
@@ -180,7 +181,7 @@ int main(int argc, char* argv[]) {
       std::cout << "Satisfied" << std::endl;
       break;
     }
-    auto tmEnd = std::chrono::high_resolution_clock::now();
+    auto tmEnd = std::chrono::steady_clock::now();
     double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmStart).count() / 1e9;
     double clausesPerSec = (prevNUnsat - nStartUnsat) / nSec;
     std::cout << "\tUnsatisfied clauses: " << nStartUnsat << " - elapsed " << nSec << " seconds, ";
@@ -189,7 +190,9 @@ int main(int argc, char* argv[]) {
     } else {
       std::cout << 1.0 / clausesPerSec << " seconds per clause.";
     }
-    std::cout << std::endl;
+    std::cout << " Time since very start: "
+      << std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmVeryStart).count() / (60 * 1e9)
+      << " minutes." << std::endl;
     tmStart = tmEnd;
     prevNUnsat = nStartUnsat;
     
@@ -295,10 +298,7 @@ int main(int argc, char* argv[]) {
       int64_t oldUnsat, newUnsat = unsatClauses.Size();
       std::cout << "S";
       bool moved;
-      do {
-        if(newUnsat < nStartUnsat) {
-          break;
-        }
+      for(;;) {
         assert(newUnsat == satTr.UnsatCount());
         oldUnsat = newUnsat;
         VCTrackingSet oldFront;
@@ -309,12 +309,20 @@ int main(int argc, char* argv[]) {
           oldFront = front;
         }
         front.Clear();
+        BitVector oldAssignment = formula.ans_;
         moved = false;
         newUnsat = satTr.GradientDescend( true, trav, &oldFront, unsatClauses, oldFront, front,
           satTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, formula.ans_ );
         nSequentialGD++;
-        assert(!moved || newUnsat == unsatClauses.Size());
-      } while(moved && newUnsat <= oldUnsat);
+        if(!moved) {
+          break;
+        }
+        if(newUnsat > oldUnsat) {
+          unsatClauses = satTr.Populate(oldAssignment);
+          front = oldFront;
+          break;
+        }
+      }
       // TODO: this is too heavy
       // assert(satTr.Verify(formula.ans_));
     }
