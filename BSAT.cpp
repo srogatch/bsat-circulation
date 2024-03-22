@@ -172,6 +172,8 @@ int main(int argc, char* argv[]) {
   std::mt19937_64 rng;
   int64_t nStartUnsat;
   int64_t nParallelGD = 0, nSequentialGD = 0;
+
+  VCTrackingSet front = initFront;
   while(maybeSat) {
     //TODO: this is a heavy assert
     assert(unsatClauses == satTr.GetUnsat());
@@ -195,11 +197,6 @@ int main(int argc, char* argv[]) {
       << " minutes." << std::endl;
     tmStart = tmEnd;
     prevNUnsat = nStartUnsat;
-    
-    VCTrackingSet front;
-    if(nStartUnsat == bestInit) {
-      front = initFront;
-    }
     bool allowDuplicateFront = false;
     while(unsatClauses.Size() >= nStartUnsat) {
       // TODO: this is heavy
@@ -295,18 +292,18 @@ int main(int argc, char* argv[]) {
         break;
       }
 
-      int64_t oldUnsat, newUnsat = unsatClauses.Size();
+      int64_t newUnsat = unsatClauses.Size();
       std::cout << "S";
       bool moved;
       for(;;) {
-        // std::cout << newUnsat << "/";
-        // std::cout.flush();
         // TODO: this is just to see the progress of the largest 2023 formula
         if(newUnsat < nStartUnsat) {
+          std::cout << "(" << newUnsat << ","
+            << std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmVeryStart).count() / (60 * 1e9)
+            << ")";
+          std::cout.flush();
           break;
         }
-        assert(newUnsat == satTr.UnsatCount());
-        oldUnsat = newUnsat;
         VCTrackingSet oldFront;
         if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
           oldFront = unsatClauses;
@@ -315,17 +312,11 @@ int main(int argc, char* argv[]) {
           oldFront = front;
         }
         front.Clear();
-        BitVector oldAssignment = formula.ans_;
         moved = false;
         newUnsat = satTr.GradientDescend( true, trav, &oldFront, unsatClauses, oldFront, front,
           satTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, formula.ans_ );
         nSequentialGD++;
         if(!moved) {
-          break;
-        }
-        if(newUnsat > oldUnsat) {
-          unsatClauses = satTr.Populate(oldAssignment);
-          front = oldFront;
           break;
         }
       }

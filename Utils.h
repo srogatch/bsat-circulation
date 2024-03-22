@@ -12,6 +12,7 @@ constexpr const uint32_t kRamPageBytes = 4096;
 static const uint32_t nSysCpus = std::thread::hardware_concurrency();
 
 typedef unsigned __int128 uint128;
+typedef int64_t VCIndex; // vertex or clause index
 
 constexpr const uint128 kHashBase =
     (uint128(244)  * uint128(1000*1000*1000) * uint128(1000*1000*1000) + uint128(903443422803031898ULL)) * uint128(1000*1000*1000) * uint128(1000*1000*1000)
