@@ -33,7 +33,7 @@ struct Traversal {
   TrackingSet<uint128> seenAssignment_;
   TrackingSet<std::pair<uint128, uint128>, std::hash<std::pair<uint128, uint128>>> seenMove_;
   std::deque<Point> dfs_;
-  mutable std::mutex muDfs_;
+  mutable std::atomic_flag syncDfs_ = ATOMIC_FLAG_INIT;
 
   void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat)
   {
@@ -42,16 +42,19 @@ struct Traversal {
       return; // added earlier, perhaps concurrently by another thread - don't put it to DFS here thus
     }
     { // DFS
-      std::unique_lock<std::mutex> lock(muDfs_);
+      SpinLock lock(syncDfs_);
       if(!dfs_.empty() && nUnsat > dfs_.back().nUnsat_) {
         return;
       }
     }
     {
       Point p(assignment, nUnsat);
-      std::unique_lock<std::mutex> lock(muDfs_);
+      BitVector toRelease; // release outside of the lock
+      SpinLock lock(syncDfs_);
       if(dfs_.empty() || nUnsat <= dfs_.back().nUnsat_) {
         if(dfs_.size() * assignment.nQwords_ * sizeof(uint64_t) >= cMaxDfsRamBytes) {
+          // don't release here - we are holding the lock
+          toRelease = std::move(dfs_.front().assignment_);
           dfs_.pop_front();
         }
         dfs_.push_back(std::move(p));
@@ -79,7 +82,7 @@ struct Traversal {
   }
 
   bool StepBack(BitVector& backup) {
-    std::unique_lock<std::mutex> lock(muDfs_);
+    SpinLock lock(syncDfs_);
     if(dfs_.empty()) {
       return false;
     }

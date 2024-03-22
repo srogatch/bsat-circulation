@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Linkage.h"
 #include "BitVector.h"
 #include "TrackingSet.h"
 #include "BlockingQueue.h"

@@ -20,12 +20,12 @@ struct Arc {
   { }
 };
 
-using Linkage = std::unordered_map<int64_t, std::unordered_map<int64_t, std::shared_ptr<Arc>>>;
-
 struct Graph {
   static constexpr const int64_t INVALID_VERTEX = 0;
-  Linkage links_;
-  Linkage backlinks_;
+
+  using GLinkage = std::unordered_map<int64_t, std::unordered_map<int64_t, std::shared_ptr<Arc>>>;
+  GLinkage links_;
+  GLinkage backlinks_;
 
   std::shared_ptr<Arc> AddMerge(const Arc& arc) {
     auto it = links_.find(arc.from_);

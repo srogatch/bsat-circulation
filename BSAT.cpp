@@ -298,10 +298,10 @@ int main(int argc, char* argv[]) {
       for(;;) {
         // TODO: this is just to see the progress of the largest 2023 formula
         if(newUnsat < nStartUnsat) {
-          std::cout << "(" << newUnsat << ","
-            << std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmVeryStart).count() / (60 * 1e9)
-            << ")";
-          std::cout.flush();
+          // std::cout << "(" << newUnsat << ","
+          //   << std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmVeryStart).count() / (60 * 1e9)
+          //   << ")";
+          // std::cout.flush();
           break;
         }
         VCTrackingSet oldFront;

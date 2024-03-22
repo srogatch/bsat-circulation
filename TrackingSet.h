@@ -4,11 +4,10 @@
 
 #include <unordered_set>
 #include <cstdint>
-#include <mutex>
 #include <cassert>
 
 template<typename TItem> struct Bucket {
-  mutable std::mutex sync_;
+  mutable std::atomic_flag sync_ = ATOMIC_FLAG_INIT;
   std::unordered_set<TItem> set_;
   int64_t prefixSum_;
 };
@@ -66,7 +65,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     Bucket<TItem>& b = GetBucket(item);
     bool bAdded = false;
     {
-      std::unique_lock<std::mutex> lock(b.sync_);
+      SpinLock lock(b.sync_);
       auto it = b.set_.find(item);
       if(it == b.set_.end()) {
         b.set_.emplace(item);
@@ -85,7 +84,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     Bucket<TItem>& b = GetBucket(item);
     bool bRemoved = false;
     {
-      std::unique_lock<std::mutex> lock(b.sync_);
+      SpinLock lock(b.sync_);
       auto it = b.set_.find(item);
       if(it != b.set_.end()) {
         b.set_.erase(it);
@@ -103,7 +102,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     Bucket<TItem>& b = GetBucket(item);
     int sizeMod = 0;
     {
-      std::unique_lock<std::mutex> lock(b.sync_);
+      SpinLock lock(b.sync_);
       auto it = b.set_.find(item);
       if(it == b.set_.end()) {
         b.set_.emplace(item);
@@ -120,7 +119,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
 
   bool Contains(const TItem& item) const {
     const Bucket<TItem>& b = GetBucket(item);
-    std::unique_lock<std::mutex> lock(b.sync_);
+    SpinLock lock(b.sync_);
     return b.set_.find(item) != b.set_.end();
   }
 

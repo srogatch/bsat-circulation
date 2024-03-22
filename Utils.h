@@ -55,6 +55,24 @@ detail::FinalAction<F> Finally(F&& f) {
   return detail::FinalAction<F>(std::move(f));
 }
 
+struct SpinLock {
+  std::atomic_flag *pSync_ = nullptr;
+
+  SpinLock() = default;
+
+  SpinLock(std::atomic_flag& sync) : pSync_(&sync) {
+    while(pSync_->test_and_set(std::memory_order_acq_rel)) {
+      while (pSync_->test(std::memory_order_relaxed)); // keep it hot in cache
+    }
+  }
+
+  ~SpinLock() {
+    if(pSync_ != nullptr) {
+      pSync_->clear(std::memory_order_release);
+    }
+  }
+};
+
 inline std::mt19937_64 GetSeededRandom() {
   unsigned long long seed;
   while(!_rdrand64_step(&seed));
