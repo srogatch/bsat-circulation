@@ -224,7 +224,7 @@ release:
       listVar2Clause_[i] = {};
       var2clause_[i];
     }
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=1; i<=nVars_; i++) {
       std::mt19937_64 rng = GetSeededRandom();
       std::vector<int64_t>& list = listVar2Clause_.find(i)->second;
@@ -254,7 +254,7 @@ release:
 
   int64_t CountUnsat(const BitVector& assignment) const {
     std::atomic<int64_t> nUnsat = 0;
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, assignment)) {
         nUnsat.fetch_add(1, std::memory_order_relaxed);
@@ -279,7 +279,7 @@ release:
 
   VCTrackingSet ComputeUnsatClauses() const {
     VCTrackingSet ans;
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, ans_)) {
         ans.Add(i);
@@ -291,7 +291,7 @@ release:
   BitVector SetGreedy1() const {
     BitVector ans(nVars_+1); // Init to false
     std::vector<std::pair<int64_t, int64_t>> counts_;
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=1; i<=nVars_; i++) {
       auto it = var2clause_.find(i);
       if(it == var2clause_.end()) {
@@ -315,7 +315,7 @@ release:
   BitVector SetGreedy2() const {
     BitVector ans(nVars_+1); // Init to false
     BitVector knownClauses(nClauses_+1); // Init to false
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=1; i<=nVars_; i++) {
       auto it = var2clause_.find(i);
       if(it == var2clause_.end()) {
@@ -410,9 +410,9 @@ release:
     }
   }
 
-  // To avoid falsse sharing in SatTracker, don't call it - let the indices stay randomized
+  // To avoid false sharing in SatTracker, don't call it - let the indices stay randomized
   void SortClauseLists() {
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=1; i<=nVars_; i++) {
       std::vector<int64_t>& clauses = listVar2Clause_[i];
       std::sort(clauses.begin(), clauses.end(), [](const int64_t a, const int64_t b) {
@@ -425,7 +425,7 @@ release:
   std::vector<MultiItem<VCIndex>> ClauseFrontToVars(const VCTrackingSet& clauseFront, const BitVector& assignment) {
     TrackingSet<MultiItem<VCIndex>> varFront;
     std::vector<int64_t> vClauseFront = clauseFront.ToVector();
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=0; i<int64_t(vClauseFront.size()); i++) {
       const int64_t originClause = vClauseFront[i];
       assert(1 <= originClause && originClause <= nClauses_);
@@ -446,7 +446,7 @@ release:
   std::vector<int64_t> VarFrontToClauses(const VCTrackingSet& varFront, const BitVector& assignment) {
     VCTrackingSet clauseFront;
     std::vector<int64_t> vVarFront = varFront.ToVector();
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=0; i<int64_t(vVarFront.size()); i++) {
       const int64_t originVar = vVarFront[i];
       assert(1 <= originVar && originVar <= nVars_);

@@ -109,7 +109,7 @@ int main(int argc, char* argv[]) {
 
   DefaultSatTracker satTr(formula);
   satTr.Populate(formula.ans_);
-  #pragma omp parallel for
+  #pragma omp parallel for schedule(dynamic, 1)
   for(int init=-1; init<=1; init++) {
     BitVector initAsg(formula.nVars_+1);
     DefaultSatTracker initSatTr(formula);
@@ -125,7 +125,7 @@ int main(int argc, char* argv[]) {
     }
     VCTrackingSet initUnsatClauses = initSatTr.Populate(initAsg);
     VCTrackingSet initFront = initUnsatClauses;
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(dynamic, 1)
     for(int sortType=-2; sortType<=2; sortType++) {
       BitVector locAsg = initAsg;
       DefaultSatTracker locSatTr = initSatTr;
@@ -273,11 +273,11 @@ int main(int argc, char* argv[]) {
 
       front.Clear();
       std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
-      #pragma omp parallel for
+      #pragma omp parallel for schedule(dynamic, 1)
       for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
         const int64_t revV = vBestRevVars[i];
         formula.ans_.Flip(revV);
-        satTr.FlipVar(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
+        satTr.FlipVar<true>(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
       }
       assert(satTr.UnsatCount() == bestUnsat);
       assert(unsatClauses.Size() == bestUnsat);

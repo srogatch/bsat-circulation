@@ -93,7 +93,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   void CopyFrom(const TrackingSet& src) {
     hash_ = src.hash_;
     size_ = src.Size();
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, cSyncContention)
     for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       buckets_[i].set_ = src.buckets_[i].set_;
     }
@@ -208,7 +208,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   }
 
   void Clear() {
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, cSyncContention)
     for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       buckets_[i].set_.clear();
     }
@@ -225,7 +225,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
       return false;
     }
     std::atomic<bool> isEqual = true;
-    #pragma omp parallel for shared(isEqual)
+    #pragma omp parallel for schedule(guided, cSyncContention)
     for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       if(buckets_[i].set_ != fellow.buckets_[i].set_) {
         isEqual = false;
@@ -240,7 +240,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
       return true;
     }
     std::atomic<bool> differ = false;
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, cSyncContention)
     for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       if(buckets_[i].set_ != fellow.buckets_[i].set_) {
         differ = true;
@@ -253,7 +253,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
 
   TrackingSet operator-(const TrackingSet& fellow) const {
     TrackingSet ans;
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, cSyncContention)
     for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       for(const TItem& item : buckets_[i].set_) {
         if(!fellow.Contains(item)) {
@@ -267,7 +267,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   TrackingSet operator+(const TrackingSet& fellow) const {
     if(Size() <= fellow.Size()) {
       TrackingSet ans = fellow;
-      #pragma omp parallel for
+      #pragma omp parallel for schedule(guided, cSyncContention)
       for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
         for(const TItem& item : buckets_[i].set_) {
           ans.Add(item);
@@ -292,7 +292,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     }
     assert( prefSum == Size() );
 
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, cSyncContention)
     for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       int64_t j=buckets_[i].prefixSum_;
       for(const TItem& item : buckets_[i].set_) {

@@ -10,7 +10,8 @@
 #include <atomic>
 
 struct BitVector {
-  static constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(uint64_t); // one cache line at a time
+  // One standard page of RAM at once
+  static constexpr const uint32_t cParChunkSize = kRamPageBytes/sizeof(uint64_t);
   static std::unique_ptr<uint128[]> hashSeries_;
   std::unique_ptr<uint64_t[]> bits_;
   int64_t nQwords_ = 0;
@@ -95,21 +96,6 @@ struct BitVector {
 
   bool operator==(const BitVector& fellow) const {
     return hash_ == fellow.hash_;
-
-    // if(nBits_ != fellow.nBits_) {
-    //   return false;
-    // }
-    // // return memcmp(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_) == 0;
-    // std::atomic<bool> equals{true};
-    // #pragma omp parallel for schedule(static, cParChunkSize)
-    // for(int64_t i=0; i<nQwords_; i++) {
-    //   if(bits_.get()[i] != fellow.bits_.get()[i]) {
-    //     equals.store(false, std::memory_order_relaxed);
-    //     #pragma omp cancel for
-    //   }
-    //   #pragma omp cancellation point for
-    // }
-    // return equals;
   }
 
   void Flip(const int64_t index) {
