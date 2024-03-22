@@ -117,7 +117,7 @@ int main(int argc, char* argv[]) {
     // for init it's usually better if we don't move an extra time
     bool moved = false;
     altNUnsat = satTr.GradientDescend(
-      false, trav, nullptr, initUnsatClauses, startFront, initFront, initUnsatClauses.Size(), moved);
+      false, trav, nullptr, initUnsatClauses, startFront, initFront, initUnsatClauses.Size(), moved, formula.ans_);
     std::cout << "GradientDescent: " << altNUnsat << ", ";
     std::cout.flush();
     if(altNUnsat < bestInit) {
@@ -225,7 +225,8 @@ int main(int argc, char* argv[]) {
         bool moved = false;
         const int64_t curNUnsat = newSatTr.ParallelGD(
           true, nIncl, locVarFront, next, trav, nullptr, front, stepRevs, 
-          std::max<int64_t>( unsatClauses.Size() * 2, DivUp(formula.nVars_, unsatClauses.Size()) ), moved, 0);
+          newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 0
+        );
 
         // TODO: this is too heavy
         // assert( newSatTr.Verify(next) );
@@ -310,8 +311,7 @@ int main(int argc, char* argv[]) {
         front.Clear();
         moved = false;
         newUnsat = satTr.GradientDescend( true, trav, &oldFront, unsatClauses, oldFront, front,
-          std::max<int64_t>( unsatClauses.Size() * 2, DivUp(formula.nVars_, unsatClauses.Size()) ),
-          moved );
+          satTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, formula.ans_ );
         nSequentialGD++;
         assert(!moved || newUnsat == unsatClauses.Size());
       } while(moved && newUnsat <= oldUnsat);

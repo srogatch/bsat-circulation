@@ -234,14 +234,14 @@ template<typename TCounter> struct SatTracker {
 
   int64_t GradientDescend(const bool preferMove, Traversal& trav,
     const VCTrackingSet* considerClauses, VCTrackingSet& unsatClauses, const VCTrackingSet& startFront,
-    VCTrackingSet& front, int64_t minUnsat, bool& moved)
+    VCTrackingSet& front, int64_t minUnsat, bool& moved, BitVector& next)
   {
     std::vector<int64_t> subsetVars, *pvVars = nullptr;
     if(considerClauses == nullptr) {
       pvVars = &vVars_;
     }
     else {
-      subsetVars = pFormula_->ClauseFrontToVars(*considerClauses, pFormula_->ans_);
+      subsetVars = pFormula_->ClauseFrontToVars(*considerClauses, next);
       pvVars = &subsetVars;
     }
     ParallelShuffle(pvVars->data(), pvVars->size());
@@ -251,18 +251,18 @@ template<typename TCounter> struct SatTracker {
     for(int64_t k=0; k<int64_t(pvVars->size()); k++) {
       const int64_t aVar = (*pvVars)[k];
       assert(1 <= aVar && aVar <= pFormula_->nVars_);
-      const int64_t iVar = aVar * (pFormula_->ans_[aVar] ? 1 : -1);
+      const int64_t iVar = aVar * (next[aVar] ? 1 : -1);
       revVars.Flip(aVar);
       if( trav.IsSeenMove(startFront, revVars) ) {
         revVars.Flip(aVar);
         continue;
       }
       // TODO: instead of flipping directly the formula, shall we pass an arbitrary assignment as a parameter?
-      pFormula_->ans_.Flip(aVar);
+      next.Flip(aVar);
       FlipVar(-iVar, &unsatClauses, &front);
 
-      if(!trav.IsSeenAssignment(pFormula_->ans_)) {
-        trav.FoundMove(startFront, revVars, pFormula_->ans_, unsatClauses.Size());
+      if(!trav.IsSeenAssignment(next)) {
+        trav.FoundMove(startFront, revVars, next, unsatClauses.Size());
         int64_t newUnsat = UnsatCount();
         if(newUnsat < minUnsat + (preferMove ? 1 : 0)) {
           moved = true;
@@ -272,7 +272,7 @@ template<typename TCounter> struct SatTracker {
       }
 
       // Flip back
-      pFormula_->ans_.Flip(aVar);
+      next.Flip(aVar);
       FlipVar(iVar, &unsatClauses, &front);
       revVars.Flip(aVar);
     }
@@ -356,6 +356,13 @@ template<typename TCounter> struct SatTracker {
       }
     }
     return minUnsat;
+  }
+
+  int64_t NextUnsatCap(const VCTrackingSet& unsatClauses, [[maybe_unused]] const int64_t nStartUnsat) const {
+    return std::max<int64_t>(
+      unsatClauses.Size() * 2,
+      DivUp(pFormula_->nVars_, unsatClauses.Size())
+    );
   }
 };
 
