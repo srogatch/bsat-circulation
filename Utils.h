@@ -82,7 +82,7 @@ inline std::mt19937_64 GetSeededRandom() {
 
 template <typename T>
 void ParallelShuffle(T* data, const size_t count) {
-  if(count <= 64) { // Don't parallelize
+  if(count <= kCacheLineSize) { // Don't parallelize
     std::mt19937_64 rng = GetSeededRandom();
     std::shuffle(data, data+count, rng);
     return;
