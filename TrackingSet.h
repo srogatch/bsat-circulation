@@ -7,9 +7,9 @@
 #include <cassert>
 #include <algorithm>
 
-template<typename TItem> struct Bucket {
+template<typename TItem, typename THasher> struct Bucket {
   mutable std::atomic_flag sync_ = ATOMIC_FLAG_INIT;
-  std::unordered_set<TItem> set_;
+  std::unordered_set<TItem, THasher> set_;
   int64_t prefixSum_;
 };
 
@@ -22,12 +22,17 @@ template<typename TItem> struct MulKHashBaseWithSalt {
 template<typename TItem> struct MultiItem {
   using value_type = TItem;
 
-  int64_t nEntries_ = 0;
+  mutable int64_t nEntries_ = -1;
   TItem item_;
 
   MultiItem() { }
 
-  MultiItem(const TItem& item) : item_(item), nEntries_(1) { }
+  MultiItem(const TItem& item) : nEntries_(0), item_(item) { }
+
+  MultiItem(const MultiItem& src) = default;
+  MultiItem& operator=(const MultiItem& src) = default;
+  MultiItem(MultiItem&& src) = default;
+  MultiItem& operator=(MultiItem&& src) = default;
 
   bool operator==(const MultiItem& fellow) const {
     return item_ == fellow.item_;
@@ -37,6 +42,9 @@ template<typename TItem> struct MultiItem {
   }
   bool operator<(const MultiItem& fellow) const {
     return nEntries_ < fellow.nEntries_;
+  }
+  bool operator>(const MultiItem& fellow) const {
+    return nEntries_ > fellow.nEntries_;
   }
 };
 
@@ -70,7 +78,7 @@ template<typename TItem> struct MulKHashBaseWithSalt<MultiItem<TItem>> {
 template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct TrackingSet {
   static constexpr const int64_t cSyncContention = 3;
 
-  std::unique_ptr<Bucket<TItem>[]> buckets_ = std::make_unique<Bucket<TItem>[]>(cSyncContention * nSysCpus);
+  std::unique_ptr<Bucket<TItem, THasher>[]> buckets_ = std::make_unique<Bucket<TItem, THasher>[]>(cSyncContention * nSysCpus);
   uint128 hash_ = 0;
   std::atomic<int64_t> size_ = 0;
 
@@ -102,16 +110,16 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     return *this;
   }
 
-  Bucket<TItem>& GetBucket(const TItem& item) {
+  Bucket<TItem, THasher>& GetBucket(const TItem& item) {
     return buckets_[THasher()(item) % (cSyncContention * nSysCpus)];
   }
 
-  const Bucket<TItem>& GetBucket(const TItem& item) const {
+  const Bucket<TItem, THasher>& GetBucket(const TItem& item) const {
     return buckets_[THasher()(item) % (cSyncContention * nSysCpus)];
   }
 
   bool Add(const TItem& item) requires(!is_specialization_of<TItem, MultiItem>::value) {
-    Bucket<TItem>& b = GetBucket(item);
+    Bucket<TItem, THasher>& b = GetBucket(item);
     bool bAdded = false;
     {
       SpinLock lock(b.sync_);
@@ -131,31 +139,31 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
 
   template<typename TValue> std::enable_if<std::is_same<TItem, MultiItem<TValue>>::value, int64_t>::type
   Add(const TValue item) {
-    Bucket<TItem>& b = GetBucket(item);
-    int64_t ans;
+    Bucket<TItem, THasher>& b = GetBucket(item);
+    MultiItem<TValue> mi(item);
     {
-      MultiItem<TValue> mi(item);
       SpinLock lock(b.sync_);
-      auto it = b.set_.find(mi);
+      typename std::unordered_set<MultiItem<TValue>, MulKHashBaseWithSalt<MultiItem<TValue>>>::iterator it = b.set_.find(mi);
       if(it == b.set_.end()) {
+        mi.nEntries_ =  1;
         b.set_.emplace(mi);
-        ans = 1;
       }
       else {
-        ans = ++(it->nEntries_);
+        mi.nEntries_ = it->nEntries_ + 1;
+        it->nEntries_ = mi.nEntries_;
       }
     }
-    assert(ans >= 1);
-    if(ans == 1) {
+    assert(mi.nEntries_ >= 1);
+    if(mi.nEntries_ == 1) {
       UpdateHash(item);
       [[maybe_unused]] const int64_t oldSize = size_.fetch_add(1, std::memory_order_relaxed);
       assert(oldSize >= 0);
     }
-    return ans;
+    return mi.nEntries_;
   }
 
   void Remove(const TItem& item) requires(!is_specialization_of<TItem, MultiItem>::value) {
-    Bucket<TItem>& b = GetBucket(item);
+    Bucket<TItem, THasher>& b = GetBucket(item);
     bool bRemoved = false;
     {
       SpinLock lock(b.sync_);
@@ -173,7 +181,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   }
 
   void Flip(const TItem& item) requires(!is_specialization_of<TItem, MultiItem>::value) {
-    Bucket<TItem>& b = GetBucket(item);
+    Bucket<TItem, THasher>& b = GetBucket(item);
     int sizeMod = 0;
     {
       SpinLock lock(b.sync_);
@@ -194,7 +202,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   bool Contains(const TItem& item) const
   requires(!is_specialization_of<TItem, MultiItem>::value)
   {
-    const Bucket<TItem>& b = GetBucket(item);
+    const Bucket<TItem, THasher>& b = GetBucket(item);
     SpinLock lock(b.sync_);
     return b.set_.find(item) != b.set_.end();
   }

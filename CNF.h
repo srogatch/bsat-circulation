@@ -282,7 +282,6 @@ release:
     #pragma omp parallel for
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, ans_)) {
-        #pragma omp critical
         ans.Add(i);
       }
     }

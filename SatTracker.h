@@ -207,7 +207,6 @@ template<typename TCounter> struct SatTracker {
     #pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       if(nSat_[i] == 0) {
-        #pragma omp critical
         ans.Add(i);
       }
     }
@@ -296,7 +295,6 @@ template<typename TCounter> struct SatTracker {
         assert(1 <= aVar && aVar <= pFormula_->nVars_);
         iVar = aVar * (next[aVar] ? 1 : -1);
         selVars[j] = iVar;
-        #pragma omp critical
         revVars.Flip(aVar);
       }
       if( trav.IsSeenMove(startClauseFront, revVars) ) {
@@ -330,11 +328,11 @@ template<typename TCounter> struct SatTracker {
         }
         if(level > 0 && newClauseFront.Size() > 0) {
           std::vector<MultiItem<VCIndex>> newVarFront = pFormula_->ClauseFrontToVars(newClauseFront, next);
-          // We only shuffle the subsequent fronts
-          ParallelShuffle(newVarFront.data(), newVarFront.size());
           bool nextMoved = false;
+          unsigned short r;
+          while(!_rdrand16_step(&r));
           const int64_t subNUnsat = ParallelGD(
-            preferMove, varsAtOnce, newVarFront, next, trav, unsatClauses, startClauseFront,
+            preferMove, varsAtOnce, newVarFront, r%5 - 2, next, trav, unsatClauses, startClauseFront,
             revVars, minUnsat, nextMoved, level-1
           );
           if(subNUnsat < minUnsat || (preferMove && nextMoved && subNUnsat == minUnsat)) {
@@ -354,7 +352,6 @@ template<typename TCounter> struct SatTracker {
         const int64_t aVar = llabs(iVar);
         next.Flip(aVar);
         FlipVar(aVar * (next[aVar] ? 1 : -1), unsatClauses, nullptr);
-        #pragma omp critical
         revVars.Flip(aVar);
       }
     }

@@ -105,12 +105,14 @@ int main(int argc, char* argv[]) {
 
   std::cout << "Choosing the best initial variable assignment..." << std::endl;
   int64_t bestInit = formula.nClauses_ + 1;
-  VCTrackingSet initFront, initUnsatClauses;
+  VCTrackingSet startFront;
+
   DefaultSatTracker satTr(formula);
   satTr.Populate(formula.ans_);
   #pragma omp parallel for
   for(int init=-1; init<=1; init++) {
     BitVector initAsg(formula.nVars_+1);
+    DefaultSatTracker initSatTr(formula);
     switch(init) {
     case -1:
       break; // already all false
@@ -121,81 +123,53 @@ int main(int argc, char* argv[]) {
       initAsg.SetTrue();
       break;
     }
+    VCTrackingSet initUnsatClauses = initSatTr.Populate(initAsg);
+    VCTrackingSet initFront = initUnsatClauses;
     #pragma omp parallel for
     for(int sortType=-2; sortType<=2; sortType++) {
-      DefaultSatTracker locSatTr = satTr;
-      BitVector locAsg = formula.ans_;
+      BitVector locAsg = initAsg;
+      DefaultSatTracker locSatTr = initSatTr;
+      VCTrackingSet locUnsatClauses = initUnsatClauses;
+      VCTrackingSet locFront = locUnsatClauses, locNextFront;
+      for(;;) {
+        bool moved = false;
+        const int64_t altNUnsat = locSatTr.GradientDescend(
+          false, trav, &locUnsatClauses, locUnsatClauses, initFront,
+          locNextFront, locUnsatClauses.Size(), moved, locAsg,
+          sortType
+        );
+        if(!moved) {
+          break;
+        }
+        // This suspends all OpenMP threads in the entire program who try to enter this synchronized section
+        // Naming the such section as "updateBestInit" lets other sections execute while this one is blocked.
+        #pragma omp critical(updateBestInit)
+        {
+          if(altNUnsat < bestInit) {
+            bestInit = altNUnsat;
+            startFront = locNextFront;
+            formula.ans_ = locAsg;
+          }
+        }
+        locFront = locNextFront;
+        locNextFront.Clear();
+      }
     }
   }
-
-  {
-    int64_t altNUnsat;
-    VCTrackingSet initUnsatClauses = satTr.GetUnsat();
-    VCTrackingSet startFront = initUnsatClauses;
-    // for init it's usually better if we don't move an extra time
-    bool moved = false;
-    altNUnsat = satTr.GradientDescend(
-      false, trav, &initUnsatClauses, initUnsatClauses, startFront, initFront, initUnsatClauses.Size(), moved, formula.ans_);
-    std::cout << "GradientDescent: " << altNUnsat << ", ";
-    std::cout.flush();
-    if(altNUnsat < bestInit) {
-      bestInit = altNUnsat;
-    } else {
-      // Revert to all false
-      formula.ans_ = BitVector(formula.nVars_+1);
-    }
-  }
-
-  BitVector altAsg = formula.SetGreedy1();
-  altNUnsat = formula.CountUnsat(altAsg);
-  std::cout << "Greedy1: " << altNUnsat << ", ";
-  std::cout.flush();
-  if(altNUnsat < bestInit) {
-    bestInit = altNUnsat;
-    formula.ans_ = altAsg;
-  }
-
-  altAsg = formula.SetGreedy2();
-  altNUnsat = formula.CountUnsat(altAsg);
-  std::cout << "Greedy2: " << altNUnsat << ", ";
-  std::cout.flush();
-  if(altNUnsat < bestInit) {
-    bestInit = altNUnsat;
-    formula.ans_ = altAsg;
-  }
-
-  altAsg.Randomize();
-  altNUnsat = formula.CountUnsat(altAsg);
-  std::cout << "Random: " << altNUnsat << ", ";
-  std::cout.flush();
-  if(altNUnsat < bestInit) {
-    bestInit = altNUnsat;
-    formula.ans_ = altAsg;
-  }
-
-  altAsg.SetTrue();
-  altNUnsat = formula.CountUnsat(altAsg);
-  std::cout << "All true: " << altNUnsat << std::endl;
-  if(altNUnsat < bestInit) {
-    bestInit = altNUnsat;
-    formula.ans_ = altAsg;
-  }
-
+  VCTrackingSet front = startFront;
   VCTrackingSet unsatClauses = satTr.Populate(formula.ans_);
+  assert(unsatClauses.Size() == bestInit);
 
   BitVector maxPartial;
   bool maybeSat = true;
   bool provenUnsat = false;
-  std::mt19937_64 rng;
   int64_t nStartUnsat;
-  int64_t nParallelGD = 0, nSequentialGD = 0;
+  int64_t nParallelGD = 0, nSequentialGD = 0, nWalk = 0;
 
-  VCTrackingSet front = initFront;
   while(maybeSat) {
-    //TODO: this is a heavy assert
-    assert(unsatClauses == satTr.GetUnsat());
-    nStartUnsat = unsatClauses.Size();
     maxPartial = formula.ans_;
+    nStartUnsat = unsatClauses.Size();
+    assert(satTr.UnsatCount() == nStartUnsat);
     if(nStartUnsat == 0) {
       std::cout << "Satisfied" << std::endl;
       break;
@@ -216,8 +190,6 @@ int main(int argc, char* argv[]) {
     prevNUnsat = nStartUnsat;
     bool allowDuplicateFront = false;
     while(unsatClauses.Size() >= nStartUnsat) {
-      // TODO: this is heavy
-      // assert(formula.ComputeUnsatClauses() == unsatClauses);
       assert(satTr.UnsatCount() == unsatClauses.Size() && satTr.ReallyUnsat(unsatClauses));
       if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
         front = unsatClauses;
@@ -232,13 +204,14 @@ int main(int argc, char* argv[]) {
       const int64_t endNIncl = std::min<int64_t>(varFront.size(), 5);
       std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
       //std::cout.flush();
-      #pragma omp parallel for schedule(dynamic, 1) collapse(2)
+      #pragma omp parallel for schedule(dynamic, 1)
       for(int64_t nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
         // 0: shuffle
         // -1: reversed heap
         // 1: heap
         // -2: reversed full sort
         // 2: full sort
+        #pragma omp parallel for schedule(dynamic, 1)
         for(int8_t sortType=-2; sortType<=2; sortType++) {
           BitVector next = formula.ans_;
           DefaultSatTracker newSatTr = satTr;
@@ -250,17 +223,16 @@ int main(int argc, char* argv[]) {
             newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 0
           );
 
-          // TODO: this is too heavy
-          // assert( newSatTr.Verify(next) );
-
-          #pragma omp critical
+          // This suspends all OpenMP threads in the entire program who try to enter this synchronized section.
+          // Naming the such section as "updateBestInit" lets other sections execute while this one is blocked.
+          #pragma omp critical(updateBestUnsat)
           if( moved && curNUnsat < bestUnsat ) {
             bestUnsat = curNUnsat;
             bestRevVars = stepRevs;
           }
         }
       }
-      nParallelGD += endNIncl - startNIncl + 1;
+      nParallelGD += (endNIncl - startNIncl + 1) * 5;
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
@@ -297,6 +269,7 @@ int main(int argc, char* argv[]) {
       }
 
       std::cout << ">";
+      nWalk++;
 
       front.Clear();
       std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
@@ -337,16 +310,15 @@ int main(int argc, char* argv[]) {
         front.Clear();
         moved = false;
         newUnsat = satTr.GradientDescend( true, trav, &oldFront, unsatClauses, oldFront, front,
-          satTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, formula.ans_ );
+          satTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, formula.ans_, nSequentialGD%5 - 2
+        );
         nSequentialGD++;
         if(!moved) {
           break;
         }
       }
-      // TODO: this is too heavy
-      // assert(satTr.Verify(formula.ans_));
     }
-    std::cout << "\n\tWalk: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
+    std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
       << ", Known assignments: " << trav.seenAssignment_.Size()
       << ", nParallelGD: " << nParallelGD << ", nSequentialGD: " << nSequentialGD << std::endl;
   }
