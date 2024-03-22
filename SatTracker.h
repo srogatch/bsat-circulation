@@ -147,12 +147,15 @@ template<typename TCounter> struct SatTracker {
   }
 
   void Lock(const int64_t iClause) {
-    while(syncs_[iClause % (cSyncContention * nSysCpus)].test_and_set(std::memory_order_acq_rel)) {
-      std::this_thread::yield();
+    std::atomic_flag& sync = syncs_[iClause % (cSyncContention * nSysCpus)];
+    while(sync.test_and_set(std::memory_order_acq_rel)) {
+      while (sync.test(std::memory_order_relaxed)); // keep it hot in cache
     }
   }
+
   void Unlock(const int64_t iClause) {
-    syncs_[iClause % (cSyncContention * nSysCpus)].clear(std::memory_order_release);
+    std::atomic_flag& sync = syncs_[iClause % (cSyncContention * nSysCpus)];
+    sync.clear(std::memory_order_release);
   }
 
   // The sign of iVar must reflect the new value of the variable.
@@ -160,7 +163,7 @@ template<typename TCounter> struct SatTracker {
   int64_t FlipVar(const int64_t iVar, VCTrackingSet* unsatClauses, VCTrackingSet* front) {
     const std::vector<int64_t>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     int64_t ans = 0;
-    #pragma omp parallel for reduction(+:ans)
+    #pragma omp parallel for reduction(+:ans) schedule(guided, cSyncContention)
     for(int64_t i=0; i<int64_t(clauses.size()); i++) {
       const int64_t iClause = clauses[i];
       const int64_t aClause = llabs(iClause);

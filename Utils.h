@@ -89,12 +89,12 @@ void ParallelShuffle(T* data, const size_t count) {
         continue;
       }
       const size_t sync1 = std::min(j, fellow);
-      const size_t sync2 = std::max(j, fellow);
+      const size_t sync2 = j ^ fellow ^ sync1;
       while (syncs[sync1].test_and_set(std::memory_order_acq_rel)) {
-        std::this_thread::yield();
+        while (syncs[sync1].test(std::memory_order_relaxed)); // keep it hot in cache
       }
       while (syncs[sync2].test_and_set(std::memory_order_acq_rel)) {
-        std::this_thread::yield();
+        while (syncs[sync2].test(std::memory_order_relaxed)); // keep it hot in cache
       }
       std::swap(data[sync1], data[sync2]);
       syncs[sync2].clear(std::memory_order_release);
