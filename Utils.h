@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <random>
 #include <thread>
+#include <algorithm>
 #include <immintrin.h>
 
 constexpr const uint32_t kCacheLineSize = 64;
@@ -21,6 +22,14 @@ constexpr const uint128 kHashBase =
 template<typename T, typename U> constexpr T DivUp(const T a, const U b) {
   return (a + T(b) - 1) / T(b);
 }
+
+// Define a primary template for is_specialization_of, which defaults to false.
+template<typename Test, template<typename...> class Ref>
+struct is_specialization_of : std::false_type {};
+
+// Specialize is_specialization_of for cases where the first parameter is a specialization of the template in the second parameter.
+template<template<typename...> class Ref, typename... Args>
+struct is_specialization_of<Ref<Args...>, Ref> : std::true_type {};
 
 inline uint64_t hash64(uint64_t key) {
   key = (~key) + (key << 21); // key = (key << 21) - key - 1;

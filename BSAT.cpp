@@ -99,20 +99,37 @@ int main(int argc, char* argv[]) {
   int64_t prevNUnsat = formula.nClauses_;
   Traversal trav;
 
-  // Now there are some clause bitvectors
+  std::cout << "Precomputing..." << std::endl;
+  // Now there are both variable and clause bitvectors
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
 
+  std::cout << "Choosing the best initial variable assignment..." << std::endl;
+  int64_t bestInit = formula.nClauses_ + 1;
+  VCTrackingSet initFront, initUnsatClauses;
   DefaultSatTracker satTr(formula);
   satTr.Populate(formula.ans_);
-
-  int64_t bestInit = satTr.UnsatCount();
-  std::cout << "All false: " << bestInit << ", ";
-  std::cout.flush();
-
-  int64_t altNUnsat;
-  VCTrackingSet initFront;
+  #pragma omp parallel for
+  for(int init=-1; init<=1; init++) {
+    BitVector initAsg(formula.nVars_+1);
+    switch(init) {
+    case -1:
+      break; // already all false
+    case 0:
+      initAsg.Randomize();
+      break;
+    case 1:
+      initAsg.SetTrue();
+      break;
+    }
+    #pragma omp parallel for
+    for(int sortType=-2; sortType<=2; sortType++) {
+      DefaultSatTracker locSatTr = satTr;
+      BitVector locAsg = formula.ans_;
+    }
+  }
 
   {
+    int64_t altNUnsat;
     VCTrackingSet initUnsatClauses = satTr.GetUnsat();
     VCTrackingSet startFront = initUnsatClauses;
     // for init it's usually better if we don't move an extra time
@@ -210,31 +227,37 @@ int main(int argc, char* argv[]) {
       int64_t bestUnsat = formula.nClauses_+1;
       VCTrackingSet bestRevVars;
 
-      std::vector<int64_t> varFront = formula.ClauseFrontToVars(front, formula.ans_);
+      std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(front, formula.ans_);
       const int64_t startNIncl = 1;
       const int64_t endNIncl = std::min<int64_t>(varFront.size(), 5);
       std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
       //std::cout.flush();
-      #pragma omp parallel for schedule(dynamic, 1)
+      #pragma omp parallel for schedule(dynamic, 1) collapse(2)
       for(int64_t nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
-        std::vector<int64_t> locVarFront = varFront;
-        ParallelShuffle(locVarFront.data(), locVarFront.size());
-        BitVector next = formula.ans_;
-        DefaultSatTracker newSatTr = satTr;
-        VCTrackingSet stepRevs;
-        bool moved = false;
-        const int64_t curNUnsat = newSatTr.ParallelGD(
-          true, nIncl, locVarFront, next, trav, nullptr, front, stepRevs, 
-          newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 0
-        );
+        // 0: shuffle
+        // -1: reversed heap
+        // 1: heap
+        // -2: reversed full sort
+        // 2: full sort
+        for(int8_t sortType=-2; sortType<=2; sortType++) {
+          BitVector next = formula.ans_;
+          DefaultSatTracker newSatTr = satTr;
+          VCTrackingSet stepRevs;
+          std::vector<MultiItem<VCIndex>> locVarFront = varFront;
+          bool moved = false;
+          const int64_t curNUnsat = newSatTr.ParallelGD(
+            true, nIncl, locVarFront, sortType, next, trav, nullptr, front, stepRevs, 
+            newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 0
+          );
 
-        // TODO: this is too heavy
-        // assert( newSatTr.Verify(next) );
+          // TODO: this is too heavy
+          // assert( newSatTr.Verify(next) );
 
-        #pragma omp critical
-        if( moved && curNUnsat < bestUnsat ) {
-          bestUnsat = curNUnsat;
-          bestRevVars = stepRevs;
+          #pragma omp critical
+          if( moved && curNUnsat < bestUnsat ) {
+            bestUnsat = curNUnsat;
+            bestRevVars = stepRevs;
+          }
         }
       }
       nParallelGD += endNIncl - startNIncl + 1;

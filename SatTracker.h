@@ -13,7 +13,7 @@
 template<typename TCounter> struct SatTracker {
   static constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(TCounter);
   static constexpr const int64_t cSyncContention = 37; // 37 per CPU
-  std::vector<int64_t> vVars_;
+  std::vector<MultiItem<VCIndex>> vVars_;
   std::unique_ptr<TCounter[]> nSat_;
   std::unique_ptr<std::atomic_flag[]> syncs_;
   Formula *pFormula_ = nullptr;
@@ -234,9 +234,9 @@ template<typename TCounter> struct SatTracker {
 
   int64_t GradientDescend(const bool preferMove, Traversal& trav,
     const VCTrackingSet* considerClauses, VCTrackingSet& unsatClauses, const VCTrackingSet& startFront,
-    VCTrackingSet& front, int64_t minUnsat, bool& moved, BitVector& next)
+    VCTrackingSet& front, int64_t minUnsat, bool& moved, BitVector& next, const int sortType)
   {
-    std::vector<int64_t> subsetVars, *pvVars = nullptr;
+    std::vector<MultiItem<VCIndex>> subsetVars, *pvVars = nullptr;
     if(considerClauses == nullptr) {
       pvVars = &vVars_;
     }
@@ -244,12 +244,12 @@ template<typename TCounter> struct SatTracker {
       subsetVars = pFormula_->ClauseFrontToVars(*considerClauses, next);
       pvVars = &subsetVars;
     }
-    ParallelShuffle(pvVars->data(), pvVars->size());
+    SortMultiItems(*pvVars, sortType);
 
     VCTrackingSet revVars;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
     for(int64_t k=0; k<int64_t(pvVars->size()); k++) {
-      const int64_t aVar = (*pvVars)[k];
+      const int64_t aVar = (*pvVars)[k].item_;
       assert(1 <= aVar && aVar <= pFormula_->nVars_);
       const int64_t iVar = aVar * (next[aVar] ? 1 : -1);
       revVars.Flip(aVar);
@@ -280,17 +280,19 @@ template<typename TCounter> struct SatTracker {
   }
 
   int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
-    const std::vector<int64_t>& varFront, BitVector& next, Traversal& trav,
+    std::vector<MultiItem<VCIndex>>& varFront, const int sortType,
+    BitVector& next, Traversal& trav,
     VCTrackingSet* unsatClauses, const VCTrackingSet& startClauseFront,
     VCTrackingSet& revVars, int64_t minUnsat, bool& moved, int64_t level)
   {
+    SortMultiItems(varFront, sortType);
     for(int64_t i=0; i<int64_t(varFront.size()); i+=varsAtOnce) {
       std::vector<int64_t> selVars(varsAtOnce, 0);
       const int64_t nVars = std::min<int64_t>(varsAtOnce, int64_t(varFront.size()) - i);
       #pragma omp parallel for num_threads(nVars)
       for(int64_t j=0; j<nVars; j++) {
         int64_t aVar, iVar;
-        aVar = varFront[i+j];
+        aVar = varFront[i+j].item_;
         assert(1 <= aVar && aVar <= pFormula_->nVars_);
         iVar = aVar * (next[aVar] ? 1 : -1);
         selVars[j] = iVar;
@@ -327,7 +329,8 @@ template<typename TCounter> struct SatTracker {
           continue;
         }
         if(level > 0 && newClauseFront.Size() > 0) {
-          std::vector<int64_t> newVarFront = pFormula_->ClauseFrontToVars(newClauseFront, next);
+          std::vector<MultiItem<VCIndex>> newVarFront = pFormula_->ClauseFrontToVars(newClauseFront, next);
+          // We only shuffle the subsequent fronts
           ParallelShuffle(newVarFront.data(), newVarFront.size());
           bool nextMoved = false;
           const int64_t subNUnsat = ParallelGD(

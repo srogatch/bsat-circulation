@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <cstdint>
 #include <cassert>
+#include <algorithm>
 
 template<typename TItem> struct Bucket {
   mutable std::atomic_flag sync_ = ATOMIC_FLAG_INIT;
@@ -15,6 +16,54 @@ template<typename TItem> struct Bucket {
 template<typename TItem> struct MulKHashBaseWithSalt {
   uint128 operator()(const TItem& item) const {
     return item * kHashBase + 37;
+  }
+};
+
+template<typename TItem> struct MultiItem {
+  using value_type = TItem;
+
+  int64_t nEntries_ = 0;
+  TItem item_;
+
+  MultiItem() { }
+
+  MultiItem(const TItem& item) : item_(item), nEntries_(1) { }
+
+  bool operator==(const MultiItem& fellow) const {
+    return item_ == fellow.item_;
+  }
+  bool operator!=(const MultiItem& fellow) const {
+    return item_ != fellow.item_;
+  }
+  bool operator<(const MultiItem& fellow) const {
+    return nEntries_ < fellow.nEntries_;
+  }
+};
+
+template<typename T> inline void SortMultiItems(std::vector<MultiItem<T>>& vec, const int sortType) {
+  // sort? heap? reverse sort/heap?
+  switch(sortType) {
+  case 0:
+    ParallelShuffle(vec.data(), vec.size());
+    break;
+  case -1:
+    std::make_heap(vec.begin(), vec.end(), std::greater<MultiItem<T>>());
+    break;
+  case 1:
+    std::make_heap(vec.begin(), vec.end());
+    break;
+  case -2:
+    std::sort(vec.begin(), vec.end(), std::greater<MultiItem<T>>());
+    break;
+  case 2:
+    std::sort(vec.begin(), vec.end());
+    break;
+  }
+}
+
+template<typename TItem> struct MulKHashBaseWithSalt<MultiItem<TItem>> {
+  uint128 operator()(const MultiItem<TItem>& multiItem) const {
+    return multiItem.item_ * kHashBase + 37;
   }
 };
 
@@ -61,7 +110,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     return buckets_[THasher()(item) % (cSyncContention * nSysCpus)];
   }
 
-  bool Add(const TItem& item) {
+  bool Add(const TItem& item) requires(!is_specialization_of<TItem, MultiItem>::value) {
     Bucket<TItem>& b = GetBucket(item);
     bool bAdded = false;
     {
@@ -80,7 +129,32 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     return bAdded;
   }
 
-  void Remove(const TItem& item) {
+  template<typename TValue> std::enable_if<std::is_same<TItem, MultiItem<TValue>>::value, int64_t>::type
+  Add(const TValue item) {
+    Bucket<TItem>& b = GetBucket(item);
+    int64_t ans;
+    {
+      MultiItem<TValue> mi(item);
+      SpinLock lock(b.sync_);
+      auto it = b.set_.find(mi);
+      if(it == b.set_.end()) {
+        b.set_.emplace(mi);
+        ans = 1;
+      }
+      else {
+        ans = ++(it->nEntries_);
+      }
+    }
+    assert(ans >= 1);
+    if(ans == 1) {
+      UpdateHash(item);
+      [[maybe_unused]] const int64_t oldSize = size_.fetch_add(1, std::memory_order_relaxed);
+      assert(oldSize >= 0);
+    }
+    return ans;
+  }
+
+  void Remove(const TItem& item) requires(!is_specialization_of<TItem, MultiItem>::value) {
     Bucket<TItem>& b = GetBucket(item);
     bool bRemoved = false;
     {
@@ -98,7 +172,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     }
   }
 
-  void Flip(const TItem& item) {
+  void Flip(const TItem& item) requires(!is_specialization_of<TItem, MultiItem>::value) {
     Bucket<TItem>& b = GetBucket(item);
     int sizeMod = 0;
     {
@@ -117,7 +191,9 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     assert(oldSize + sizeMod >= 0);
   }
 
-  bool Contains(const TItem& item) const {
+  bool Contains(const TItem& item) const
+  requires(!is_specialization_of<TItem, MultiItem>::value)
+  {
     const Bucket<TItem>& b = GetBucket(item);
     SpinLock lock(b.sync_);
     return b.set_.find(item) != b.set_.end();
@@ -196,8 +272,8 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     }
   }
 
-  std::vector<int64_t> ToVector() const {
-    std::vector<int64_t> ans(Size());
+  std::vector<TItem> ToVector() const {
+    std::vector<TItem> ans(Size());
     int64_t prefSum = 0;
     buckets_[0].prefixSum_ = prefSum;
     prefSum += buckets_[0].set_.size();
