@@ -181,11 +181,12 @@ int main(int argc, char* argv[]) {
     }
     bool allowDuplicateFront = false;
     while(unsatClauses.Size() >= nStartUnsat) {
-      assert(formula.ComputeUnsatClauses() == unsatClauses);
+      // TODO: this is heavy
+      // assert(formula.ComputeUnsatClauses() == unsatClauses);
+      assert(satTr.UnsatCount() == unsatClauses.Size() && satTr.ReallyUnsat(unsatClauses));
       if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
         front = unsatClauses;
         std::cout << "%";
-        //std::cout.flush();
       }
 
       int64_t bestUnsat = formula.nClauses_+1;
@@ -281,7 +282,13 @@ int main(int argc, char* argv[]) {
         }
         assert(newUnsat == satTr.UnsatCount());
         oldUnsat = newUnsat;
-        VCTrackingSet oldFront = front;
+        VCTrackingSet oldFront;
+        if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
+          oldFront = unsatClauses;
+          std::cout << "%";
+        } else {
+          oldFront = front;
+        }
         front.Clear();
         moved = false;
         newUnsat = satTr.GradientDescend( true, trav, &oldFront, unsatClauses, oldFront, front,

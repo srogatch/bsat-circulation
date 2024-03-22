@@ -79,6 +79,7 @@ template<typename TCounter> struct SatTracker {
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       nSat_[i] = 0;
       for(const int64_t iVar : pFormula_->clause2var_.find(i)->second) {
+        assert(1 <= llabs(iVar) && llabs(iVar) <= pFormula_->nClauses_);
         if( (iVar < 0 && !assignment[-iVar]) || (iVar > 0 && assignment[iVar]) ) {
           nSat_[i]++;
         }
@@ -99,9 +100,13 @@ template<typename TCounter> struct SatTracker {
     if(nSat_[0] != 1) {
       return false;
     }
+    std::atomic<bool> ans = true;
+    #pragma omp parallel for
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
+      #pragma omp cancellation point for
       int64_t curSat = 0;
       for(const int64_t iVar : pFormula_->clause2var_.find(i)->second) {
+        assert(1 <= llabs(iVar) && llabs(iVar) <= pFormula_->nClauses_);
         if( (iVar < 0 && !assignment[-iVar]) || (iVar > 0 && assignment[iVar]) ) {
           curSat++;
         }
@@ -110,13 +115,35 @@ template<typename TCounter> struct SatTracker {
         curTot++;
       }
       if(nSat_[i] != curSat) {
-        return false;
+        ans = false;
+        #pragma omp cancel for
       }
     }
     if(totSat_ != curTot) {
-      return false;
+      ans = false;
     }
-    return true;
+    return ans;
+  }
+
+  bool ReallyUnsat(const VCTrackingSet& unsatClauses) {
+    std::vector<int64_t> vUnsat = unsatClauses.ToVector();
+    std::atomic<bool> ans = true;
+    #pragma omp parallel for
+    for(int64_t i=0; i<int64_t(vUnsat.size()); i++) {
+      // It's important it's not interfering with Finally
+      #pragma omp cancellation point for
+      const int64_t iClause = vUnsat[i];
+      assert(1 <= iClause && iClause <= pFormula_->nClauses_);
+      Lock(iClause);
+      auto fUnlock = Finally([&] {
+        Unlock(iClause);
+      });
+      if(nSat_[iClause] != 0) {
+        ans = false;
+        #pragma omp cancel for
+      }
+    }
+    return ans;
   }
 
   void Lock(const int64_t iClause) {

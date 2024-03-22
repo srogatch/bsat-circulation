@@ -141,7 +141,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     if(hash_ != fellow.hash_) {
       return false;
     }
-    bool isEqual = true;
+    std::atomic<bool> isEqual = true;
     #pragma omp parallel for shared(isEqual)
     for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
       if(buckets_[i].set_ != fellow.buckets_[i].set_) {
@@ -156,7 +156,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     if(hash_ != fellow.hash_) {
       return true;
     }
-    bool differ = false;
+    std::atomic<bool> differ = false;
     #pragma omp parallel for
     for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
       if(buckets_[i].set_ != fellow.buckets_[i].set_) {
