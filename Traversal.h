@@ -28,6 +28,7 @@ struct Point {
 };
 
 struct Traversal {
+  static constexpr const int64_t cMaxDfsRamBytes = 64ULL * 1024ULL * 1024ULL * 1024ULL;
   TrackingSet<uint128> seenFront_;
   TrackingSet<uint128> seenAssignment_;
   TrackingSet<std::pair<uint128, uint128>, std::hash<std::pair<uint128, uint128>>> seenMove_;
@@ -50,6 +51,9 @@ struct Traversal {
       Point p(assignment, nUnsat);
       std::unique_lock<std::mutex> lock(muDfs_);
       if(dfs_.empty() || nUnsat <= dfs_.back().nUnsat_) {
+        if(dfs_.size() * assignment.nQwords_ * sizeof(uint64_t) >= cMaxDfsRamBytes) {
+          dfs_.pop_front();
+        }
         dfs_.push_back(std::move(p));
       }
     }
