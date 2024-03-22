@@ -126,7 +126,7 @@ int main(int argc, char* argv[]) {
     VCTrackingSet initUnsatClauses = initSatTr.Populate(initAsg);
     VCTrackingSet initFront = initUnsatClauses;
     #pragma omp parallel for schedule(dynamic, 1)
-    for(int sortType=-2; sortType<=2; sortType++) {
+    for(int sortType=kMinSortType; sortType<=kMaxSortType; sortType++) {
       BitVector locAsg = initAsg;
       DefaultSatTracker locSatTr = initSatTr;
       VCTrackingSet locUnsatClauses = initUnsatClauses;
@@ -200,8 +200,8 @@ int main(int argc, char* argv[]) {
       VCTrackingSet bestRevVars;
 
       std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(front, formula.ans_);
-      const int64_t startNIncl = 1;
-      const int64_t endNIncl = std::min<int64_t>(varFront.size(), 5);
+      const int64_t startNIncl = 2;
+      const int64_t endNIncl = std::min<int64_t>(varFront.size(), 3);
       std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
       //std::cout.flush();
       #pragma omp parallel for schedule(dynamic, 1)
@@ -212,7 +212,7 @@ int main(int argc, char* argv[]) {
         // -2: reversed full sort
         // 2: full sort
         #pragma omp parallel for schedule(dynamic, 1)
-        for(int8_t sortType=-2; sortType<=2; sortType++) {
+        for(int8_t sortType=kMinSortType; sortType<=kMaxSortType; sortType++) {
           BitVector next = formula.ans_;
           DefaultSatTracker newSatTr = satTr;
           VCTrackingSet stepRevs;
@@ -310,7 +310,8 @@ int main(int argc, char* argv[]) {
         front.Clear();
         moved = false;
         newUnsat = satTr.GradientDescend( true, trav, &oldFront, unsatClauses, oldFront, front,
-          satTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, formula.ans_, nSequentialGD%5 - 2
+          satTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, formula.ans_,
+          nSequentialGD%knSortTypes + kMinSortType
         );
         nSequentialGD++;
         if(!moved) {

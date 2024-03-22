@@ -48,11 +48,16 @@ template<typename TItem> struct MultiItem {
   }
 };
 
+constexpr const int kMinSortType = -2;
+constexpr const int kMaxSortType = 2;
+constexpr const int knSortTypes = (kMaxSortType - kMinSortType + 1);
+
 template<typename T> inline void SortMultiItems(std::vector<MultiItem<T>>& vec, const int sortType) {
+  assert(kMinSortType <= sortType && sortType <= kMaxSortType);
   // sort? heap? reverse sort/heap?
+  ParallelShuffle(vec.data(), vec.size());
   switch(sortType) {
   case 0:
-    ParallelShuffle(vec.data(), vec.size());
     break;
   case -1:
     std::make_heap(vec.begin(), vec.end(), std::greater<MultiItem<T>>());
@@ -61,10 +66,10 @@ template<typename T> inline void SortMultiItems(std::vector<MultiItem<T>>& vec, 
     std::make_heap(vec.begin(), vec.end());
     break;
   case -2:
-    std::sort(vec.begin(), vec.end(), std::greater<MultiItem<T>>());
+    std::stable_sort(vec.begin(), vec.end(), std::greater<MultiItem<T>>());
     break;
   case 2:
-    std::sort(vec.begin(), vec.end());
+    std::stable_sort(vec.begin(), vec.end());
     break;
   }
 }

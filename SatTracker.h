@@ -337,7 +337,7 @@ template<typename TCounter> struct SatTracker {
           unsigned short r;
           while(!_rdrand16_step(&r));
           const int64_t subNUnsat = ParallelGD(
-            preferMove, varsAtOnce, newVarFront, r%5 - 2, next, trav, unsatClauses, startClauseFront,
+            preferMove, varsAtOnce, newVarFront, r%knSortTypes + kMinSortType, next, trav, unsatClauses, startClauseFront,
             revVars, minUnsat, nextMoved, level-1
           );
           if(subNUnsat < minUnsat || (preferMove && nextMoved && subNUnsat == minUnsat)) {
