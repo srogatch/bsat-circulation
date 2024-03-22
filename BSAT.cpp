@@ -209,7 +209,7 @@ int main(int argc, char* argv[]) {
           std::max<int64_t>( unsatClauses.Size() * 2, DivUp(formula.nVars_, unsatClauses.Size()) ), moved, 0);
 
         // TODO: this is too heavy
-        assert( newSatTr.Verify(next) );
+        // assert( newSatTr.Verify(next) );
 
         #pragma omp critical
         if( moved && curNUnsat < bestUnsat ) {
@@ -266,7 +266,7 @@ int main(int argc, char* argv[]) {
       assert(satTr.UnsatCount() == bestUnsat);
       assert(unsatClauses.Size() == bestUnsat);
       // TODO: this is too heavy
-      assert(satTr.Verify(formula.ans_));
+      // assert(satTr.Verify(formula.ans_));
 
       if(unsatClauses.Size() < nStartUnsat) {
         break;
@@ -291,7 +291,7 @@ int main(int argc, char* argv[]) {
         assert(!moved || newUnsat == unsatClauses.Size());
       } while(moved && newUnsat <= oldUnsat);
       // TODO: this is too heavy
-      assert(satTr.Verify(formula.ans_));
+      // assert(satTr.Verify(formula.ans_));
     }
     std::cout << "\n\tWalk: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
       << ", Known assignments: " << trav.seenAssignment_.Size()

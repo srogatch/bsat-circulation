@@ -27,7 +27,6 @@ struct Point {
   }
 };
 
-// TODO: thread safety
 struct Traversal {
   TrackingSet<uint128> seenFront_;
   TrackingSet<uint128> seenAssignment_;

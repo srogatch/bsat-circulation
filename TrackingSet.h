@@ -130,6 +130,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
       buckets_[i].set_.clear();
     }
     hash_ = 0;
+    size_ = 0;
   }
 
   int64_t Size() const {
