@@ -225,9 +225,7 @@ release:
     }
     #pragma omp parallel for
     for(int64_t i=1; i<=nVars_; i++) {
-      unsigned long long seed;
-      while(!_rdrand64_step(&seed));
-      std::mt19937_64 rng(seed);
+      std::mt19937_64 rng = GetSeededRandom();
       std::vector<int64_t>& list = listVar2Clause_.find(i)->second;
       list.assign(var2clause_[i].begin(), var2clause_[i].end());
       std::shuffle(list.begin(), list.end(), rng);
@@ -441,7 +439,7 @@ release:
       }
     }
     std::vector<int64_t> vVarFront = varFront.ToVector();
-    ParallelShuffle(vVarFront.data(), vVarFront.size());
+    // We don't serve shuffling here!
     return vVarFront;
   }
 
@@ -464,7 +462,7 @@ release:
       }
     }
     std::vector<int64_t> vClauseFront = clauseFront.ToVector();
-    ParallelShuffle(vClauseFront.data(), vClauseFront.size());
+    // We don't serve shuffling here!
     return vVarFront;
   }
 };

@@ -54,9 +54,16 @@ detail::FinalAction<F> Finally(F&& f) {
   return detail::FinalAction<F>(std::move(f));
 }
 
+inline std::mt19937_64 GetSeededRandom() {
+  unsigned long long seed;
+  while(!_rdrand64_step(&seed));
+  std::mt19937_64 rng(seed);
+  return rng;
+}
+
 template <typename T>
 void ParallelShuffle(T* data, const size_t count) {
-  const uint32_t nThreads = omp_get_max_threads();
+  const uint32_t nThreads = std::max<int64_t>(1, std::min<int64_t>(omp_get_max_threads(), count/3));
 
   std::atomic_flag* syncs = static_cast<std::atomic_flag*>(malloc(count * sizeof(std::atomic_flag)));
   auto clean_syncs = Finally([&]() { free(syncs); });
@@ -69,9 +76,7 @@ void ParallelShuffle(T* data, const size_t count) {
   // The number of threads here is important and must not default to whatever else
   #pragma omp parallel for num_threads(nThreads)
   for (size_t i = 0; i < nThreads; i++) {
-    unsigned long long seed;
-    while(!_rdrand64_step(&seed));
-    std::mt19937_64 rng(seed);
+    std::mt19937_64 rng = GetSeededRandom();
     std::uniform_int_distribution<size_t> dist(0, count - 1);
     const size_t iFirst = nPerThread * i;
     const size_t iLimit = std::min(nPerThread + iFirst, count);

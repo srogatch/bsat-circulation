@@ -12,7 +12,7 @@
 
 template<typename TCounter> struct SatTracker {
   static constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(TCounter);
-  static constexpr const int64_t kSyncContention = 37; // 37 per CPU
+  static constexpr const int64_t cSyncContention = 37; // 37 per CPU
   std::vector<int64_t> vVars_;
   std::unique_ptr<TCounter[]> nSat_;
   std::unique_ptr<std::atomic_flag[]> syncs_;
@@ -21,7 +21,7 @@ template<typename TCounter> struct SatTracker {
 
   void Init(Formula* pFormula) {
     pFormula_ = pFormula;
-    syncs_.reset(new std::atomic_flag[kSyncContention * nSysCpus]);
+    syncs_.reset(new std::atomic_flag[cSyncContention * nSysCpus]);
     vVars_.resize(pFormula->nVars_);
     constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars_[0]);
     #pragma omp parallel for schedule(static, cParChunkSize)
@@ -147,12 +147,12 @@ template<typename TCounter> struct SatTracker {
   }
 
   void Lock(const int64_t iClause) {
-    while(syncs_[iClause % (kSyncContention * nSysCpus)].test_and_set(std::memory_order_acq_rel)) {
+    while(syncs_[iClause % (cSyncContention * nSysCpus)].test_and_set(std::memory_order_acq_rel)) {
       std::this_thread::yield();
     }
   }
   void Unlock(const int64_t iClause) {
-    syncs_[iClause % (kSyncContention * nSysCpus)].clear(std::memory_order_release);
+    syncs_[iClause % (cSyncContention * nSysCpus)].clear(std::memory_order_release);
   }
 
   // The sign of iVar must reflect the new value of the variable.
@@ -229,60 +229,19 @@ template<typename TCounter> struct SatTracker {
     return pFormula_->nClauses_ - totSat_.load(std::memory_order_relaxed);
   }
 
-  // int64_t Divergence(const bool preferMove, Traversal& trav,
-  //   const VCTrackingSet* considerClauses, VCTrackingSet& unsatClauses,
-  //   int64_t minUnsat)
-  // {
-  //   std::vector<int64_t> subsetVars, *pvVars = nullptr;
-  //   if(considerClauses == nullptr) {
-  //     ParallelShuffle(vVars_.data(), vVars_.size());
-  //     pvVars = &vVars_;
-  //   }
-  //   else {
-  //     subsetVars = pFormula_->ClauseFrontToVars(*considerClauses, pFormula_->ans_);
-  //     pvVars = &subsetVars;
-  //   }
-  //   VCTrackingSet revVars;
-  //   std::mutex muState;
-  //   #pragma omp parallel for schedule(dynamic, 1)
-  //   for(int64_t i=0; i<pvVars->size(); i++) {
-  //     const int64_t aVar = (*pvVars)[k];
-  //     assert(1 <= aVar && aVar <= pFormula_->nVars_);
-  //     // This works in parallel as long as there are no duplicate variables in the vector
-  //     const int64_t iVar = aVar * (pFormula_->ans_[aVar] ? 1 : -1);
-  //     {
-  //       std::unique_lock<std::mutex> lock(muState);
-  //       revVars.Flip(aVar);
-  //     }
-  //     pFormula_->ans_.Flip(aVar);
-  //     FlipVar(-iVar, nullptr, nullptr);
-  //     bool bSeenMove = false;
-  //     {
-  //       std::unique_lock<std::mutex> lock(muState);
-  //       if(trav.IsSeenMove(unsatClauses, revVars)) {
-  //         revVars.Flip(aVar);
-  //         bSeenMove = true;
-  //       }
-  //     }
-  //     if(!bSeenMove) {
-
-  //     }
-  //   }
-  // }
-
   int64_t GradientDescend(const bool preferMove, Traversal& trav,
     const VCTrackingSet* considerClauses, VCTrackingSet& unsatClauses, const VCTrackingSet& startFront,
     VCTrackingSet& front, int64_t minUnsat, bool& moved)
   {
     std::vector<int64_t> subsetVars, *pvVars = nullptr;
     if(considerClauses == nullptr) {
-      ParallelShuffle(vVars_.data(), vVars_.size());
       pvVars = &vVars_;
     }
     else {
       subsetVars = pFormula_->ClauseFrontToVars(*considerClauses, pFormula_->ans_);
       pvVars = &subsetVars;
     }
+    ParallelShuffle(pvVars->data(), pvVars->size());
 
     VCTrackingSet revVars;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
@@ -366,6 +325,7 @@ template<typename TCounter> struct SatTracker {
         }
         if(level > 0 && newClauseFront.Size() > 0) {
           std::vector<int64_t> newVarFront = pFormula_->ClauseFrontToVars(newClauseFront, next);
+          ParallelShuffle(newVarFront.data(), newVarFront.size());
           bool nextMoved = false;
           const int64_t subNUnsat = ParallelGD(
             preferMove, varsAtOnce, newVarFront, next, trav, unsatClauses, startClauseFront,

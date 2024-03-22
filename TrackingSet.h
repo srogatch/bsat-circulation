@@ -20,9 +20,9 @@ template<typename TItem> struct MulKHashBaseWithSalt {
 };
 
 template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct TrackingSet {
-  static constexpr const int64_t kSyncContention = 37;
+  static constexpr const int64_t cSyncContention = 3;
 
-  std::unique_ptr<Bucket<TItem>[]> buckets_ = std::make_unique<Bucket<TItem>[]>(kSyncContention * nSysCpus);
+  std::unique_ptr<Bucket<TItem>[]> buckets_ = std::make_unique<Bucket<TItem>[]>(cSyncContention * nSysCpus);
   uint128 hash_ = 0;
   std::atomic<int64_t> size_ = 0;
 
@@ -38,7 +38,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     hash_ = src.hash_;
     size_ = src.Size();
     #pragma omp parallel for
-    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
+    for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       buckets_[i].set_ = src.buckets_[i].set_;
     }
   }
@@ -55,11 +55,11 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   }
 
   Bucket<TItem>& GetBucket(const TItem& item) {
-    return buckets_[THasher()(item) % (kSyncContention * nSysCpus)];
+    return buckets_[THasher()(item) % (cSyncContention * nSysCpus)];
   }
 
   const Bucket<TItem>& GetBucket(const TItem& item) const {
-    return buckets_[THasher()(item) % (kSyncContention * nSysCpus)];
+    return buckets_[THasher()(item) % (cSyncContention * nSysCpus)];
   }
 
   bool Add(const TItem& item) {
@@ -126,7 +126,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
 
   void Clear() {
     #pragma omp parallel for
-    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
+    for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       buckets_[i].set_.clear();
     }
     hash_ = 0;
@@ -143,7 +143,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     }
     std::atomic<bool> isEqual = true;
     #pragma omp parallel for shared(isEqual)
-    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
+    for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       if(buckets_[i].set_ != fellow.buckets_[i].set_) {
         isEqual = false;
         #pragma omp cancel for
@@ -158,7 +158,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     }
     std::atomic<bool> differ = false;
     #pragma omp parallel for
-    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
+    for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       if(buckets_[i].set_ != fellow.buckets_[i].set_) {
         differ = true;
         #pragma omp cancel for
@@ -171,7 +171,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   TrackingSet operator-(const TrackingSet& fellow) const {
     TrackingSet ans;
     #pragma omp parallel for
-    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
+    for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       for(const TItem& item : buckets_[i].set_) {
         if(!fellow.Contains(item)) {
           ans.Add(item);
@@ -185,7 +185,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     if(Size() <= fellow.Size()) {
       TrackingSet ans = fellow;
       #pragma omp parallel for
-      for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
+      for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
         for(const TItem& item : buckets_[i].set_) {
           ans.Add(item);
         }
@@ -203,14 +203,14 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     buckets_[0].prefixSum_ = prefSum;
     prefSum += buckets_[0].set_.size();
     //TODO: use parallel prefix sum computation?
-    for(int64_t i=1; i<kSyncContention * nSysCpus; i++) {
+    for(int64_t i=1; i<cSyncContention * nSysCpus; i++) {
       buckets_[i].prefixSum_ = prefSum;
       prefSum += buckets_[i].set_.size();
     }
     assert( prefSum == Size() );
 
     #pragma omp parallel for
-    for(int64_t i=0; i<kSyncContention * nSysCpus; i++) {
+    for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       int64_t j=buckets_[i].prefixSum_;
       for(const TItem& item : buckets_[i].set_) {
         ans[j] = item;
