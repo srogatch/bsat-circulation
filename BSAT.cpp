@@ -11,6 +11,9 @@
 #include <random>
 #include <map>
 #include <chrono>
+#include <csignal>
+#include <unistd.h>
+#include <dlfcn.h>
 
 std::vector<std::vector<uint64_t>> memComb;
 uint64_t Comb(const int64_t n, const int64_t k) {
@@ -60,6 +63,20 @@ uint64_t AccComb(const int64_t n, const int64_t k) {
   return mac;
 }
 
+void signalHandler(int signum) {
+  std::cout << "Interrupt signal (" << signum << ") received.\n";
+  // TODO: save the maximally satisfying assignment here
+
+  void (*_mcleanup)(void);
+  _mcleanup = (void (*)(void))dlsym(RTLD_DEFAULT, "_mcleanup");
+  if (_mcleanup == NULL) {
+    std::cerr << "Unable to find gprof exit hook" << std::endl;
+  }
+  else _mcleanup();
+
+  _exit(signum);
+}
+
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
 
 int main(int argc, char* argv[]) {
@@ -70,6 +87,7 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  signal(SIGINT, signalHandler);
   // TODO: does it override the environment variable?
   omp_set_num_threads(nSysCpus);
   // Enable nested parallelism
