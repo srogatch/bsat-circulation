@@ -77,10 +77,12 @@ template<typename TCounter> struct SatTracker {
     nSat_[0] = 1;
     #pragma omp parallel for schedule(guided, cParChunkSize) reduction(+:curTot)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
-      nSat_[i] = 0;
+      // Prevent the counter flowing below 1 if it's a dummy (always satisfied) clause
+      nSat_[i] = (pFormula_->dummySat_[i] ? 1 : 0);
       for(const int64_t iVar : pFormula_->clause2var_.find(i)->second) {
         assert(1 <= llabs(iVar) && llabs(iVar) <= pFormula_->nClauses_);
         if( (iVar < 0 && !assignment[-iVar]) || (iVar > 0 && assignment[iVar]) ) {
+          assert( nSat_[i] < std::numeric_limits<TCounter>::max() );
           nSat_[i]++;
         }
       }
@@ -101,7 +103,7 @@ template<typename TCounter> struct SatTracker {
       return false;
     }
     std::atomic<bool> ans = true;
-    #pragma omp parallel for schedule(guided, cParChunkSize)
+    #pragma omp parallel for schedule(guided, cParChunkSize) reduction(+:curTot)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       #pragma omp cancellation point for
       int64_t curSat = 0;
@@ -111,10 +113,10 @@ template<typename TCounter> struct SatTracker {
           curSat++;
         }
       }
-      if(curSat > 0) {
+      if(curSat > 0 || pFormula_->dummySat_[i]) {
         curTot++;
       }
-      if(nSat_[i] != curSat) {
+      if(nSat_[i] != curSat && !pFormula_->dummySat_[i]) {
         ans = false;
         #pragma omp cancel for
       }
@@ -135,7 +137,7 @@ template<typename TCounter> struct SatTracker {
       #pragma omp cancellation point for
       const int64_t iClause = vUnsat[i];
       assert(1 <= iClause && iClause <= pFormula_->nClauses_);
-      if(nSat_[iClause] != 0) {
+      if(nSat_[iClause] != 0 || pFormula_->dummySat_[i]) {
         ans = false;
         #pragma omp cancel for
       }
@@ -172,6 +174,7 @@ template<typename TCounter> struct SatTracker {
         if constexpr(concurrent) {
           Lock(aClause);
         }
+        assert(nSat_[aClause] < std::numeric_limits<TCounter>::max());
         nSat_[aClause]++;
         assert(nSat_[aClause] >= 1);
         if(nSat_[aClause] == 1) { // just became satisfied
@@ -191,8 +194,8 @@ template<typename TCounter> struct SatTracker {
         if constexpr(concurrent) {
           Lock(aClause);
         }
+        assert(nSat_[aClause] > 0);
         nSat_[aClause]--;
-        assert(nSat_[aClause] >= 0);
         if(nSat_[aClause] == 0) { // just became unsatisfied
           ans--;
           if(unsatClauses != nullptr) {
@@ -375,4 +378,4 @@ template<typename TCounter> struct SatTracker {
   }
 };
 
-using DefaultSatTracker = SatTracker<int16_t>;
+using DefaultSatTracker = SatTracker<uint8_t>;
