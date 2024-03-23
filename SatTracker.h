@@ -162,8 +162,9 @@ template<typename TCounter> struct SatTracker {
   template<bool concurrent> int64_t FlipVar(const int64_t iVar, VCTrackingSet* unsatClauses, VCTrackingSet* front) {
     const std::vector<VCIndex>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     int64_t ans = 0;
-    const int numThreads = std::min<int>(DivUp(clauses.size(), kRamPageBytes / sizeof(VCIndex)), nSysCpus);
-    #pragma omp parallel for reduction(+:ans) schedule(static, kCacheLineSize / sizeof(VCIndex)) num_threads(numThreads)
+    constexpr const int cChunkSize = kCacheLineSize * 4; // Is (kRamPageBytes / sizeof(VCIndex)) better here?
+    const int numThreads = std::min<int>(DivUp(clauses.size(), cChunkSize), nSysCpus);
+    #pragma omp parallel for reduction(+:ans) schedule(static, cChunkSize) num_threads(numThreads)
     for(int64_t i=0; i<int64_t(clauses.size()); i++) {
       const int64_t iClause = clauses[i];
       const int64_t aClause = llabs(iClause);
