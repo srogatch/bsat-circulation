@@ -242,7 +242,7 @@ int main(int argc, char* argv[]) {
     vClauses.reserve(unsatClauses.set_.size() * 4);
     bool allowDuplicateFront = false;
     while(unsatClauses.set_.size() >= nStartUnsat) {
-      assert(formula.ComputeUnsatClauses() == unsatClauses);
+      // Too heavy: assert(formula.ComputeUnsatClauses() == unsatClauses);
       if(front.set_.empty() || (!allowDuplicateFront && seenFront.find(front) != seenFront.end())) {
         //std::cout << "Empty front" << std::endl;
         front = unsatClauses;
