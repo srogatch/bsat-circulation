@@ -301,7 +301,6 @@ int main(int argc, char* argv[]) {
         }
         front.Clear();
         moved = false;
-        const VCIndex oldUnsat = newUnsat;
         newUnsat = satTr.GradientDescend( unsatClauses.Size() >= nStartUnsat, trav, &oldFront, unsatClauses, oldFront, front,
           satTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, formula.ans_,
           nSequentialGD%knSortTypes + kMinSortType

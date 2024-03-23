@@ -370,7 +370,7 @@ template<typename TCounter> struct SatTracker {
     }
     return std::max<int64_t>(
       unsatClauses.Size() * 2,
-      DivUp(llround(std::sqrt(pFormula_->nClauses_)), nStartUnsat) + unsatClauses.Size()
+      DivUp(pFormula_->nVars_, nStartUnsat) + unsatClauses.Size()
     );
   }
 };
