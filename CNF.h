@@ -24,15 +24,9 @@
 #include <random>
 #include <algorithm>
 
-template <typename T> constexpr int Signum(const T val) {
-  return (T(0) < val) - (val < T(0));
-}
-
 struct Formula {
-  // TODO: replace with vectors and allow parallel build
-  std::unordered_map<uint64_t, std::unordered_set<int64_t>> clause2var_;
-  std::unordered_map<uint64_t, std::unordered_set<int64_t>> var2clause_;
-  std::unordered_map<uint64_t, std::vector<int64_t>> listVar2Clause_;
+  Linkage clause2var_;
+  Linkage var2clause_;
   int64_t nVars_ = 0, nClauses_ = 0;
   BitVector ans_;
   BitVector dummySat_;

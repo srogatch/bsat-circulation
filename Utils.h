@@ -23,6 +23,10 @@ template<typename T, typename U> constexpr T DivUp(const T a, const U b) {
   return (a + T(b) - 1) / T(b);
 }
 
+template <typename T> constexpr int Signum(const T val) {
+  return (T(0) < val) - (val < T(0));
+}
+
 // Define a primary template for is_specialization_of, which defaults to false.
 template<typename Test, template<typename...> class Ref>
 struct is_specialization_of : std::false_type {};
