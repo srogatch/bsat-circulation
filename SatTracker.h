@@ -162,7 +162,8 @@ template<typename TCounter> struct SatTracker {
   template<bool concurrent> int64_t FlipVar(const int64_t iVar, VCTrackingSet* unsatClauses, VCTrackingSet* front) {
     const std::vector<VCIndex>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
     int64_t ans = 0;
-    #pragma omp parallel for reduction(+:ans) schedule(static, kRamPageBytes / sizeof(VCIndex))
+    const int numThreads = std::min<int>(DivUp(clauses.size(), kRamPageBytes / sizeof(VCIndex)), nSysCpus);
+    #pragma omp parallel for reduction(+:ans) schedule(static, kCacheLineSize / sizeof(VCIndex)) num_threads(numThreads)
     for(int64_t i=0; i<int64_t(clauses.size()); i++) {
       const int64_t iClause = clauses[i];
       const int64_t aClause = llabs(iClause);
@@ -365,7 +366,7 @@ template<typename TCounter> struct SatTracker {
   int64_t NextUnsatCap(const VCTrackingSet& unsatClauses, [[maybe_unused]] const int64_t nStartUnsat) const {
     return std::max<int64_t>(
       unsatClauses.Size() * 2,
-      DivUp(pFormula_->nVars_, nStartUnsat)
+      DivUp(pFormula_->nVars_, nStartUnsat) // + unsatClauses.Size()
     );
   }
 };

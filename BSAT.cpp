@@ -200,8 +200,8 @@ int main(int argc, char* argv[]) {
       VCTrackingSet bestRevVars;
 
       std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(front, formula.ans_);
-      const int64_t startNIncl = 2;
-      const int64_t endNIncl = std::min<int64_t>(varFront.size(), 3);
+      const int64_t startNIncl = 1;
+      const int64_t endNIncl = std::min<int64_t>(varFront.size(), 4);
       std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
       //std::cout.flush();
       #pragma omp parallel for schedule(dynamic, 1)
