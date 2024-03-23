@@ -292,14 +292,6 @@ int main(int argc, char* argv[]) {
       std::cout << "S";
       bool moved;
       for(;;) {
-        // TODO: this is just to see the progress of the largest 2023 formula
-        if(newUnsat < nStartUnsat) {
-          // std::cout << "(" << newUnsat << ","
-          //   << std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmVeryStart).count() / (60 * 1e9)
-          //   << ")";
-          // std::cout.flush();
-          break;
-        }
         VCTrackingSet oldFront;
         if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
           oldFront = unsatClauses;
@@ -309,14 +301,17 @@ int main(int argc, char* argv[]) {
         }
         front.Clear();
         moved = false;
-        newUnsat = satTr.GradientDescend( true, trav, &oldFront, unsatClauses, oldFront, front,
+        const VCIndex oldUnsat = newUnsat;
+        newUnsat = satTr.GradientDescend( unsatClauses.Size() >= nStartUnsat, trav, &oldFront, unsatClauses, oldFront, front,
           satTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, formula.ans_,
           nSequentialGD%knSortTypes + kMinSortType
         );
         nSequentialGD++;
-        if(!moved) {
+        if(!moved || newUnsat == 0) {
           break;
         }
+        // TODO: what if newUnsat > oldUnsat? Breaking at this point is empirically inefficient (progress stops).
+        // Perhaps a better solution would be restoring the previous assignment, but it's slow.
       }
     }
     std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
