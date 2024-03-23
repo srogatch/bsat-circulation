@@ -291,6 +291,7 @@ int main(int argc, char* argv[]) {
       int64_t newUnsat = unsatClauses.Size();
       std::cout << "S";
       bool moved;
+      int64_t nCurIts = 0;
       for(;;) {
         VCTrackingSet oldFront;
         if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
@@ -299,14 +300,16 @@ int main(int argc, char* argv[]) {
         } else {
           oldFront = front;
         }
+        VCIndex oldFrontSize = oldFront.Size();
         front.Clear();
         moved = false;
         newUnsat = satTr.GradientDescend( unsatClauses.Size() >= nStartUnsat, trav, &oldFront, unsatClauses, oldFront, front,
-          satTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, formula.ans_,
+          satTr.NextUnsatCap(unsatClauses, nStartUnsat) - nCurIts, moved, formula.ans_,
           nSequentialGD%knSortTypes + kMinSortType
         );
+        nCurIts += oldFrontSize;
         nSequentialGD++;
-        if(!moved || newUnsat == 0) {
+        if(!moved || newUnsat == 0 || satTr.NextUnsatCap(unsatClauses, nStartUnsat) - nCurIts <= 0) {
           break;
         }
         // TODO: what if newUnsat > oldUnsat? Breaking at this point is empirically inefficient (progress stops).
