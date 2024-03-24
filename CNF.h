@@ -169,6 +169,7 @@ struct Formula {
     parsingThr.join();
 
     PrepareLinkage();
+    return true;
   }
 
   void PrepareLinkage() {
@@ -231,8 +232,10 @@ struct Formula {
   }
 
   bool SolWorks() {
+    std::atomic<bool> allSat = true;
     #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(VCIndex iClause=1; iClause<=nClauses_; iClause++) {
+      #pragma omp cancellation point for
       if(dummySat_[iClause]) {
         continue; // satisfied because the clause contains a variable and its negation
       }
@@ -248,11 +251,12 @@ struct Formula {
           }
         }
         if(!satisfied) {
-          return false;
+          allSat.store(false);
+          #pragma omp cancel for
         }
       }
     }
-    return true;
+    return allSat;
   }
 
   int64_t CountUnsat(const BitVector& assignment) const {
