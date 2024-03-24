@@ -181,12 +181,16 @@ struct Formula {
     RangeVector<RangeVector<std::vector<int64_t>, int8_t>, VCIndex> toRemove(-nClauses_, nClauses_);
     #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=1; i<=nClauses_; i++) {
+      if(i == 0) {
+        continue;
+      }
+      toRemove[i] = RangeVector<std::vector<int64_t>, int8_t>(-1, 1);
+      toRemove[-i] = RangeVector<std::vector<int64_t>, int8_t>(-1, 1);
       // No variables at all in the clause - assume it's satisfied
       if(clause2var_.ArcCount(i) == 0) {
         dummySat_.Flip(i);
         continue;
       }
-      toRemove[i] = RangeVector<std::vector<int64_t>, int8_t>(-1, 1);
       bool isDummy = false;
       for(int8_t sgnFrom=-1; sgnFrom<=1; sgnFrom+=2) {
         const VCIndex iClause = sgnFrom * i;
@@ -211,12 +215,15 @@ struct Formula {
         continue;
       }
       for(int8_t sgn=-1; sgn<=1; sgn+=2) {
-        std::vector<VCIndex>& targets = clause2var_.sources_[i][sgn];
         const std::vector<VCIndex>& removals = toRemove[i][sgn];
+        if(removals.empty()) {
+          continue;
+        }
+        std::vector<VCIndex>& targets = clause2var_.sources_[i][sgn];
         VCIndex k = 0; // index in removals
         VCIndex newSize = 0;
         for(VCIndex j=0; j<int64_t(targets.size()); j++) {
-          if(j == removals[k]) {
+          if(k < int64_t(removals.size()) && j == removals[k]) {
             k++;
             continue;
           }

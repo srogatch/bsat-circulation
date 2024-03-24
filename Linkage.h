@@ -38,18 +38,21 @@ struct Linkage {
   void Sort() {
     #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(VCIndex i=sources_.minIndex_; i<=sources_.maxIndex_; i++) {
+      if(i == 0) {
+        continue;
+      }
       RangeVector<std::vector<VCIndex>, int8_t>& source = sources_[i];
       for(int8_t sgn=-1; sgn<=1; sgn+=2) {
-        std::sort(source[i].begin(), source[i].end());
+        std::sort(source[sgn].begin(), source[sgn].end());
         VCIndex newSize = 0;
         // Remove duplicate arcs
-        for(VCIndex j=0; j<int64_t(source[i].size()); j++) {
-          if(j == 0 || source[i][j-1] != source[i][j]) {
-            source[i][newSize] = source[i][j];
+        for(VCIndex j=0; j<int64_t(source[sgn].size()); j++) {
+          if(j == 0 || source[sgn][j-1] != source[sgn][j]) {
+            source[sgn][newSize] = source[sgn][j];
             newSize++;
           }
         }
-        source[i].resize(newSize);
+        source[sgn].resize(newSize);
       }
     }
   }
