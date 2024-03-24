@@ -168,6 +168,10 @@ struct Formula {
     std::cout << "Finished streaming the input file." << std::endl;
     parsingThr.join();
 
+    PrepareLinkage();
+  }
+
+  void PrepareLinkage() {
     std::cout << "Sorting the linkage data structures." << std::endl;
     clause2var_.Sort();
     var2clause_.Sort();
@@ -204,17 +208,24 @@ struct Formula {
         continue;
       }
       for(int8_t sgn=-1; sgn<=1; sgn+=2) {
-        for(VCIndex j=VCIndex(toRemove[i][sgn].size())-1; j>=0; j--) {
-          const VCIndex remPos = toRemove[i][sgn][j];
-          clause2var_.sources_[i][sgn][remPos] = clause2var_.sources_[i][sgn].back();
-          clause2var_.sources_[i][sgn].pop_back();
+        std::vector<VCIndex>& targets = clause2var_.sources_[i][sgn];
+        const std::vector<VCIndex>& removals = toRemove[i][sgn];
+        VCIndex k = 0; // index in removals
+        VCIndex newSize = 0;
+        for(VCIndex j=0; j<targets.size(); j++) {
+          if(j == removals[k]) {
+            k++;
+            continue;
+          }
+          targets[newSize] = targets[j];
+          newSize++;
         }
+        assert(k == removals.size());
+        assert(newSize + removals.size() == targets.size());
+        targets.resize(newSize);
+        // This way the data structure remains sorted
       }
     }
-
-    std::cout << "Sorting the linkage data structures again." << std::endl;
-    clause2var_.Sort();
-    var2clause_.Sort();
   }
 
   bool SolWorks() {
