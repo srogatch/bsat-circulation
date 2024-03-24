@@ -17,21 +17,25 @@ struct Reduction {
     iRoot_ = formula_.nVars_ + formula_.nClauses_ + 1;
     iST_ = iRoot_ + 1;
 
-    for(auto& clause : formula_.clause2var_) {
-      if(src.dummySat_[clause.first]) {
+    for(VCIndex i=1; i<=formula_.nClauses_; i++) {
+      if(formula_.dummySat_[i]) {
         continue; // don't add arcs for dummy-satisfied clauses
       }
-      assert(1 <= int64_t(clause.first) && int64_t(clause.first) <= formula_.nClauses_);
-      for(int64_t iVar : clause.second) {
-        assert(1 <= llabs(iVar) && llabs(iVar) <= formula_.nVars_);
-        if( (iVar < 0 && !formula_.ans_[-iVar]) || (iVar > 0 && formula_.ans_[iVar]) ) {
-          // The value assigned to this variable satisfies the clause:
-          // An arc from the variable to the clause.
-          fGraph_.AddMerge(Arc(llabs(iVar), formula_.nVars_+clause.first, 0, 1));
-        } else {
-          // Unsatisfying assignment:
-          // An arc from the clause to the variable.
-          fGraph_.AddMerge(Arc(formula_.nVars_+clause.first, llabs(iVar), 0, 1));
+      for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
+        const VCIndex nArcs = formula_.clause2var_.ArcCount(i, sgnTo);
+        for(VCIndex at=0; at<nArcs; at++) {
+          const VCIndex iVar = formula_.clause2var_.GetTarget(i, sgnTo, at);
+          assert(Signum(iVar) == sgnTo);
+          assert(1 <= llabs(iVar) && llabs(iVar) <= formula_.nVars_);
+          if( (sgnTo < 0 && !formula_.ans_[-iVar]) || (sgnTo > 0 && formula_.ans_[iVar]) ) {
+            // The value assigned to this variable satisfies the clause:
+            // An arc from the variable to the clause.
+            fGraph_.AddMerge(Arc(llabs(iVar), formula_.nVars_+i, 0, 1));
+          } else {
+            // Unsatisfying assignment:
+            // An arc from the clause to the variable.
+            fGraph_.AddMerge(Arc(formula_.nVars_+i, llabs(iVar), 0, 1));
+          }
         }
       }
     }
