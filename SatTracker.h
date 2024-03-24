@@ -181,7 +181,7 @@ template<typename TCounter> struct SatTracker {
     VCIndex balance = 0;
     constexpr const int cChunkSize = (kRamPageBytes / sizeof(VCIndex));
     {
-      const int8_t sgnTo = 1;
+      const int8_t sgnTo = Signum(iVar);
       const VCIndex nArcs = pFormula_->var2clause_.ArcCount(iVar, sgnTo);
       VCIndex ans = 0;
       const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
@@ -189,7 +189,7 @@ template<typename TCounter> struct SatTracker {
       for(VCIndex at=0; at<nArcs; at++) {
         const VCIndex iClause = pFormula_->var2clause_.GetTarget(iVar, sgnTo, at);
         const VCIndex aClause = llabs(iClause);
-        assert(Signum(iClause) == Signum(iVar));
+        assert(Signum(iClause) == 1);
         if constexpr(concurrent) {
           Lock(aClause);
         }
@@ -212,7 +212,7 @@ template<typename TCounter> struct SatTracker {
       balance += ans;
     }
     {
-      const int8_t sgnTo = -1;
+      const int8_t sgnTo = -Signum(iVar);
       const VCIndex nArcs = pFormula_->var2clause_.ArcCount(iVar, sgnTo);
       VCIndex ans = 0;
       const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
@@ -220,7 +220,7 @@ template<typename TCounter> struct SatTracker {
       for(VCIndex at=0; at<nArcs; at++) {
         const VCIndex iClause = pFormula_->var2clause_.GetTarget(iVar, sgnTo, at);
         const VCIndex aClause = llabs(iClause);
-        assert(Signum(iClause) == -Signum(iVar));
+        assert(Signum(iClause) == -1);
         if constexpr(concurrent) {
           Lock(aClause);
         }
