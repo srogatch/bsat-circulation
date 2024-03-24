@@ -231,19 +231,25 @@ struct Formula {
   }
 
   bool SolWorks() {
-    for(const auto& dj : clause2var_) {
-      if(dummySat_[dj.first]) {
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    for(VCIndex iClause=1; iClause<=nClauses_; iClause++) {
+      if(dummySat_[iClause]) {
         continue; // satisfied because the clause contains a variable and its negation
       }
       bool satisfied = false;
-      for(const int64_t iVar : dj.second) {
-        if( (iVar > 0 && ans_[iVar]) || (iVar < 0 && !ans_[-iVar]) ) {
-          satisfied = true;
-          break;
+      for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
+        const VCIndex nArcs = clause2var_.ArcCount(iClause, sgnTo);
+        for(VCIndex at=0; at<nArcs; at++) {
+          const VCIndex iVar = clause2var_.GetTarget(iClause, sgnTo, at);
+          assert(Signum(iVar) == sgnTo);
+          if( (sgnTo > 0 && ans_[iVar]) || (sgnTo < 0 && !ans_[-iVar]) ) {
+            satisfied = true;
+            break;
+          }
         }
-      }
-      if(!satisfied) {
-        return false;
+        if(!satisfied) {
+          return false;
+        }
       }
     }
     return true;
@@ -264,11 +270,14 @@ struct Formula {
     if(dummySat_[iClause]) {
       return true;
     }
-    auto it = clause2var_.find(iClause);
-    assert(it != clause2var_.end());
-    for(const int64_t iVar : it->second) {
-      if( (iVar < 0 && !assignment[-iVar]) || (iVar > 0 && assignment[iVar]) ) {
-        return true;
+    for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
+      const VCIndex nArcs = clause2var_.ArcCount(iClause, sgnTo);
+      for(VCIndex at=0; at<nArcs; at++) {
+        const VCIndex iVar = clause2var_.GetTarget(iClause, sgnTo, at);
+        assert(Signum(iVar) == sgnTo);
+        if( (sgnTo < 0 && !assignment[-iVar]) || (sgnTo > 0 && assignment[iVar]) ) {
+          return true;
+        }
       }
     }
     return false;
@@ -285,116 +294,22 @@ struct Formula {
     return ans;
   }
 
-  BitVector SetGreedy1() const {
-    BitVector ans(nVars_+1); // Init to false
-    std::vector<std::pair<int64_t, int64_t>> counts_;
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
-    for(int64_t i=1; i<=nVars_; i++) {
-      auto it = var2clause_.find(i);
-      if(it == var2clause_.end()) {
-        continue; // this variable doesn't appear in any clause - let it stay false
-      }
-      int64_t nPos = 0, nNeg = 0;
-      for(const int64_t j : it->second) {
-        if(j < 0) {
-          nNeg++;
-        } else {
-          nPos++;
-        }
-      }
-      if(nPos > nNeg) {
-        ans.Flip(i);
-      }
-    }
-    return ans;
-  }
-
-  BitVector SetGreedy2() const {
-    BitVector ans(nVars_+1); // Init to false
-    BitVector knownClauses(nClauses_+1); // Init to false
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
-    for(int64_t i=1; i<=nVars_; i++) {
-      auto it = var2clause_.find(i);
-      if(it == var2clause_.end()) {
-        continue;
-      }
-      for(const int64_t iClause : it->second) {
-        if(!knownClauses[llabs(iClause)]) {
-          knownClauses.Flip(llabs(iClause));
-          if(iClause > 0) {
-            ans.Flip(i);
-          }
-          break;
-        }
-      }
-    }
-    return ans;
-  }
-
-  // Disable it as it gives inferior results, but is also single-threaded / slow
-  BitVector SetDfs() const {
-    BitVector ans(nVars_+1); // Init to false
-    BitVector visitedVars(nVars_+1); // Init to false
-    BitVector knownClauses(nClauses_+1); // Init to false
-    std::vector<int64_t> trail;
-    std::mt19937 rng;
-
-    for(int64_t i=1; i<=nVars_; i++) {
-      if(!visitedVars[i]) {
-        visitedVars.Flip(i);
-        trail.push_back(i);
-      }
-      while(!trail.empty()) {
-        const int64_t at = rng() % trail.size();
-        const int64_t iVar = trail[at];
-        trail[at] = trail.back();
-        trail.pop_back();
-        auto jt = var2clause_.find(llabs(iVar));
-        if(jt == var2clause_.end()) {
-          continue;
-        }
-        bool assigned = false;
-        for(const int64_t iClause : jt->second) {
-          if(knownClauses[llabs(iClause)]) {
-            continue;
-          }
-          knownClauses.Flip(llabs(iClause));
-          if(!assigned) {
-            assigned = true;
-            if(iClause > 0) {
-              ans.Flip(llabs(iVar));
-            }
-          }
-          auto kt = clause2var_.find(llabs(iClause));
-          if(kt == clause2var_.end()) {
-            continue;
-          }
-          for(const int64_t k : kt->second) {
-            if(visitedVars[llabs(k)]) {
-              continue;
-            }
-            visitedVars.Flip(llabs(k));
-            trail.push_back(k);
-          }
-        }
-      }
-    }
-    return ans;
-  }
-
   int64_t GetSatDiff(const uint64_t iClause, const BitVector& newAsg, const int64_t iFlipVar) const {
     if(dummySat_[iClause]) {
       return 0;
     }
-    auto it = clause2var_.find(iClause);
-    assert(it != clause2var_.end());
     int64_t nSatVars = 0;
     bool flippedSat = false;
-    for(const int64_t iVar : it->second) {
-      if( (iVar < 0 && !newAsg[-iVar]) || (iVar > 0 && newAsg[iVar]) ) {
-        nSatVars++;
-        if(iVar == iFlipVar) {
-          flippedSat = true;
+    for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
+      const VCIndex nArcs = clause2var_.ArcCount(iClause, sgnTo);
+      for(VCIndex at=0; at<nArcs; at++) {
+        const VCIndex iVar = clause2var_.GetTarget(iClause, sgnTo, at);
+        assert(Signum(iVar) == sgnTo);
+        if( (sgnTo < 0 && !newAsg[-iVar]) || (sgnTo > 0 && newAsg[iVar]) ) {
+          nSatVars++;
+          if(iVar == iFlipVar) {
+            flippedSat = true;
+          }
         }
       }
     }
@@ -407,17 +322,6 @@ struct Formula {
     }
   }
 
-  // To avoid false sharing in SatTracker, don't call it - let the indices stay randomized
-  void SortClauseLists() {
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
-    for(int64_t i=1; i<=nVars_; i++) {
-      std::vector<int64_t>& clauses = listVar2Clause_[i];
-      std::sort(clauses.begin(), clauses.end(), [](const int64_t a, const int64_t b) {
-        return llabs(a) < llabs(b);
-      });
-    }
-  }
-
   // For a set of clauses, return the set of variables that dissatisfy the clauses
   std::vector<MultiItem<VCIndex>> ClauseFrontToVars(const VCTrackingSet& clauseFront, const BitVector& assignment) {
     TrackingSet<MultiItem<VCIndex>> varFront;
@@ -426,12 +330,17 @@ struct Formula {
     for(int64_t i=0; i<int64_t(vClauseFront.size()); i++) {
       const int64_t originClause = vClauseFront[i];
       assert(1 <= originClause && originClause <= nClauses_);
-      for(const int64_t iVar : clause2var_.find(originClause)->second) {
-        assert(1 <= llabs(iVar) && llabs(iVar) <= nVars_);
-        if( (iVar < 0 && assignment[-iVar]) || (iVar > 0 && !assignment[iVar]) ) {
-          // A dissatisfying arc
-          const int64_t revV = llabs(iVar);
-          varFront.Add(revV);
+      for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
+        const VCIndex nArcs = clause2var_.ArcCount(originClause, sgnTo);
+        for(VCIndex at=0; at<nArcs; at++) {
+          const VCIndex iVar = clause2var_.GetTarget(originClause, sgnTo, at);
+          assert(Signum(iVar) == sgnTo);
+          assert(1 <= llabs(iVar) && llabs(iVar) <= nVars_);
+          if( (sgnTo < 0 && assignment[-iVar]) || (sgnTo > 0 && !assignment[iVar]) ) {
+            // A dissatisfying arc
+            const int64_t revV = llabs(iVar);
+            varFront.Add(revV);
+          }
         }
       }
     }
@@ -445,16 +354,17 @@ struct Formula {
     std::vector<int64_t> vVarFront = varFront.ToVector();
     #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=0; i<int64_t(vVarFront.size()); i++) {
-      const int64_t originVar = vVarFront[i];
-      assert(1 <= originVar && originVar <= nVars_);
-      const int64_t iVar = assignment[originVar] ? originVar : -originVar;
-      for(const int64_t iClause : listVar2Clause_[originVar]) {
-        assert(1 <= iClause && iClause <= nClauses_);
-        if(iVar * iClause < 0) {
-          // A dissatisfying arc
-          const int64_t dissatClause = llabs(iClause);
-          clauseFront.Add(dissatClause);
-        }
+      const VCIndex aVar = vVarFront[i];
+      assert(1 <= aVar && aVar <= nVars_);
+      const VCIndex iVar = assignment[aVar] ? aVar : -aVar;
+      const int8_t sgnTo = -Signum(iVar);
+      const VCIndex nArcs = var2clause_.ArcCount(aVar, sgnTo);
+      for(VCIndex at=0; at<nArcs; at++) {
+        const VCIndex iClause = var2clause_.GetTarget(aVar, sgnTo, at);
+        assert(iVar * iClause < 0);
+        // A dissatisfying arc
+        const int64_t dissatClause = llabs(iClause);
+        clauseFront.Add(dissatClause);
       }
     }
     std::vector<int64_t> vClauseFront = clauseFront.ToVector();
