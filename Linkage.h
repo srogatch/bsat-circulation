@@ -43,7 +43,7 @@ struct Linkage {
         std::sort(source[i].begin(), source[i].end());
         VCIndex newSize = 0;
         // Remove duplicate arcs
-        for(VCIndex j=0; j<source[i].size(); j++) {
+        for(VCIndex j=0; j<int64_t(source[i].size()); j++) {
           if(j == 0 || source[i][j-1] != source[i][j]) {
             source[i][newSize] = source[i][j];
             newSize++;

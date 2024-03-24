@@ -215,7 +215,7 @@ struct Formula {
         const std::vector<VCIndex>& removals = toRemove[i][sgn];
         VCIndex k = 0; // index in removals
         VCIndex newSize = 0;
-        for(VCIndex j=0; j<targets.size(); j++) {
+        for(VCIndex j=0; j<int64_t(targets.size()); j++) {
           if(j == removals[k]) {
             k++;
             continue;
@@ -223,7 +223,7 @@ struct Formula {
           targets[newSize] = targets[j];
           newSize++;
         }
-        assert(k == removals.size());
+        assert(k == int64_t(removals.size()));
         assert(newSize + removals.size() == targets.size());
         targets.resize(newSize);
         // This way the data structure remains sorted
@@ -240,6 +240,7 @@ struct Formula {
         continue; // satisfied because the clause contains a variable and its negation
       }
       bool satisfied = false;
+      #pragma unroll
       for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
         const VCIndex nArcs = clause2var_.ArcCount(iClause, sgnTo);
         for(VCIndex at=0; at<nArcs; at++) {
@@ -274,6 +275,7 @@ struct Formula {
     if(dummySat_[iClause]) {
       return true;
     }
+    #pragma unroll
     for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
       const VCIndex nArcs = clause2var_.ArcCount(iClause, sgnTo);
       for(VCIndex at=0; at<nArcs; at++) {
@@ -304,6 +306,7 @@ struct Formula {
     }
     int64_t nSatVars = 0;
     bool flippedSat = false;
+    #pragma unroll
     for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
       const VCIndex nArcs = clause2var_.ArcCount(iClause, sgnTo);
       for(VCIndex at=0; at<nArcs; at++) {
@@ -334,6 +337,7 @@ struct Formula {
     for(int64_t i=0; i<int64_t(vClauseFront.size()); i++) {
       const int64_t originClause = vClauseFront[i];
       assert(1 <= originClause && originClause <= nClauses_);
+      #pragma unroll
       for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
         const VCIndex nArcs = clause2var_.ArcCount(originClause, sgnTo);
         for(VCIndex at=0; at<nArcs; at++) {

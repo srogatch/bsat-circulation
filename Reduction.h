@@ -21,6 +21,7 @@ struct Reduction {
       if(formula_.dummySat_[i]) {
         continue; // don't add arcs for dummy-satisfied clauses
       }
+      #pragma unroll
       for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
         const VCIndex nArcs = formula_.clause2var_.ArcCount(i, sgnTo);
         for(VCIndex at=0; at<nArcs; at++) {

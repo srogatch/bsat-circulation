@@ -79,11 +79,17 @@ template<typename TCounter> struct SatTracker {
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       // Prevent the counter flowing below 1 if it's a dummy (always satisfied) clause
       nSat_[i] = (pFormula_->dummySat_[i] ? 1 : 0);
-      for(const int64_t iVar : pFormula_->clause2var_.find(i)->second) {
-        assert(1 <= llabs(iVar) && llabs(iVar) <= pFormula_->nClauses_);
-        if( (iVar < 0 && !assignment[-iVar]) || (iVar > 0 && assignment[iVar]) ) {
-          assert( nSat_[i] < std::numeric_limits<TCounter>::max() );
-          nSat_[i]++;
+      #pragma unroll
+      for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
+        const VCIndex nArcs = pFormula_->clause2var_.ArcCount(i, sgnTo);
+        for(VCIndex at=0; at<nArcs; at++) {
+          const int64_t iVar = pFormula_->clause2var_.GetTarget(i, sgnTo, at);
+          assert(Signum(iVar) == sgnTo);
+          assert(1 <= llabs(iVar) && llabs(iVar) <= pFormula_->nClauses_);
+          if( (sgnTo < 0 && !assignment[-iVar]) || (sgnTo > 0 && assignment[iVar]) ) {
+            assert( nSat_[i] < std::numeric_limits<TCounter>::max() );
+            nSat_[i]++;
+          }
         }
       }
       if(nSat_[i]) {
@@ -106,17 +112,23 @@ template<typename TCounter> struct SatTracker {
     #pragma omp parallel for schedule(guided, cParChunkSize) reduction(+:curTot)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       #pragma omp cancellation point for
-      int64_t curSat = 0;
-      for(const int64_t iVar : pFormula_->clause2var_.find(i)->second) {
-        assert(1 <= llabs(iVar) && llabs(iVar) <= pFormula_->nClauses_);
-        if( (iVar < 0 && !assignment[-iVar]) || (iVar > 0 && assignment[iVar]) ) {
-          curSat++;
+      int64_t curSat = (pFormula_->dummySat_[i] ? 1 : 0);
+      #pragma unroll
+      for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
+        const VCIndex nArcs = pFormula_->clause2var_.ArcCount(i, sgnTo);
+        for(VCIndex at=0; at<nArcs; at++) {
+          const int64_t iVar = pFormula_->clause2var_.GetTarget(i, sgnTo, at);
+          assert(Signum(iVar) == sgnTo);
+          assert(1 <= llabs(iVar) && llabs(iVar) <= pFormula_->nClauses_);
+          if( (sgnTo < 0 && !assignment[-iVar]) || (sgnTo > 0 && assignment[iVar]) ) {
+            curSat++;
+          }
         }
       }
-      if(curSat > 0 || pFormula_->dummySat_[i]) {
+      if(curSat > 0) {
         curTot++;
       }
-      if(nSat_[i] != curSat && !pFormula_->dummySat_[i]) {
+      if(nSat_[i] != curSat) {
         ans = false;
         #pragma omp cancel for
       }
@@ -162,15 +174,18 @@ template<typename TCounter> struct SatTracker {
   // The sign of iVar must reflect the new value of the variable.
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
   template<bool concurrent> int64_t FlipVar(const int64_t iVar, VCTrackingSet* unsatClauses, VCTrackingSet* front) {
-    const std::vector<VCIndex>& clauses = pFormula_->listVar2Clause_.find(llabs(iVar))->second;
-    int64_t ans = 0;
+    int64_t balance = 0;
     constexpr const int cChunkSize = (kRamPageBytes / sizeof(VCIndex));
-    const int numThreads = std::min<int>(DivUp(clauses.size(), cChunkSize), nSysCpus);
-    #pragma omp parallel for reduction(+:ans) schedule(static, cChunkSize) num_threads(numThreads)
-    for(int64_t i=0; i<int64_t(clauses.size()); i++) {
-      const int64_t iClause = clauses[i];
-      const int64_t aClause = llabs(iClause);
-      if(iClause * iVar > 0) {
+    {
+      const int8_t sgnTo = Signum(iVar);
+      const VCIndex nArcs = pFormula_->var2clause_.ArcCount(iVar, sgnTo);
+      int64_t ans = 0;
+      const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
+      #pragma omp parallel for reduction(+:ans) schedule(static, cChunkSize) num_threads(numThreads)
+      for(VCIndex at=0; at<nArcs; at++) {
+        const VCIndex iClause = pFormula_->var2clause_.GetTarget(iVar, sgnTo, at);
+        const VCIndex aClause = llabs(iClause);
+        assert(Signum(iClause) == sgnTo);
         if constexpr(concurrent) {
           Lock(aClause);
         }
@@ -190,7 +205,18 @@ template<typename TCounter> struct SatTracker {
           Unlock(aClause);
         }
       }
-      else {
+      balance += ans;
+    }
+    {
+      const int8_t sgnTo = -Signum(iVar);
+      const VCIndex nArcs = pFormula_->var2clause_.ArcCount(iVar, sgnTo);
+      int64_t ans = 0;
+      const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
+      #pragma omp parallel for reduction(+:ans) schedule(static, cChunkSize) num_threads(numThreads)
+      for(VCIndex at=0; at<nArcs; at++) {
+        const VCIndex iClause = pFormula_->var2clause_.GetTarget(iVar, sgnTo, at);
+        const VCIndex aClause = llabs(iClause);
+        assert(Signum(iClause) == -sgnTo);
         if constexpr(concurrent) {
           Lock(aClause);
         }
@@ -209,9 +235,10 @@ template<typename TCounter> struct SatTracker {
           Unlock(aClause);
         }
       }
+      balance += ans;
     }
-    totSat_.fetch_add(ans, std::memory_order_relaxed);
-    return ans;
+    totSat_.fetch_add(balance, std::memory_order_relaxed);
+    return balance;
   }
 
   VCTrackingSet GetUnsat() const {
