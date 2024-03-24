@@ -173,19 +173,23 @@ template<typename TCounter> struct SatTracker {
   // otherwise non-concurrent version here will fail.
   // The sign of iVar must reflect the new value of the variable.
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
-  template<bool concurrent> int64_t FlipVar(const int64_t iVar, VCTrackingSet* unsatClauses, VCTrackingSet* front) {
-    int64_t balance = 0;
+  template<bool concurrent> int64_t FlipVar(const int64_t iVar, VCTrackingSet* unsatClauses, VCTrackingSet* front)
+  {
+    // TODO: remove this very heavy assert
+    // assert(unsatClauses == nullptr || ReallyUnsat(*unsatClauses));
+
+    VCIndex balance = 0;
     constexpr const int cChunkSize = (kRamPageBytes / sizeof(VCIndex));
     {
-      const int8_t sgnTo = Signum(iVar);
+      const int8_t sgnTo = 1;
       const VCIndex nArcs = pFormula_->var2clause_.ArcCount(iVar, sgnTo);
-      int64_t ans = 0;
+      VCIndex ans = 0;
       const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
       #pragma omp parallel for reduction(+:ans) schedule(static, cChunkSize) num_threads(numThreads)
       for(VCIndex at=0; at<nArcs; at++) {
         const VCIndex iClause = pFormula_->var2clause_.GetTarget(iVar, sgnTo, at);
         const VCIndex aClause = llabs(iClause);
-        assert(Signum(iClause) == sgnTo);
+        assert(Signum(iClause) == Signum(iVar));
         if constexpr(concurrent) {
           Lock(aClause);
         }
@@ -208,15 +212,15 @@ template<typename TCounter> struct SatTracker {
       balance += ans;
     }
     {
-      const int8_t sgnTo = -Signum(iVar);
+      const int8_t sgnTo = -1;
       const VCIndex nArcs = pFormula_->var2clause_.ArcCount(iVar, sgnTo);
-      int64_t ans = 0;
+      VCIndex ans = 0;
       const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
       #pragma omp parallel for reduction(+:ans) schedule(static, cChunkSize) num_threads(numThreads)
       for(VCIndex at=0; at<nArcs; at++) {
         const VCIndex iClause = pFormula_->var2clause_.GetTarget(iVar, sgnTo, at);
         const VCIndex aClause = llabs(iClause);
-        assert(Signum(iClause) == -sgnTo);
+        assert(Signum(iClause) == -Signum(iVar));
         if constexpr(concurrent) {
           Lock(aClause);
         }
@@ -295,7 +299,7 @@ template<typename TCounter> struct SatTracker {
         revVars.Flip(aVar);
         continue;
       }
-      // TODO: instead of flipping directly the formula, shall we pass an arbitrary assignment as a parameter?
+      assert( Verify(next) ); // TODO: remove
       next.Flip(aVar);
       FlipVar<false>(-iVar, &unsatClauses, &front);
 

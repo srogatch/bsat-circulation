@@ -192,8 +192,10 @@ struct Formula {
         continue;
       }
       bool isDummy = false;
+      #pragma unroll
       for(int8_t sgnFrom=-1; sgnFrom<=1; sgnFrom+=2) {
         const VCIndex iClause = sgnFrom * i;
+        #pragma unroll
         for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
           for(VCIndex j=0; j<clause2var_.ArcCount(iClause, sgnTo); j++) {
             const VCIndex iVar = clause2var_.GetTarget(iClause, sgnTo, j);
@@ -210,16 +212,20 @@ struct Formula {
       }
     }
     #pragma omp parallel for schedule(guided, kCacheLineSize)
-    for(int64_t i=-nClauses_; i<=nClauses_; i++) {
+    for(VCIndex i=-nClauses_; i<=nClauses_; i++) {
       if(i == 0) {
         continue;
       }
+      #pragma unroll
       for(int8_t sgn=-1; sgn<=1; sgn+=2) {
         const std::vector<VCIndex>& removals = toRemove[i][sgn];
+        std::vector<VCIndex>& targets = clause2var_.sources_[i][sgn];
+        auto shrinkVect = Finally([&] {
+          targets.shrink_to_fit();
+        });
         if(removals.empty()) {
           continue;
         }
-        std::vector<VCIndex>& targets = clause2var_.sources_[i][sgn];
         VCIndex k = 0; // index in removals
         VCIndex newSize = 0;
         for(VCIndex j=0; j<int64_t(targets.size()); j++) {
@@ -234,6 +240,25 @@ struct Formula {
         assert(newSize + removals.size() == targets.size());
         targets.resize(newSize);
         // This way the data structure remains sorted
+      }
+    }
+    // Remove from variables the arcs that have been removed from the clauses
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    for(VCIndex i=-nVars_; i<=nVars_; i++) {
+      if(i == 0) {
+        continue;
+      }
+      #pragma unroll
+      for(int8_t sgn=-1; sgn<=1; sgn+=2) {
+        std::vector<VCIndex>& targets = var2clause_.sources_[i][sgn];
+        VCIndex newSize = 0;
+        for(VCIndex j=0; j<int64_t(targets.size()); j++) {
+          if(clause2var_.HasArc(i, targets[j])) {
+            targets[newSize] = targets[j];
+            newSize++;
+          }
+        }
+        targets.shrink_to_fit();
       }
     }
   }
