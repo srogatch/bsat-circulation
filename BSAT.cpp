@@ -193,7 +193,8 @@ int main(int argc, char* argv[]) {
 
       std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(front, formula.ans_);
       const int64_t startNIncl = 1;
-      const int64_t endNIncl = std::max<int64_t>(std::min<int64_t>(varFront.size(), 4), nSysCpus/knSortTypes);
+      const int64_t endNIncl = std::min<int64_t>(varFront.size(), 4);
+      const int64_t nInnerLoop = nSysCpus / (endNIncl - startNIncl + 1);
       std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
       //std::cout.flush();
       #pragma omp parallel for schedule(dynamic, 1)
@@ -204,7 +205,8 @@ int main(int argc, char* argv[]) {
         // -2: reversed full sort
         // 2: full sort
         #pragma omp parallel for schedule(dynamic, 1)
-        for(int8_t sortType=kMinSortType; sortType<=kMaxSortType; sortType++) {
+        for(int64_t i=0; i<nInnerLoop; i++) {
+          int8_t sortType = i % knSortTypes + kMinSortType;
           BitVector next = formula.ans_;
           DefaultSatTracker newSatTr = satTr;
           VCTrackingSet stepRevs;
@@ -265,7 +267,7 @@ int main(int argc, char* argv[]) {
 
       front.Clear();
       std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
-      #pragma omp parallel for schedule(guided, kCacheLineSize)
+      //#pragma omp parallel for schedule(guided, kCacheLineSize)
       for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
         const int64_t revV = vBestRevVars[i];
         formula.ans_.Flip(revV);
@@ -280,33 +282,59 @@ int main(int argc, char* argv[]) {
         break;
       }
 
-      int64_t newUnsat = unsatClauses.Size();
+      bestUnsat = formula.nClauses_ + 1;
+      VCTrackingSet bestFront;
+      BitVector bestAsg;
       std::cout << "S";
-      bool moved;
-      int64_t nCurIts = 0;
-      for(;;) {
-        VCTrackingSet oldFront;
-        if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
-          oldFront = unsatClauses;
-          std::cout << "%";
-        } else {
-          oldFront = front;
+      std::atomic<bool> nextGen = false;
+      #pragma omp parallel for num_threads(nSysCpus)
+      for(uint32_t i=0; i<nSysCpus; i++) {
+        VCTrackingSet locUnsatClauses = unsatClauses;
+        VCTrackingSet locFront = front;
+        DefaultSatTracker locSatTr(satTr);
+        BitVector locAsg = formula.ans_;
+        //std::mt19937_64 rng = GetSeededRandom();
+
+        int64_t newUnsat = locUnsatClauses.Size();
+        bool moved;
+        int64_t nCurIts = 0;
+        for(;;) {
+          VCTrackingSet oldFront;
+          if(locFront.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(locFront))) {
+            oldFront = locUnsatClauses;
+          } else {
+            oldFront = locFront;
+          }
+          VCIndex oldFrontSize = oldFront.Size();
+          locFront.Clear();
+          moved = false;
+          const int8_t sortType = omp_get_thread_num() % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
+          newUnsat = locSatTr.GradientDescend( locUnsatClauses.Size() >= nStartUnsat, trav, &oldFront, locUnsatClauses, oldFront, locFront,
+            locSatTr.NextUnsatCap(locUnsatClauses, nStartUnsat) - nCurIts, moved, locAsg, sortType );
+          nCurIts += oldFrontSize;
+          nSequentialGD++;
+          #pragma omp critical(bestSeqGD)
+          if(locUnsatClauses.Size() < bestUnsat) {
+            bestUnsat = locUnsatClauses.Size();
+            bestAsg = locAsg;
+            bestFront = locFront;
+            if(bestUnsat < nStartUnsat) {
+              nextGen = true;
+            }
+          }
+          if(nextGen || !moved || newUnsat == 0 || locSatTr.NextUnsatCap(locUnsatClauses, nStartUnsat) - nCurIts <= 0) {
+            break;
+          }
+          // TODO: what if newUnsat > oldUnsat? Breaking at this point is empirically inefficient (progress stops).
+          // Perhaps a better solution would be restoring the previous assignment, but it's slow.
         }
-        VCIndex oldFrontSize = oldFront.Size();
-        front.Clear();
-        moved = false;
-        newUnsat = satTr.GradientDescend( unsatClauses.Size() >= nStartUnsat, trav, &oldFront, unsatClauses, oldFront, front,
-          satTr.NextUnsatCap(unsatClauses, nStartUnsat) - nCurIts, moved, formula.ans_,
-          nSequentialGD%knSortTypes + kMinSortType
-        );
-        nCurIts += oldFrontSize;
-        nSequentialGD++;
-        if(!moved || newUnsat == 0 || satTr.NextUnsatCap(unsatClauses, nStartUnsat) - nCurIts <= 0) {
-          break;
-        }
-        // TODO: what if newUnsat > oldUnsat? Breaking at this point is empirically inefficient (progress stops).
-        // Perhaps a better solution would be restoring the previous assignment, but it's slow.
       }
+      if(bestUnsat < formula.nClauses_) {
+        formula.ans_ = bestAsg;
+        front = bestFront;
+        unsatClauses = satTr.Populate(formula.ans_);
+      }
+      // else use the old values for the next parallel search
     }
     std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
       << ", Known assignments: " << trav.seenAssignment_.Size()

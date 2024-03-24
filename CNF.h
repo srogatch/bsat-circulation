@@ -366,7 +366,7 @@ struct Formula {
   std::vector<MultiItem<VCIndex>> ClauseFrontToVars(const VCTrackingSet& clauseFront, const BitVector& assignment) {
     TrackingSet<MultiItem<VCIndex>> varFront;
     std::vector<VCIndex> vClauseFront = clauseFront.ToVector();
-    #pragma omp parallel for schedule(guided, kRamPageBytes/sizeof(VCIndex))
+    //#pragma omp parallel for schedule(guided, kRamPageBytes/sizeof(VCIndex))
     for(int64_t i=0; i<int64_t(vClauseFront.size()); i++) {
       const int64_t originClause = vClauseFront[i];
       assert(1 <= originClause && originClause <= nClauses_);
@@ -393,7 +393,7 @@ struct Formula {
   std::vector<int64_t> VarFrontToClauses(const VCTrackingSet& varFront, const BitVector& assignment) {
     VCTrackingSet clauseFront;
     std::vector<int64_t> vVarFront = varFront.ToVector();
-    #pragma omp parallel for schedule(guided, kRamPageBytes/sizeof(VCIndex))
+    //#pragma omp parallel for schedule(guided, kRamPageBytes/sizeof(VCIndex))
     for(int64_t i=0; i<int64_t(vVarFront.size()); i++) {
       const VCIndex aVar = vVarFront[i];
       assert(1 <= aVar && aVar <= nVars_);

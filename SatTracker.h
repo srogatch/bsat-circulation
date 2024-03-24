@@ -247,7 +247,7 @@ template<typename TCounter> struct SatTracker {
 
   VCTrackingSet GetUnsat() const {
     VCTrackingSet ans;
-    #pragma omp parallel for schedule(static, cParChunkSize)
+    #pragma omp parallel for schedule(static, kRamPageBytes)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       if(nSat_[i] == 0) {
         ans.Add(i);

@@ -43,7 +43,7 @@ struct BitVector {
     bits_.reset(new uint64_t[nQwords_]);
 
     //memset(bits_.get(), 0, sizeof(uint64_t) * nQwords_);
-    #pragma omp parallel for schedule(static, cParChunkSize)
+    //#pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=0; i<nQwords_; i++) {
       bits_.get()[i] = 0;
     }
@@ -55,7 +55,7 @@ struct BitVector {
     nQwords_ = fellow.nQwords_;
     bits_.reset(new uint64_t[nQwords_]);
     // memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
-    #pragma omp parallel for schedule(static, cParChunkSize)
+    //#pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=0; i<nQwords_; i++) {
       bits_[i] = fellow.bits_[i];
     }
@@ -69,7 +69,7 @@ struct BitVector {
         bits_.reset(new uint64_t[nQwords_]);
       }
       // memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
-      #pragma omp parallel for schedule(static, cParChunkSize)
+      //#pragma omp parallel for schedule(static, cParChunkSize)
       for(int64_t i=0; i<nQwords_; i++) {
         bits_.get()[i] = fellow.bits_.get()[i];
       }
@@ -109,7 +109,7 @@ struct BitVector {
   }
 
   void Randomize() {
-    #pragma omp parallel for schedule(static, cParChunkSize)
+    //#pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=0; i<nQwords_; i++) {
       while(!_rdrand64_step(reinterpret_cast<unsigned long long*>(bits_.get()+i)));
     }
@@ -121,7 +121,7 @@ struct BitVector {
   }
 
   void SetTrue() {
-    #pragma omp parallel for schedule(static, cParChunkSize)
+    //#pragma omp parallel for schedule(static, cParChunkSize)
     for(int64_t i=0; i<nQwords_; i++) {
       bits_.get()[i] = -1LL;
     }
