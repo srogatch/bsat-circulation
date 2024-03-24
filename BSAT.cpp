@@ -95,7 +95,17 @@ int main(int argc, char* argv[]) {
   omp_set_max_active_levels(omp_get_supported_active_levels());
 
   Formula formula;
-  formula.Load(argv[1]);
+  bool provenUnsat = false;
+  bool maybeSat = formula.Load(argv[1]);
+  if(!maybeSat) {
+    provenUnsat = true;
+    { // TODO: remove code duplication
+      std::ofstream ofs(argv[2]);
+      ofs << "s UNSATISFIABLE" << std::endl;
+      // TODO: output the proof: proof.out, https://satcompetition.github.io/2024/output.html
+    }
+    return 0;
+  }
   int64_t prevNUnsat = formula.nClauses_;
   Traversal trav;
 
@@ -161,8 +171,6 @@ int main(int argc, char* argv[]) {
   assert(unsatClauses.Size() == bestInit);
 
   BitVector maxPartial;
-  bool maybeSat = true;
-  bool provenUnsat = false;
   int64_t nStartUnsat;
   int64_t nParallelGD = 0, nSequentialGD = 0, nWalk = 0;
 

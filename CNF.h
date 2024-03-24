@@ -34,11 +34,12 @@ struct Formula {
   void Add(const uint64_t iClause, const int64_t iVar) {
     assert(1 <= int64_t(iClause) && int64_t(iClause) <= nClauses_);
     assert(1 <= llabs(iVar) && llabs(iVar) <= nVars_);
-    clause2var_[iClause].emplace(iVar);
-    var2clause_[llabs(iVar)].emplace(int64_t(iClause) * Signum(iVar));
+    clause2var_.Add(iClause, iVar);
+    var2clause_.Add(iVar, iClause);
   }
 
-  void Load(const std::string& filePath) {
+  // Returns |false| iff the formula is unsatisfiable.
+  bool Load(const std::string& filePath) {
     std::ifstream ifs(filePath);
     if(!ifs) {
       std::cerr << "Cannot open the file to load the formula from: " << filePath << std::endl;
@@ -49,8 +50,7 @@ struct Formula {
     ifs.rdbuf()->pubsetbuf(buffer.get(), cBufSize);
 
     BlockingQueue<std::string> bqParsing;
-    const int halfCpus = std::max<int>(1, std::thread::hardware_concurrency() / 2 - 1);
-    std::vector<BlockingQueue<std::pair<int64_t, int64_t>>> bqsAdding(halfCpus);
+    const int nParsingCpus = std::max<int>(1, int64_t(std::thread::hardware_concurrency())-1);
 
     std::thread parsingThr([&] {
       bool probDefRead = false;
@@ -76,6 +76,8 @@ struct Formula {
             throw std::runtime_error("Unsupported problem type");
           }
           iss >> nVars_ >> nClauses_;
+          clause2var_ = Linkage(nClauses_);
+          var2clause_ = Linkage(nVars_);
           ans_ = BitVector(nVars_+1);
           dummySat_ = BitVector(nClauses_+1);
           probDefRead = true;
@@ -89,9 +91,8 @@ struct Formula {
 
       iClause++;
       if(iClause > nClauses_) {
-        std::cerr << "Too many clauses: check the input DIMACS." << std::endl;
-        // Stop reading excesssive clauses
-        goto release;
+        std::cerr << "It seems the formula contains no clauses, please check the input DIMACS file." << std::endl;
+        return;
       }
       do {
         int64_t iVar = std::stoll(cmd);
@@ -100,14 +101,14 @@ struct Formula {
         }
         if( !(1 <= llabs(iVar) && llabs(iVar) <= nVars_) ) {
           std::cerr << "Variable value out of range: " << iVar << std::endl;
-          throw std::runtime_error("Incorrect input");
+          throw std::runtime_error("Variable value out of range in the input");
         }
-        bqsAdding[llabs(iVar) % halfCpus].Push(std::make_pair(iClause, iVar));
+        Add(iClause, iVar);
       } while(iss >> cmd);
 
       for(;;) {
         std::vector<std::string> lines;
-        while(int64_t(lines.size()) < halfCpus) {
+        while(int64_t(lines.size()) < nParsingCpus) {
           if(!bqParsing.Pop(line)) {
             break;
           }
@@ -127,7 +128,7 @@ struct Formula {
           }
           lines.emplace_back(std::move(line));
         }
-        #pragma omp parallel for num_threads(halfCpus)
+        #pragma omp parallel for num_threads(nParsingCpus)
         for(int64_t i=0; i<int64_t(lines.size()); i++) {
           const int64_t locClause = iClause + 1 + i;
           if(locClause > nClauses_) {
@@ -143,48 +144,20 @@ struct Formula {
             }
             if( !(1 <= llabs(iVar) && llabs(iVar) <= nVars_) ) {
               std::cerr << "Variable value out of range: " << iVar << std::endl;
-              throw std::runtime_error("Incorrect input");
+              throw std::runtime_error("Variable value out of range");
             }
-            bqsAdding[omp_get_thread_num()].Push(std::make_pair(locClause, iVar));
+            Add(locClause, iVar);
           }
         }
         iClause += lines.size();
-        if(int64_t(lines.size()) < halfCpus) {
+        if(int64_t(lines.size()) < nParsingCpus) {
           break;
         }
         if(iClause > nClauses_) {
           break;
         }
       }
-release:
-      #pragma omp parallel for num_threads(halfCpus)
-      for(int i=0; i<halfCpus; i++) {
-        bqsAdding[i].RequestShutdown();
-      }
       std::cout << "Finished parsing the input file lines." << std::endl;
-    });
-
-    std::thread addingThr([&] {
-      std::mutex muC2V, muV2C;
-      #pragma omp parallel num_threads(halfCpus)
-      {
-        std::pair<int64_t, int64_t> entry;
-        while(bqsAdding[omp_get_thread_num()].Pop(entry)) {
-          const int64_t iClause = entry.first;
-          const int64_t iVar = entry.second;
-          assert(1 <= llabs(iClause) && llabs(iClause) <= nClauses_);
-          assert(1 <= llabs(iVar) && llabs(iVar) <= nVars_);
-          {
-            std::unique_lock<std::mutex> lock(muC2V);
-            clause2var_[iClause].emplace(iVar);
-          }
-          {
-            std::unique_lock<std::mutex> lock(muV2C);
-            var2clause_[llabs(iVar)].emplace(int64_t(iClause) * Signum(iVar));
-          }
-        }
-      }
-      std::cout << "Finished linking clauses and variables." << std::endl;
     });
 
     std::string line;
@@ -194,37 +167,54 @@ release:
     bqParsing.RequestShutdown();
     std::cout << "Finished streaming the input file." << std::endl;
     parsingThr.join();
-    addingThr.join();
 
-    std::cout << "Finding dummy clauses" << std::endl;
+    std::cout << "Sorting the linkage data structures." << std::endl;
+    clause2var_.Sort();
+    var2clause_.Sort();
+
+    std::cout << "Finding and removing dummy clauses" << std::endl;
+    RangeVector<RangeVector<std::vector<int64_t>, int8_t>, VCIndex> toRemove(-nClauses_, nClauses_);
     for(int64_t i=1; i<=nClauses_; i++) {
-      auto it = clause2var_.find(i);
-      if(it == clause2var_.end() || it->second.size() == 0) {
+      // No variables at all in the clause - assume it's satisfied
+      if(clause2var_.ArcCount(i) == 0) {
         dummySat_.Flip(i);
         continue;
       }
-      auto& varSet = it->second;
-      for(int64_t iVar : varSet) {
-        if(varSet.find(-iVar) != varSet.end()) {
-          dummySat_.Flip(i);
-          var2clause_[llabs(iVar)].erase(i);
-          var2clause_[llabs(iVar)].erase(-i);
-          break;
+      toRemove[i] = RangeVector<std::vector<int64_t>, int8_t>(-1, 1);
+      bool isDummy = false;
+      for(int8_t sgnFrom=-1; sgnFrom<=1; sgnFrom+=2) {
+        const VCIndex iClause = sgnFrom * i;
+        for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
+          for(VCIndex j=0; j<clause2var_.ArcCount(iClause, sgnTo); j++) {
+            const VCIndex iVar = clause2var_.GetTarget(iClause, sgnTo, j);
+            if(clause2var_.HasArc(iClause, -iVar)) {
+              // We can't just remove it immediately, because then we would screw up the sorted data structures
+              toRemove[iClause][sgnTo].emplace_back(j);
+              isDummy = true;
+            }
+          }
+        }
+      }
+      if(isDummy) {
+        dummySat_.Flip(i);
+      }
+    }
+    for(int64_t i=-nClauses_; i<=nClauses_; i++) {
+      if(i == 0) {
+        continue;
+      }
+      for(int8_t sgn=-1; sgn<=1; sgn+=2) {
+        for(VCIndex j=VCIndex(toRemove[i][sgn].size())-1; j>=0; j--) {
+          const VCIndex remPos = toRemove[i][sgn][j];
+          clause2var_.sources_[i][sgn][remPos] = clause2var_.sources_[i][sgn].back();
+          clause2var_.sources_[i][sgn].pop_back();
         }
       }
     }
-    std::cout << "Constructing vectors of clauses for variables." << std::endl;
-    for(int64_t i=1; i<=nVars_; i++) {
-      listVar2Clause_[i] = {};
-      var2clause_[i];
-    }
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
-    for(int64_t i=1; i<=nVars_; i++) {
-      std::mt19937_64 rng = GetSeededRandom();
-      std::vector<int64_t>& list = listVar2Clause_.find(i)->second;
-      list.assign(var2clause_[i].begin(), var2clause_[i].end());
-      std::shuffle(list.begin(), list.end(), rng);
-    }
+
+    std::cout << "Sorting the linkage data structures again." << std::endl;
+    clause2var_.Sort();
+    var2clause_.Sort();
   }
 
   bool SolWorks() {

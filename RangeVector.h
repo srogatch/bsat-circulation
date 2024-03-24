@@ -6,7 +6,7 @@
 template<typename TItem, typename TIndex> struct RangeVector {
   struct TEntry {
     TItem item_;
-    std::mutex mu_;
+    mutable std::mutex mu_;
   };
   std::vector<TEntry> entires_;
   TIndex minIndex_ = 0;
@@ -24,7 +24,7 @@ template<typename TItem, typename TIndex> struct RangeVector {
   const TItem& operator[](const TIndex index) const {
     return entires_[index - minIndex_].item_;
   }
-  std::unique_lock<std::mutex> With(const TIndex index) {
+  std::unique_lock<std::mutex> With(const TIndex index) const {
     return std::unique_lock<std::mutex>(entires_[index-minIndex_].mu_);
   }
 };
