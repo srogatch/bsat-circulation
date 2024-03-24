@@ -299,7 +299,7 @@ template<typename TCounter> struct SatTracker {
         revVars.Flip(aVar);
         continue;
       }
-      assert( Verify(next) ); // TODO: remove
+      //assert( Verify(next) ); // it's very heavy
       next.Flip(aVar);
       FlipVar<false>(-iVar, &unsatClauses, &front);
 

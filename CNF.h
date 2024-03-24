@@ -278,15 +278,16 @@ struct Formula {
         for(VCIndex at=0; at<nArcs; at++) {
           const VCIndex iVar = clause2var_.GetTarget(iClause, sgnTo, at);
           assert(Signum(iVar) == sgnTo);
-          if( (sgnTo > 0 && ans_[iVar]) || (sgnTo < 0 && !ans_[-iVar]) ) {
+          const int8_t sgnAsg = ans_[llabs(iVar)] ? 1 : -1;
+          if(sgnAsg == sgnTo) {
             satisfied = true;
             break;
           }
         }
-        if(!satisfied) {
-          allSat.store(false);
-          #pragma omp cancel for
-        }
+      }
+      if(!satisfied) {
+        allSat.store(false);
+        #pragma omp cancel for
       }
     }
     return allSat;
