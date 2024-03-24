@@ -178,6 +178,7 @@ struct Formula {
 
     std::cout << "Finding and removing dummy clauses" << std::endl;
     RangeVector<RangeVector<std::vector<int64_t>, int8_t>, VCIndex> toRemove(-nClauses_, nClauses_);
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=1; i<=nClauses_; i++) {
       // No variables at all in the clause - assume it's satisfied
       if(clause2var_.ArcCount(i) == 0) {
@@ -203,6 +204,7 @@ struct Formula {
         dummySat_.Flip(i);
       }
     }
+    #pragma omp parallel for schedule(guided, kCacheLineSize)
     for(int64_t i=-nClauses_; i<=nClauses_; i++) {
       if(i == 0) {
         continue;
