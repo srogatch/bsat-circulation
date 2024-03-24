@@ -39,30 +39,6 @@ uint64_t Comb(const int64_t n, const int64_t k) {
   return mc;
 }
 
-std::vector<std::vector<uint64_t>> memAccComb;
-uint64_t AccComb(const int64_t n, const int64_t k) {
-  if(n <= 0 || k <= 0 || k > n) {
-    return 0;
-  }
-  if(n == k) {
-    return 1;
-  }
-  if(k == 1) {
-    return n;
-  }
-  if(n == 1) {
-    return 0;
-  }
-  while(int64_t(memAccComb.size())+1 < n) {
-    memAccComb.emplace_back(memAccComb.size()+1);
-  }
-  uint64_t& mac = memAccComb[n-2][k-2];
-  if(mac == 0) {
-    mac = AccComb(n, k-1) + Comb(n, k);
-  }
-  return mac;
-}
-
 void signalHandler(int signum) {
   std::cout << "Interrupt signal (" << signum << ") received.\n";
   // TODO: save the maximally satisfying assignment here
@@ -78,6 +54,7 @@ void signalHandler(int signum) {
 }
 
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
+constexpr const float kMaxInitSec = 10.0;
 
 int main(int argc, char* argv[]) {
   auto tmStart = std::chrono::steady_clock::now();
@@ -136,12 +113,19 @@ int main(int argc, char* argv[]) {
     VCTrackingSet initUnsatClauses = initSatTr.Populate(initAsg);
     VCTrackingSet initFront = initUnsatClauses;
     #pragma omp parallel for schedule(dynamic, 1)
-    for(int sortType=kMinSortType; sortType<=kMaxSortType; sortType++) {
+    for(int i=kMinSortType; i<=kMaxSortType; i++) {
+      std::mt19937_64 rng = GetSeededRandom();
       BitVector locAsg = initAsg;
       DefaultSatTracker locSatTr = initSatTr;
       VCTrackingSet locUnsatClauses = initUnsatClauses;
       VCTrackingSet locFront = locUnsatClauses, locNextFront;
+      const auto tmInitStart = std::chrono::steady_clock::now();
       for(;;) {
+        const auto tmNow = std::chrono::steady_clock::now();
+        const double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmNow - tmInitStart).count() / 1e9;
+        if(nSec > kMaxInitSec) { break; }
+
+        const int8_t sortType = rng() % knSortTypes + kMinSortType;
         bool moved = false;
         const int64_t altNUnsat = locSatTr.GradientDescend(
           false, trav, &locUnsatClauses, locUnsatClauses, initFront,
@@ -172,7 +156,7 @@ int main(int argc, char* argv[]) {
 
   BitVector maxPartial;
   int64_t nStartUnsat;
-  int64_t nParallelGD = 0, nSequentialGD = 0, nWalk = 0;
+  std::atomic<int64_t> nParallelGD = 0, nSequentialGD = 0, nWalk = 0;
 
   while(maybeSat) {
     maxPartial = formula.ans_;
@@ -209,7 +193,7 @@ int main(int argc, char* argv[]) {
 
       std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(front, formula.ans_);
       const int64_t startNIncl = 1;
-      const int64_t endNIncl = std::min<int64_t>(varFront.size(), 4);
+      const int64_t endNIncl = std::max<int64_t>(std::min<int64_t>(varFront.size(), 4), nSysCpus/knSortTypes);
       std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
       //std::cout.flush();
       #pragma omp parallel for schedule(dynamic, 1)
@@ -240,7 +224,7 @@ int main(int argc, char* argv[]) {
           }
         }
       }
-      nParallelGD += (endNIncl - startNIncl + 1) * 5;
+      nParallelGD += (endNIncl - startNIncl + 1) * knSortTypes;
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
