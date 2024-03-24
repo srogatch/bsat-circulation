@@ -409,4 +409,4 @@ template<typename TCounter> struct SatTracker {
   }
 };
 
-using DefaultSatTracker = SatTracker<uint8_t>;
+using DefaultSatTracker = SatTracker<uint16_t>;
