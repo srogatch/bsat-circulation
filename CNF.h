@@ -128,7 +128,7 @@ struct Formula {
           }
           lines.emplace_back(std::move(line));
         }
-        #pragma omp parallel for num_threads(nParsingCpus)
+        #pragma omp parallel for num_threads(lines.size())
         for(int64_t i=0; i<int64_t(lines.size()); i++) {
           const int64_t locClause = iClause + 1 + i;
           if(locClause > nClauses_) {
@@ -179,7 +179,7 @@ struct Formula {
 
     std::cout << "Finding and removing dummy clauses" << std::endl;
     RangeVector<RangeVector<std::vector<int64_t>, int8_t>, VCIndex> toRemove(-nClauses_, nClauses_);
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(int64_t i=1; i<=nClauses_; i++) {
       if(i == 0) {
         continue;
@@ -211,7 +211,7 @@ struct Formula {
         dummySat_.Flip(i);
       }
     }
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(VCIndex i=-nClauses_; i<=nClauses_; i++) {
       if(i == 0) {
         continue;
@@ -243,7 +243,7 @@ struct Formula {
       }
     }
     // Remove from variables the arcs that have been removed from the clauses
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(VCIndex i=-nVars_; i<=nVars_; i++) {
       if(i == 0) {
         continue;
@@ -265,7 +265,7 @@ struct Formula {
 
   bool SolWorks() {
     std::atomic<bool> allSat = true;
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(VCIndex iClause=1; iClause<=nClauses_; iClause++) {
       #pragma omp cancellation point for
       if(dummySat_[iClause]) {
@@ -295,7 +295,7 @@ struct Formula {
 
   int64_t CountUnsat(const BitVector& assignment) const {
     std::atomic<int64_t> nUnsat = 0;
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, assignment)) {
         nUnsat.fetch_add(1, std::memory_order_relaxed);
@@ -324,7 +324,7 @@ struct Formula {
 
   VCTrackingSet ComputeUnsatClauses() const {
     VCTrackingSet ans;
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(int64_t i=1; i<=nClauses_; i++) {
       if(!IsSatisfied(i, ans_)) {
         ans.Add(i);
@@ -365,8 +365,8 @@ struct Formula {
   // For a set of clauses, return the set of variables that dissatisfy the clauses
   std::vector<MultiItem<VCIndex>> ClauseFrontToVars(const VCTrackingSet& clauseFront, const BitVector& assignment) {
     TrackingSet<MultiItem<VCIndex>> varFront;
-    std::vector<int64_t> vClauseFront = clauseFront.ToVector();
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    std::vector<VCIndex> vClauseFront = clauseFront.ToVector();
+    #pragma omp parallel for schedule(guided, kRamPageBytes/sizeof(VCIndex))
     for(int64_t i=0; i<int64_t(vClauseFront.size()); i++) {
       const int64_t originClause = vClauseFront[i];
       assert(1 <= originClause && originClause <= nClauses_);
@@ -393,7 +393,7 @@ struct Formula {
   std::vector<int64_t> VarFrontToClauses(const VCTrackingSet& varFront, const BitVector& assignment) {
     VCTrackingSet clauseFront;
     std::vector<int64_t> vVarFront = varFront.ToVector();
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    #pragma omp parallel for schedule(guided, kRamPageBytes/sizeof(VCIndex))
     for(int64_t i=0; i<int64_t(vVarFront.size()); i++) {
       const VCIndex aVar = vVarFront[i];
       assert(1 <= aVar && aVar <= nVars_);

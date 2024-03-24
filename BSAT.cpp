@@ -281,7 +281,7 @@ int main(int argc, char* argv[]) {
 
       front.Clear();
       std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
-      #pragma omp parallel for schedule(dynamic, 1)
+      #pragma omp parallel for schedule(guided, kCacheLineSize)
       for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
         const int64_t revV = vBestRevVars[i];
         formula.ans_.Flip(revV);

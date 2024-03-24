@@ -11,7 +11,7 @@ struct Linkage {
 
   explicit Linkage(const VCIndex maxItem) {
     sources_ = TBackend(-maxItem, maxItem);
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided, kRamPageBytes / sizeof(sources_[0]))
     for(VCIndex i=-maxItem; i<=maxItem; i++) {
       if(i == 0) {
         continue;
@@ -36,7 +36,7 @@ struct Linkage {
   }
 
   void Sort() {
-    #pragma omp parallel for schedule(guided, kCacheLineSize)
+    #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(VCIndex i=sources_.minIndex_; i<=sources_.maxIndex_; i++) {
       if(i == 0) {
         continue;

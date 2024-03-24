@@ -95,13 +95,13 @@ inline std::mt19937_64 GetSeededRandom() {
 
 template <typename T>
 void ParallelShuffle(T* data, const size_t count) {
-  if(count <= kCacheLineSize) { // Don't parallelize
+  if(count <= kRamPageBytes) { // Don't parallelize
     std::mt19937_64 rng = GetSeededRandom();
     std::shuffle(data, data+count, rng);
     return;
   }
 
-  const uint32_t nThreads = std::max<int64_t>(1, std::min<int64_t>(omp_get_max_threads(), count/3));
+  const uint32_t nThreads = std::max<int64_t>(1, std::min<int64_t>(omp_get_max_threads(), count*sizeof(T)/kRamPageBytes));
   std::atomic_flag* syncs = static_cast<std::atomic_flag*>(malloc(count * sizeof(std::atomic_flag)));
   auto clean_syncs = Finally([&]() { free(syncs); });
   #pragma omp parallel for schedule(static, kRamPageBytes / sizeof(std::atomic_flag))
@@ -110,7 +110,6 @@ void ParallelShuffle(T* data, const size_t count) {
   }
 
   const size_t nPerThread = (count + nThreads - 1) / nThreads;
-  // The number of threads here is important and must not default to whatever else
   #pragma omp parallel for schedule(dynamic, 1)
   for (size_t i = 0; i < nThreads; i++) {
     std::mt19937_64 rng = GetSeededRandom();

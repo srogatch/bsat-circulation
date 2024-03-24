@@ -23,8 +23,8 @@ template<typename TCounter> struct SatTracker {
     pFormula_ = pFormula;
     syncs_.reset(new std::atomic_flag[cSyncContention * nSysCpus]);
     vVars_.resize(pFormula->nVars_);
-    constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars_[0]);
-    #pragma omp parallel for schedule(static, cParChunkSize)
+    //constexpr const uint32_t cParChunkSize = kCacheLineSize / sizeof(vVars_[0]);
+    #pragma omp parallel for schedule(static, kRamPageBytes)
     for(int64_t i=1; i<=pFormula_->nVars_; i++) {
       vVars_[i-1] = i;
     }
@@ -48,7 +48,7 @@ template<typename TCounter> struct SatTracker {
     pFormula_ = src.pFormula_;
     totSat_.store(src.totSat_.load(std::memory_order_relaxed), std::memory_order_relaxed);
 
-    #pragma omp parallel for schedule(static, cParChunkSize)
+    #pragma omp parallel for schedule(static, kRamPageBytes)
     for(int64_t i=0; i<=pFormula_->nClauses_; i++) {
       nSat_[i] = src.nSat_[i];
     }
@@ -75,7 +75,7 @@ template<typename TCounter> struct SatTracker {
     VCTrackingSet ans;
     int64_t curTot = 0;
     nSat_[0] = 1;
-    #pragma omp parallel for schedule(guided, cParChunkSize) reduction(+:curTot)
+    #pragma omp parallel for schedule(guided, kRamPageBytes) reduction(+:curTot)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       // Prevent the counter flowing below 1 if it's a dummy (always satisfied) clause
       nSat_[i] = (pFormula_->dummySat_[i] ? 1 : 0);
@@ -109,7 +109,7 @@ template<typename TCounter> struct SatTracker {
       return false;
     }
     std::atomic<bool> ans = true;
-    #pragma omp parallel for schedule(guided, cParChunkSize) reduction(+:curTot)
+    #pragma omp parallel for schedule(guided, kRamPageBytes) reduction(+:curTot)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       #pragma omp cancellation point for
       int64_t curSat = (pFormula_->dummySat_[i] ? 1 : 0);
@@ -179,13 +179,13 @@ template<typename TCounter> struct SatTracker {
     // assert(unsatClauses == nullptr || ReallyUnsat(*unsatClauses));
 
     VCIndex balance = 0;
-    constexpr const int cChunkSize = (kRamPageBytes / sizeof(VCIndex));
+    //constexpr const int cChunkSize = (kRamPageBytes / sizeof(VCIndex));
     {
       const int8_t sgnTo = Signum(iVar);
       const VCIndex nArcs = pFormula_->var2clause_.ArcCount(iVar, sgnTo);
       VCIndex ans = 0;
-      const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
-      #pragma omp parallel for reduction(+:ans) schedule(static, cChunkSize) num_threads(numThreads)
+      //const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
+      //#pragma omp parallel for reduction(+:ans) schedule(static, cChunkSize) num_threads(numThreads)
       for(VCIndex at=0; at<nArcs; at++) {
         const VCIndex iClause = pFormula_->var2clause_.GetTarget(iVar, sgnTo, at);
         const VCIndex aClause = llabs(iClause);
@@ -215,8 +215,8 @@ template<typename TCounter> struct SatTracker {
       const int8_t sgnTo = -Signum(iVar);
       const VCIndex nArcs = pFormula_->var2clause_.ArcCount(iVar, sgnTo);
       VCIndex ans = 0;
-      const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
-      #pragma omp parallel for reduction(+:ans) schedule(static, cChunkSize) num_threads(numThreads)
+      //const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
+      //#pragma omp parallel for reduction(+:ans) schedule(static, cChunkSize) num_threads(numThreads)
       for(VCIndex at=0; at<nArcs; at++) {
         const VCIndex iClause = pFormula_->var2clause_.GetTarget(iVar, sgnTo, at);
         const VCIndex aClause = llabs(iClause);
@@ -258,7 +258,7 @@ template<typename TCounter> struct SatTracker {
 
   VCTrackingSet GetUnsat(const SatTracker& oldSatTr, VCTrackingSet& newFront) const {
     VCTrackingSet ans;
-    #pragma omp parallel for schedule(guided, cParChunkSize)
+    #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
       if(nSat_.get()[i].load(std::memory_order_relaxed) == 0) {
         if(oldSatTr.nSat_.get()[i].load(std::memory_order_relaxed) > 0) {

@@ -213,7 +213,6 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   }
 
   void Clear() {
-    #pragma omp parallel for schedule(guided, cSyncContention)
     for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
       buckets_[i].set_.clear();
     }
