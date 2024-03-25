@@ -95,6 +95,8 @@ int main(int argc, char* argv[]) {
   BitVector bestAsg;
   VCTrackingSet startFront;
 
+
+  std::atomic<int64_t> nParallelGD = 0, nSequentialGD = 0, nWalk = 0;
   DefaultSatTracker satTr(formula);
   satTr.Populate(formula.ans_);
   std::mutex muBestUpdate;
@@ -137,7 +139,8 @@ int main(int argc, char* argv[]) {
 
         const int8_t sortType = rng() % knSortTypes + kMinSortType;
         bool moved = false;
-        if(locFront.Size() == 0) {
+        if(locFront.Size() == 0 || trav.IsSeenFront(locFront)) {
+          trav.OnFrontExhausted(locFront);
           std::cout << "%";
           locFront = locUnsatClauses;
         }
@@ -146,6 +149,7 @@ int main(int argc, char* argv[]) {
           trav, &locFront, locUnsatClauses, locFront, locNextFront, moved, locAsg, sortType,
           locSatTr.NextUnsatCap(locUnsatClauses, locBest), locBest, nCombs
         );
+        nSequentialGD.fetch_add(1);
         if(!moved) {
           break;
         }
@@ -169,7 +173,6 @@ int main(int argc, char* argv[]) {
 
   BitVector maxPartial;
   int64_t nStartUnsat;
-  std::atomic<int64_t> nParallelGD = 0, nSequentialGD = 0, nWalk = 0;
 
   while(maybeSat) {
     maxPartial = formula.ans_;
@@ -239,7 +242,7 @@ int main(int argc, char* argv[]) {
           }
         }
       }
-      nParallelGD += (endNIncl - startNIncl + 1) * knSortTypes;
+      nParallelGD.fetch_add((endNIncl - startNIncl + 1) * knSortTypes);
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
@@ -325,14 +328,16 @@ int main(int argc, char* argv[]) {
             trav, &oldFront, locUnsatClauses, oldFront, locFront, moved, locAsg, sortType,
             locSatTr.NextUnsatCap(locUnsatClauses, nStartUnsat), nStartUnsat, nCombs
           );
-          nSequentialGD++;
-          #pragma omp critical(bestSeqGD)
-          if(locUnsatClauses.Size() < bestUnsat) {
-            bestUnsat = locUnsatClauses.Size();
-            bestAsg = locAsg;
-            bestFront = locFront;
-            if(bestUnsat < nStartUnsat) {
-              nextGen = true;
+          nSequentialGD.fetch_add(1);
+          {
+            std::unique_lock<std::mutex> lock(muBestUpdate);
+            if(locUnsatClauses.Size() < bestUnsat) {
+              bestUnsat = locUnsatClauses.Size();
+              bestAsg = locAsg;
+              bestFront = locFront;
+              if(bestUnsat < nStartUnsat) {
+                nextGen = true;
+              }
             }
           }
           if(nextGen || !moved || newUnsat == 0) {
@@ -346,6 +351,7 @@ int main(int argc, char* argv[]) {
         formula.ans_ = bestAsg;
         front = bestFront;
         unsatClauses = satTr.Populate(formula.ans_);
+        assert(bestUnsat == unsatClauses.Size());
       }
       // else use the old values for the next parallel search
     }
