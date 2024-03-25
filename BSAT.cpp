@@ -54,7 +54,7 @@ void signalHandler(int signum) {
 }
 
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
-constexpr const float kMaxInitSec = 10.0;
+constexpr const float kMaxInitSec = 1.0;
 
 int main(int argc, char* argv[]) {
   auto tmStart = std::chrono::steady_clock::now();
@@ -144,16 +144,17 @@ int main(int argc, char* argv[]) {
           std::cout << "%";
           locFront = locUnsatClauses;
         }
-        const VCIndex locBest = bestInit.load(std::memory_order_relaxed);
+        VCIndex locBest = bestInit.load(std::memory_order_relaxed);
         const int64_t altNUnsat = locSatTr.GradientDescend(
           trav, &locFront, moved, locAsg, sortType,
-          locSatTr.NextUnsatCap(locUnsatClauses, locBest), nCombs,
-          locUnsatClauses, locFront, revVars
+          locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
+          nCombs, locUnsatClauses, locFront, revVars
         );
         nSequentialGD.fetch_add(1);
         if(!moved) {
           break;
         }
+        locBest = bestInit.load(std::memory_order_relaxed);
         if(altNUnsat < locBest) {
           std::unique_lock<std::mutex> lock(muBestUpdate);
           if(altNUnsat < bestInit) {
@@ -162,6 +163,7 @@ int main(int argc, char* argv[]) {
             bestAsg = locAsg;
           }
         }
+        locBest = bestInit.load(std::memory_order_relaxed);
       }
     }
   }
@@ -210,7 +212,7 @@ int main(int argc, char* argv[]) {
       std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(unsatClauses, formula.ans_);
       const int64_t startNIncl = 1;
       const int64_t endNIncl = std::min<int64_t>(varFront.size(), 4);
-      const int64_t nInnerLoop = (nSysCpus-1) / (endNIncl - startNIncl + 1) + 1;
+      const int64_t nInnerLoop = nSysCpus / (endNIncl - startNIncl + 1);
       std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
       //std::cout.flush();
       #pragma omp parallel for schedule(dynamic, 1) collapse(2)
@@ -228,17 +230,22 @@ int main(int argc, char* argv[]) {
           std::vector<MultiItem<VCIndex>> locVarFront = varFront;
           VCTrackingSet locFront = front;
           VCTrackingSet locUnsatCs = unsatClauses;
-          bool moved = false;
-          const int64_t curNUnsat = newSatTr.ParallelGD(
-            true, nIncl, locVarFront, sortType, next, trav, locUnsatCs, locFront, stepRevs, 
-            newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 0
-          );
+          int64_t nCombs = 0;
+          for(;;) {
+            bool moved = false;
+            const int64_t curNUnsat = newSatTr.ParallelGD(
+              true, nIncl, locVarFront, sortType, next, trav, locUnsatCs, locFront, stepRevs, 
+              newSatTr.NextUnsatCap(nCombs, locUnsatCs, nStartUnsat), nCombs, moved, 0
+            );
 
-          if(moved) {
-            std::unique_lock<std::mutex> lock(muBestUpdate);
-            if(curNUnsat < bestUnsat) {
-              bestUnsat = curNUnsat;
-              bestRevVars = stepRevs;
+            if(moved) {
+              std::unique_lock<std::mutex> lock(muBestUpdate);
+              if(curNUnsat < bestUnsat) {
+                bestUnsat = curNUnsat;
+                bestRevVars = stepRevs;
+              }
+            } else {
+              break;
             }
           }
         }
@@ -308,7 +315,7 @@ int main(int argc, char* argv[]) {
         DefaultSatTracker locSatTr(satTr);
         BitVector locAsg = formula.ans_;
         VCTrackingSet stepRevs;
-        //std::mt19937_64 rng = GetSeededRandom();
+        std::mt19937_64 rng = GetSeededRandom();
 
         int64_t newUnsat = locUnsatClauses.Size();
         bool moved;
@@ -318,12 +325,12 @@ int main(int argc, char* argv[]) {
             locFront = locUnsatClauses;
           }
           moved = false;
-          const int8_t sortType = i % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
-          //const int8_t sortType = rng() % knSortTypes + kMinSortType;
+          //const int8_t sortType = i % knSortTypes + kMinSortType;
+          const int8_t sortType = rng() % knSortTypes + kMinSortType;
           newUnsat = locSatTr.GradientDescend(
             trav, &locFront, moved, locAsg, sortType,
-            locSatTr.NextUnsatCap(locUnsatClauses, nStartUnsat), nCombs,
-            locUnsatClauses, locFront, stepRevs
+            locSatTr.NextUnsatCap(nCombs, locUnsatClauses, nStartUnsat),
+            nCombs, locUnsatClauses, locFront, stepRevs
           );
           nSequentialGD.fetch_add(1);
           if(!moved) {
@@ -337,7 +344,7 @@ int main(int argc, char* argv[]) {
               bestRevVars = stepRevs;
             }
           }
-          if(newUnsat == 0 || locUnsatClauses.Size() < nStartUnsat + nCombs - 1) {
+          if(newUnsat == 0) {
             break;
           }
         }

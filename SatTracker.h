@@ -387,7 +387,7 @@ template<typename TCounter> struct SatTracker {
     std::vector<MultiItem<VCIndex>>& varFront, const int sortType,
     BitVector& next, Traversal& trav, VCTrackingSet& unsatClauses,
     VCTrackingSet& front, VCTrackingSet& origRevVars, int64_t minUnsat,
-    bool& moved, int64_t level)
+    int64_t& nCombs, bool& moved, int64_t level)
   {
     SortMultiItems(varFront, sortType);
     VCTrackingSet revVars;
@@ -409,6 +409,7 @@ template<typename TCounter> struct SatTracker {
       if( trav.IsSeenMove(front, curRevVars) ) {
         continue;
       }
+      nCombs++;
       for(int64_t j=0; j<nVars; j++) {
         const int64_t iVar = selVars[j];
         const int64_t aVar = llabs(iVar);
@@ -449,7 +450,7 @@ template<typename TCounter> struct SatTracker {
           const int64_t subNUnsat = ParallelGD(
             preferMove, varsAtOnce, newVarFront, r%knSortTypes + kMinSortType,
             next, trav, unsatClauses, newClauseFront,
-            revVars, minUnsat, nextMoved, level-1
+            revVars, minUnsat, nCombs, nextMoved, level-1
           );
           if(subNUnsat < minUnsat || (preferMove && nextMoved && subNUnsat == minUnsat)) {
             minUnsat = subNUnsat;
@@ -482,11 +483,13 @@ template<typename TCounter> struct SatTracker {
     return minUnsat;
   }
 
-  int64_t NextUnsatCap(const VCTrackingSet& unsatClauses, [[maybe_unused]] const int64_t nStartUnsat) const {
-    return std::max<int64_t>(
-      unsatClauses.Size() * 2,
-      DivUp(pFormula_->nVars_, nStartUnsat) + unsatClauses.Size()
-    );
+  int64_t NextUnsatCap(const int64_t nCombs, const VCTrackingSet& unsatClauses, const int64_t nStartUnsat) const {
+    return std::max(nStartUnsat, 
+      std::max<int64_t>(
+        unsatClauses.Size() * 2,
+        DivUp(pFormula_->nVars_, nStartUnsat+1) + unsatClauses.Size()
+      )
+      - nCombs);
   }
 };
 
