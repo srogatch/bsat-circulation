@@ -229,7 +229,7 @@ int main(int argc, char* argv[]) {
           bool moved = false;
           const int64_t curNUnsat = newSatTr.ParallelGD(
             true, nIncl, locVarFront, sortType, next, trav, nullptr, front, stepRevs, 
-            newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 1
+            newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 0
           );
 
           if(moved) {
