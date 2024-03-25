@@ -281,10 +281,12 @@ template<typename TCounter> struct SatTracker {
     return pFormula_->nClauses_ - totSat_.load(std::memory_order_relaxed);
   }
 
-  int64_t GradientDescend(const bool preferMove, Traversal& trav,
+  int64_t GradientDescend(Traversal& trav,
     const VCTrackingSet* considerClauses, VCTrackingSet& unsatClauses, const VCTrackingSet& startFront,
-    VCTrackingSet& front, int64_t minUnsat, bool& moved, BitVector& next, const int sortType)
+    VCTrackingSet& front, bool& moved, BitVector& startAsg, const int sortType,
+    const VCIndex unsatCap, const VCIndex initBest, int64_t& nCombs)
   {
+    BitVector next = startAsg;
     std::vector<MultiItem<VCIndex>> subsetVars, *pvVars = nullptr;
     if(considerClauses == nullptr) {
       pvVars = &vVars_;
@@ -295,7 +297,12 @@ template<typename TCounter> struct SatTracker {
     }
     SortMultiItems(*pvVars, sortType);
 
+    BitVector bestAsg;
+    VCTrackingSet bestFront;
+    VCIndex minUnsat = unsatCap;
+
     VCTrackingSet revVars;
+    VCTrackingSet tFront = front;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
     for(int64_t k=0; k<int64_t(pvVars->size()); k++) {
       const int64_t aVar = (*pvVars)[k].item_;
@@ -306,24 +313,38 @@ template<typename TCounter> struct SatTracker {
         revVars.Flip(aVar);
         continue;
       }
-      //assert( Verify(next) ); // it's very heavy
+      nCombs++;
       next.Flip(aVar);
-      FlipVar<false>(-iVar, &unsatClauses, &front);
+      FlipVar<false>(-iVar, nullptr, &tFront);
 
       if(!trav.IsSeenAssignment(next)) {
-        trav.FoundMove(startFront, revVars, next, unsatClauses.Size());
-        int64_t newUnsat = UnsatCount();
-        if(newUnsat < minUnsat + (preferMove ? 1 : 0)) {
-          moved = true;
+        const VCIndex newUnsat = UnsatCount();
+        trav.FoundMove(startFront, revVars, next, newUnsat);
+        if(newUnsat < minUnsat) {
           minUnsat = newUnsat;
+          bestFront = tFront;
+          bestAsg = next;
+          // if(newUnsat < initBest) {
+          //   break;
+          // }
+        }
+        if(newUnsat <= unsatCap) {
           continue;
         }
       }
 
       // Flip back
       next.Flip(aVar);
-      FlipVar<false>(iVar, &unsatClauses, &front);
+      FlipVar<false>(iVar, nullptr, &tFront);
       revVars.Flip(aVar);
+    }
+    if(minUnsat < unsatCap) {
+      moved = true;
+      front = bestFront;
+      startAsg = bestAsg;
+      unsatClauses = Populate(startAsg);
+    } else {
+      moved = false;
     }
     return minUnsat;
   }
@@ -406,9 +427,6 @@ template<typename TCounter> struct SatTracker {
   }
 
   int64_t NextUnsatCap(const VCTrackingSet& unsatClauses, [[maybe_unused]] const int64_t nStartUnsat) const {
-    if(unsatClauses.Size() < nStartUnsat) {
-      return unsatClauses.Size();
-    }
     return std::max<int64_t>(
       unsatClauses.Size() * 2,
       DivUp(pFormula_->nVars_, nStartUnsat) + unsatClauses.Size()

@@ -254,9 +254,12 @@ struct Formula {
         std::vector<VCIndex>& targets = var2clause_.sources_[i][sgn];
         VCIndex newSize = 0;
         for(VCIndex j=0; j<int64_t(targets.size()); j++) {
-          if(clause2var_.HasArc(i, targets[j])) {
+          if(clause2var_.HasArc(targets[j], i)) {
             targets[newSize] = targets[j];
             newSize++;
+          }
+          else {
+            std::cout  << "-";
           }
         }
         targets.resize(newSize);

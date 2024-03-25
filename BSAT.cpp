@@ -97,6 +97,7 @@ int main(int argc, char* argv[]) {
 
   DefaultSatTracker satTr(formula);
   satTr.Populate(formula.ans_);
+  std::mutex muBestUpdate;
   #pragma omp parallel for schedule(dynamic, 1)
   for(int j=-1; j<=1; j++) {
     BitVector initAsg(formula.nVars_+1);
@@ -112,10 +113,8 @@ int main(int argc, char* argv[]) {
       break;
     }
     VCTrackingSet initUnsatClauses = initSatTr.Populate(initAsg);
-    // This suspends all OpenMP threads in the entire program who try to enter this synchronized section
-    // Naming the such section as "updateBestInit" lets other sections execute while this one is blocked.
-    #pragma omp critical(updateBestInit)
     {
+      std::unique_lock<std::mutex> lock(muBestUpdate);
       if(initUnsatClauses.Size() < bestInit) {
         bestInit = initUnsatClauses.Size();
         startFront = initUnsatClauses;
@@ -129,6 +128,7 @@ int main(int argc, char* argv[]) {
       DefaultSatTracker locSatTr = initSatTr;
       VCTrackingSet locUnsatClauses = initUnsatClauses;
       VCTrackingSet locFront = locUnsatClauses, locNextFront;
+      int64_t nCombs = 0;
       const auto tmInitStart = std::chrono::steady_clock::now();
       for(;;) {
         const auto tmNow = std::chrono::steady_clock::now();
@@ -141,18 +141,16 @@ int main(int argc, char* argv[]) {
           std::cout << "%";
           locFront = locUnsatClauses;
         }
+        const VCIndex locBest = bestInit.load(std::memory_order_relaxed);
         const int64_t altNUnsat = locSatTr.GradientDescend(
-          true, trav, &locUnsatClauses, locUnsatClauses, locFront,
-          locNextFront, locSatTr.NextUnsatCap(locUnsatClauses, bestInit.load()),
-          moved, locAsg, sortType
+          trav, &locFront, locUnsatClauses, locFront, locNextFront, moved, locAsg, sortType,
+          locSatTr.NextUnsatCap(locUnsatClauses, locBest), locBest, nCombs
         );
         if(!moved) {
           break;
         }
-        // This suspends all OpenMP threads in the entire program who try to enter this synchronized section
-        // Naming the such section as "updateBestInit" lets other sections execute while this one is blocked.
-        #pragma omp critical(updateBestInit)
-        {
+        if(altNUnsat < locBest) {
+          std::unique_lock<std::mutex> lock(muBestUpdate);
           if(altNUnsat < bestInit) {
             bestInit = altNUnsat;
             startFront = locNextFront;
@@ -312,7 +310,7 @@ int main(int argc, char* argv[]) {
 
         int64_t newUnsat = locUnsatClauses.Size();
         bool moved;
-        int64_t nCurIts = 0;
+        int64_t nCombs = 0;
         for(;;) {
           VCTrackingSet oldFront;
           if(locFront.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(locFront))) {
@@ -320,13 +318,13 @@ int main(int argc, char* argv[]) {
           } else {
             oldFront = locFront;
           }
-          VCIndex oldFrontSize = oldFront.Size();
           locFront.Clear();
           moved = false;
           const int8_t sortType = omp_get_thread_num() % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
-          newUnsat = locSatTr.GradientDescend( locUnsatClauses.Size() >= nStartUnsat, trav, &oldFront, locUnsatClauses, oldFront, locFront,
-            locSatTr.NextUnsatCap(locUnsatClauses, nStartUnsat) - nCurIts, moved, locAsg, sortType );
-          nCurIts += oldFrontSize;
+          newUnsat = locSatTr.GradientDescend(
+            trav, &oldFront, locUnsatClauses, oldFront, locFront, moved, locAsg, sortType,
+            locSatTr.NextUnsatCap(locUnsatClauses, nStartUnsat), nStartUnsat, nCombs
+          );
           nSequentialGD++;
           #pragma omp critical(bestSeqGD)
           if(locUnsatClauses.Size() < bestUnsat) {
@@ -337,7 +335,7 @@ int main(int argc, char* argv[]) {
               nextGen = true;
             }
           }
-          if(nextGen || !moved || newUnsat == 0 || locSatTr.NextUnsatCap(locUnsatClauses, nStartUnsat) - nCurIts <= 0) {
+          if(nextGen || !moved || newUnsat == 0) {
             break;
           }
           // TODO: what if newUnsat > oldUnsat? Breaking at this point is empirically inefficient (progress stops).
