@@ -101,7 +101,7 @@ void ParallelShuffle(T* data, const size_t count) {
     return;
   }
 
-  const uint32_t nThreads = std::max<int64_t>(1, std::min<int64_t>(omp_get_max_threads(), count*sizeof(T)/kRamPageBytes));
+  const uint32_t nThreads = std::max<int64_t>(1, std::min<int64_t>(omp_get_max_threads(), count/kRamPageBytes));
   std::atomic_flag* syncs = static_cast<std::atomic_flag*>(malloc(count * sizeof(std::atomic_flag)));
   auto clean_syncs = Finally([&]() { free(syncs); });
   #pragma omp parallel for schedule(static, kRamPageBytes / sizeof(std::atomic_flag))

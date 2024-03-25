@@ -302,7 +302,7 @@ template<typename TCounter> struct SatTracker {
     VCIndex minUnsat = unsatCap;
 
     VCTrackingSet revVars;
-    VCTrackingSet tFront = front;
+    VCTrackingSet tFront;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
     for(int64_t k=0; k<int64_t(pvVars->size()); k++) {
       const int64_t aVar = (*pvVars)[k].item_;
@@ -317,7 +317,7 @@ template<typename TCounter> struct SatTracker {
       next.Flip(aVar);
       FlipVar<false>(-iVar, nullptr, &tFront);
 
-      if(!trav.IsSeenAssignment(next)) {
+      if( (tFront.Size() == 0 || !trav.IsSeenFront(tFront)) && !trav.IsSeenAssignment(next)) {
         const VCIndex newUnsat = UnsatCount();
         trav.FoundMove(startFront, revVars, next, newUnsat);
         if(newUnsat < minUnsat) {

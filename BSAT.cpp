@@ -123,9 +123,10 @@ int main(int argc, char* argv[]) {
         bestAsg = initAsg;
       }
     }
+    const int64_t nInnerLoop = (nSysCpus-1) / 3 + 1;
     #pragma omp parallel for schedule(dynamic, 1)
-    for(int i=kMinSortType; i<=kMaxSortType; i++) {
-      std::mt19937_64 rng = GetSeededRandom();
+    for(int i=0; i<nInnerLoop; i++) {
+      //std::mt19937_64 rng = GetSeededRandom();
       BitVector locAsg = initAsg;
       DefaultSatTracker locSatTr = initSatTr;
       VCTrackingSet locUnsatClauses = initUnsatClauses;
@@ -137,10 +138,9 @@ int main(int argc, char* argv[]) {
         const double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmNow - tmInitStart).count() / 1e9;
         if(nSec > kMaxInitSec) { break; }
 
-        const int8_t sortType = rng() % knSortTypes + kMinSortType;
+        const int8_t sortType = i % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
         bool moved = false;
         if(locFront.Size() == 0 || trav.IsSeenFront(locFront)) {
-          trav.OnFrontExhausted(locFront);
           std::cout << "%";
           locFront = locUnsatClauses;
         }
@@ -207,10 +207,10 @@ int main(int argc, char* argv[]) {
       int64_t bestUnsat = formula.nClauses_+1;
       VCTrackingSet bestRevVars;
 
-      std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(front, formula.ans_);
+      std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(unsatClauses, formula.ans_);
       const int64_t startNIncl = 1;
       const int64_t endNIncl = std::min<int64_t>(varFront.size(), 4);
-      const int64_t nInnerLoop = nSysCpus / (endNIncl - startNIncl + 1);
+      const int64_t nInnerLoop = (nSysCpus-1) / (endNIncl - startNIncl + 1) + 1;
       std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
       //std::cout.flush();
       #pragma omp parallel for schedule(dynamic, 1)
@@ -222,7 +222,7 @@ int main(int argc, char* argv[]) {
         // 2: full sort
         #pragma omp parallel for schedule(dynamic, 1)
         for(int64_t i=0; i<nInnerLoop; i++) {
-          int8_t sortType = i % knSortTypes + kMinSortType;
+          const int8_t sortType = i % knSortTypes + kMinSortType;
           BitVector next = formula.ans_;
           DefaultSatTracker newSatTr = satTr;
           VCTrackingSet stepRevs;
@@ -233,12 +233,12 @@ int main(int argc, char* argv[]) {
             newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 0
           );
 
-          // This suspends all OpenMP threads in the entire program who try to enter this synchronized section.
-          // Naming the such section as "updateBestInit" lets other sections execute while this one is blocked.
-          #pragma omp critical(updateBestUnsat)
-          if( moved && curNUnsat < bestUnsat ) {
-            bestUnsat = curNUnsat;
-            bestRevVars = stepRevs;
+          if(moved) {
+            std::unique_lock<std::mutex> lock(muBestUpdate);
+            if(curNUnsat < bestUnsat) {
+              bestUnsat = curNUnsat;
+              bestRevVars = stepRevs;
+            }
           }
         }
       }
@@ -302,7 +302,6 @@ int main(int argc, char* argv[]) {
       VCTrackingSet bestFront;
       BitVector bestAsg;
       std::cout << "S";
-      std::atomic<bool> nextGen = false;
       #pragma omp parallel for num_threads(nSysCpus)
       for(uint32_t i=0; i<nSysCpus; i++) {
         VCTrackingSet locUnsatClauses = unsatClauses;
@@ -335,12 +334,9 @@ int main(int argc, char* argv[]) {
               bestUnsat = locUnsatClauses.Size();
               bestAsg = locAsg;
               bestFront = locFront;
-              if(bestUnsat < nStartUnsat) {
-                nextGen = true;
-              }
             }
           }
-          if(nextGen || !moved || newUnsat == 0) {
+          if(!moved || newUnsat == 0 || locUnsatClauses.Size() < nStartUnsat + nCombs - 1) {
             break;
           }
           // TODO: what if newUnsat > oldUnsat? Breaking at this point is empirically inefficient (progress stops).
@@ -352,6 +348,9 @@ int main(int argc, char* argv[]) {
         front = bestFront;
         unsatClauses = satTr.Populate(formula.ans_);
         assert(bestUnsat == unsatClauses.Size());
+      } else {
+        trav.OnFrontExhausted(front);
+        front = unsatClauses;
       }
       // else use the old values for the next parallel search
     }
