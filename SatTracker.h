@@ -327,6 +327,9 @@ template<typename TCounter> struct SatTracker {
       const int64_t iVar = aVar * (next[aVar] ? 1 : -1);
       revVars.Flip(aVar);
       curRevVars.Flip(aVar);
+      if(front.Size() == 0) {
+        front = unsatClauses;
+      }
       if( trav.IsSeenMove(front, curRevVars) ) {
         revVars.Flip(aVar);
         continue;
@@ -341,6 +344,9 @@ template<typename TCounter> struct SatTracker {
         if(newUnsat < minUnsat) {
           minUnsat = newUnsat;
           bestRevVars = revVars;
+          if(newUnsat == 0) {
+            break;
+          }
         }
         if(newUnsat <= unsatCap) {
           continue;
@@ -379,7 +385,7 @@ template<typename TCounter> struct SatTracker {
 
   int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
     std::vector<MultiItem<VCIndex>>& varFront, const int sortType,
-    BitVector& next, Traversal& trav, VCTrackingSet* unsatClauses,
+    BitVector& next, Traversal& trav, VCTrackingSet& unsatClauses,
     VCTrackingSet& front, VCTrackingSet& origRevVars, int64_t minUnsat,
     bool& moved, int64_t level)
   {
@@ -397,6 +403,9 @@ template<typename TCounter> struct SatTracker {
         selVars[j] = iVar;
         curRevVars.Flip(aVar);
       }
+      if(front.Size() == 0) {
+        front = unsatClauses;
+      }
       if( trav.IsSeenMove(front, curRevVars) ) {
         continue;
       }
@@ -410,7 +419,7 @@ template<typename TCounter> struct SatTracker {
         VCTrackingSet oldFront = front;
         for(int64_t j=0; j<nVars; j++) {
           const int64_t iVar = selVars[j];
-          FlipVar<false>(-iVar, unsatClauses, &front);
+          FlipVar<false>(-iVar, &unsatClauses, &front);
         }
         const int64_t newNUnsat = UnsatCount();
         trav.FoundMove(oldFront, curRevVars, next, newNUnsat);
@@ -427,7 +436,10 @@ template<typename TCounter> struct SatTracker {
           }
           continue;
         }
-        if(level > 0 && front.Size() > 0 && !trav.IsSeenFront(front)) {
+        if(front.Size() == 0) {
+          front = unsatClauses;
+        }
+        if(level > 0 && (front == unsatClauses || !trav.IsSeenFront(front)) ) {
           std::vector<MultiItem<VCIndex>> newVarFront = pFormula_->ClauseFrontToVars(
             front, next);
           bool nextMoved = false;
@@ -456,7 +468,7 @@ template<typename TCounter> struct SatTracker {
         }
         for(int64_t j=0; j<nVars; j++) {
           const int64_t iVar = selVars[j];
-          FlipVar<false>(iVar, unsatClauses, &front);
+          FlipVar<false>(iVar, &unsatClauses, &front);
         }
       }
 

@@ -42,11 +42,7 @@ struct BitVector {
     nQwords_ = DivUp(nBits, 64);
     bits_.reset(new uint64_t[nQwords_]);
 
-    //memset(bits_.get(), 0, sizeof(uint64_t) * nQwords_);
-    //#pragma omp parallel for schedule(static, cParChunkSize)
-    for(int64_t i=0; i<nQwords_; i++) {
-      bits_.get()[i] = 0;
-    }
+    memset(bits_.get(), 0, nQwords_ * sizeof(bits_[0]));
     hash_ = 0;
   }
 
@@ -54,11 +50,7 @@ struct BitVector {
     nBits_ = fellow.nBits_;
     nQwords_ = fellow.nQwords_;
     bits_.reset(new uint64_t[nQwords_]);
-    // memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
-    //#pragma omp parallel for schedule(static, cParChunkSize)
-    for(int64_t i=0; i<nQwords_; i++) {
-      bits_[i] = fellow.bits_[i];
-    }
+    memcpy(bits_.get(), fellow.bits_.get(), nQwords_ * sizeof(bits_[0]));
     hash_ = fellow.hash_;
   }
   BitVector& operator=(const BitVector& fellow) {
@@ -68,11 +60,7 @@ struct BitVector {
         nQwords_ = fellow.nQwords_;
         bits_.reset(new uint64_t[nQwords_]);
       }
-      // memcpy(bits_.get(), fellow.bits_.get(), sizeof(uint64_t) * nQwords_);
-      //#pragma omp parallel for schedule(static, cParChunkSize)
-      for(int64_t i=0; i<nQwords_; i++) {
-        bits_.get()[i] = fellow.bits_.get()[i];
-      }
+      memcpy(bits_.get(), fellow.bits_.get(), nQwords_ * sizeof(bits_[0]));
       hash_ = fellow.hash_;
     }
     return *this;
@@ -121,10 +109,7 @@ struct BitVector {
   }
 
   void SetTrue() {
-    //#pragma omp parallel for schedule(static, cParChunkSize)
-    for(int64_t i=0; i<nQwords_; i++) {
-      bits_.get()[i] = -1LL;
-    }
+    memset(bits_.get(), -1, nQwords_ * sizeof(bits_[0]));
     // Ensure the dummy bit for the formula is always false
     Flip(0);
     Rehash();

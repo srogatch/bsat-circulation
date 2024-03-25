@@ -68,8 +68,6 @@ int main(int argc, char* argv[]) {
   signal(SIGINT, signalHandler);
   // TODO: does it override the environment variable?
   omp_set_num_threads(nSysCpus);
-  // Enable nested parallelism
-  omp_set_max_active_levels(omp_get_supported_active_levels());
 
   Formula formula;
   bool provenUnsat = false;
@@ -97,8 +95,11 @@ int main(int argc, char* argv[]) {
 
   std::atomic<int64_t> nParallelGD = 0, nSequentialGD = 0, nWalk = 0;
   std::mutex muBestUpdate;
+
+  omp_set_max_active_levels(2);
   #pragma omp parallel for schedule(dynamic, 1)
   for(int j=-1; j<=1; j++) {
+    omp_set_max_active_levels(2);
     BitVector initAsg(formula.nVars_+1);
     DefaultSatTracker initSatTr(formula);
     switch(j) {
@@ -120,7 +121,7 @@ int main(int argc, char* argv[]) {
         bestAsg = initAsg;
       }
     }
-    const int64_t nInnerLoop = (nSysCpus-1) / 3 + 1;
+    const int64_t nInnerLoop = std::max<int64_t>(1, nSysCpus / 3);
     #pragma omp parallel for schedule(dynamic, 1)
     for(int i=0; i<nInnerLoop; i++) {
       //std::mt19937_64 rng = GetSeededRandom();
@@ -212,23 +213,24 @@ int main(int argc, char* argv[]) {
       const int64_t nInnerLoop = (nSysCpus-1) / (endNIncl - startNIncl + 1) + 1;
       std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
       //std::cout.flush();
-      #pragma omp parallel for schedule(dynamic, 1)
+      #pragma omp parallel for schedule(dynamic, 1) collapse(2)
       for(int64_t nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
         // 0: shuffle
         // -1: reversed heap
         // 1: heap
         // -2: reversed full sort
         // 2: full sort
-        #pragma omp parallel for schedule(dynamic, 1)
         for(int64_t i=0; i<nInnerLoop; i++) {
           const int8_t sortType = i % knSortTypes + kMinSortType;
           BitVector next = formula.ans_;
           DefaultSatTracker newSatTr = satTr;
           VCTrackingSet stepRevs;
           std::vector<MultiItem<VCIndex>> locVarFront = varFront;
+          VCTrackingSet locFront = front;
+          VCTrackingSet locUnsatCs = unsatClauses;
           bool moved = false;
           const int64_t curNUnsat = newSatTr.ParallelGD(
-            true, nIncl, locVarFront, sortType, next, trav, nullptr, front, stepRevs, 
+            true, nIncl, locVarFront, sortType, next, trav, locUnsatCs, locFront, stepRevs, 
             newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 0
           );
 
@@ -281,7 +283,6 @@ int main(int argc, char* argv[]) {
 
       VCTrackingSet oldUnsatCs = unsatClauses;
       std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
-      //#pragma omp parallel for schedule(guided, kCacheLineSize)
       for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
         const int64_t revV = vBestRevVars[i];
         formula.ans_.Flip(revV);
@@ -298,6 +299,8 @@ int main(int argc, char* argv[]) {
       std::cout << "S";
       bestUnsat = formula.nClauses_ + 1;
       bestRevVars.Clear();
+
+      omp_set_max_active_levels(1);
       #pragma omp parallel for num_threads(nSysCpus)
       for(uint32_t i=0; i<nSysCpus; i++) {
         VCTrackingSet locUnsatClauses = unsatClauses;
