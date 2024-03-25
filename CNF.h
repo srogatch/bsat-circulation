@@ -239,6 +239,7 @@ struct Formula {
         assert(k == int64_t(removals.size()));
         assert(newSize + removals.size() == targets.size());
         targets.resize(newSize);
+        targets.shrink_to_fit();
         // This way the data structure remains sorted
       }
     }
@@ -258,6 +259,7 @@ struct Formula {
             newSize++;
           }
         }
+        targets.resize(newSize);
         targets.shrink_to_fit();
       }
     }

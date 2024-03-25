@@ -23,15 +23,14 @@ struct Linkage {
   // Thread-safe relative to other Add() calls.
   void Add(const VCIndex from, const VCIndex to)
   {
-    const int sgnProd = Signum(from) * Signum(to);
-    assert(sgnProd != 0);
     // Place the forward arc from |from| to |to|, and the backlink from |-from| to |-to|
     for(int8_t sgnBoth=-1; sgnBoth<=1; sgnBoth+=2)
     {
       auto lock1 = sources_.With(from * sgnBoth);
       RangeVector<std::vector<VCIndex>, int8_t>& source = sources_[from * sgnBoth];
-      auto lock2 = source.With(sgnProd);
-      source[sgnProd].emplace_back(to * sgnBoth);
+      const int8_t sgnTo = Signum(to * sgnBoth);
+      auto lock2 = source.With(sgnTo);
+      source[sgnTo].emplace_back(to * sgnBoth);
     }
   }
 
@@ -53,6 +52,7 @@ struct Linkage {
           }
         }
         source[sgn].resize(newSize);
+        source[sgn].shrink_to_fit();
       }
     }
   }

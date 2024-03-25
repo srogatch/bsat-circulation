@@ -77,6 +77,7 @@ template<typename TCounter> struct SatTracker {
     nSat_[0] = 1;
     #pragma omp parallel for schedule(guided, kRamPageBytes) reduction(+:curTot)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
+      assert( pFormula_->clause2var_.ArcCount(i) <= std::numeric_limits<TCounter>::max() );
       // Prevent the counter flowing below 1 if it's a dummy (always satisfied) clause
       nSat_[i] = (pFormula_->dummySat_[i] ? 1 : 0);
       #pragma unroll
@@ -181,7 +182,7 @@ template<typename TCounter> struct SatTracker {
     VCIndex balance = 0;
     //constexpr const int cChunkSize = (kRamPageBytes / sizeof(VCIndex));
     {
-      const int8_t sgnTo = Signum(iVar);
+      const int8_t sgnTo = 1;
       const VCIndex nArcs = pFormula_->var2clause_.ArcCount(iVar, sgnTo);
       VCIndex ans = 0;
       //const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
@@ -189,6 +190,9 @@ template<typename TCounter> struct SatTracker {
       for(VCIndex at=0; at<nArcs; at++) {
         const VCIndex iClause = pFormula_->var2clause_.GetTarget(iVar, sgnTo, at);
         const VCIndex aClause = llabs(iClause);
+        if(pFormula_->dummySat_[aClause]) {
+          continue;
+        }
         assert(Signum(iClause) == 1);
         if constexpr(concurrent) {
           Lock(aClause);
@@ -212,7 +216,7 @@ template<typename TCounter> struct SatTracker {
       balance += ans;
     }
     {
-      const int8_t sgnTo = -Signum(iVar);
+      const int8_t sgnTo = -1;
       const VCIndex nArcs = pFormula_->var2clause_.ArcCount(iVar, sgnTo);
       VCIndex ans = 0;
       //const int numThreads = std::min<int>(DivUp(nArcs, cChunkSize), nSysCpus);
@@ -220,6 +224,9 @@ template<typename TCounter> struct SatTracker {
       for(VCIndex at=0; at<nArcs; at++) {
         const VCIndex iClause = pFormula_->var2clause_.GetTarget(iVar, sgnTo, at);
         const VCIndex aClause = llabs(iClause);
+        if(pFormula_->dummySat_[aClause]) {
+          continue;
+        }
         assert(Signum(iClause) == -1);
         if constexpr(concurrent) {
           Lock(aClause);

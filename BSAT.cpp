@@ -91,16 +91,17 @@ int main(int argc, char* argv[]) {
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
 
   std::cout << "Choosing the best initial variable assignment..." << std::endl;
-  int64_t bestInit = formula.nClauses_ + 1;
+  std::atomic<int64_t> bestInit = formula.nClauses_ + 1;
+  BitVector bestAsg;
   VCTrackingSet startFront;
 
   DefaultSatTracker satTr(formula);
   satTr.Populate(formula.ans_);
   #pragma omp parallel for schedule(dynamic, 1)
-  for(int init=-1; init<=1; init++) {
+  for(int j=-1; j<=1; j++) {
     BitVector initAsg(formula.nVars_+1);
     DefaultSatTracker initSatTr(formula);
-    switch(init) {
+    switch(j) {
     case -1:
       break; // already all false
     case 0:
@@ -111,7 +112,16 @@ int main(int argc, char* argv[]) {
       break;
     }
     VCTrackingSet initUnsatClauses = initSatTr.Populate(initAsg);
-    VCTrackingSet initFront = initUnsatClauses;
+    // This suspends all OpenMP threads in the entire program who try to enter this synchronized section
+    // Naming the such section as "updateBestInit" lets other sections execute while this one is blocked.
+    #pragma omp critical(updateBestInit)
+    {
+      if(initUnsatClauses.Size() < bestInit) {
+        bestInit = initUnsatClauses.Size();
+        startFront = initUnsatClauses;
+        bestAsg = initAsg;
+      }
+    }
     #pragma omp parallel for schedule(dynamic, 1)
     for(int i=kMinSortType; i<=kMaxSortType; i++) {
       std::mt19937_64 rng = GetSeededRandom();
@@ -127,10 +137,14 @@ int main(int argc, char* argv[]) {
 
         const int8_t sortType = rng() % knSortTypes + kMinSortType;
         bool moved = false;
+        if(locFront.Size() == 0) {
+          std::cout << "%";
+          locFront = locUnsatClauses;
+        }
         const int64_t altNUnsat = locSatTr.GradientDescend(
-          false, trav, &locUnsatClauses, locUnsatClauses, initFront,
-          locNextFront, locUnsatClauses.Size(), moved, locAsg,
-          sortType
+          true, trav, &locUnsatClauses, locUnsatClauses, locFront,
+          locNextFront, locSatTr.NextUnsatCap(locUnsatClauses, bestInit.load()),
+          moved, locAsg, sortType
         );
         if(!moved) {
           break;
@@ -142,7 +156,7 @@ int main(int argc, char* argv[]) {
           if(altNUnsat < bestInit) {
             bestInit = altNUnsat;
             startFront = locNextFront;
-            formula.ans_ = locAsg;
+            bestAsg = locAsg;
           }
         }
         locFront = locNextFront;
@@ -150,6 +164,7 @@ int main(int argc, char* argv[]) {
       }
     }
   }
+  formula.ans_ = bestAsg;
   VCTrackingSet front = startFront;
   VCTrackingSet unsatClauses = satTr.Populate(formula.ans_);
   assert(unsatClauses.Size() == bestInit);

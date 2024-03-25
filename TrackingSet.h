@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cassert>
 #include <algorithm>
+#include <iostream>
 
 template<typename TItem, typename THasher> struct Bucket {
   mutable std::atomic_flag sync_ = ATOMIC_FLAG_INIT;
@@ -40,12 +41,17 @@ template<typename TItem> struct MultiItem {
   bool operator!=(const MultiItem& fellow) const {
     return item_ != fellow.item_;
   }
-  bool operator<(const MultiItem& fellow) const {
-    return nEntries_ < fellow.nEntries_;
-  }
-  bool operator>(const MultiItem& fellow) const {
-    return nEntries_ > fellow.nEntries_;
-  }
+  
+  struct FrequentLess {
+    bool operator()(const MultiItem& a, const MultiItem& b) const {
+      return a.nEntries_ < b.nEntries_;
+    }
+  };
+  struct RareLess {
+    bool operator()(const MultiItem& a, const MultiItem& b) const {
+      return a.nEntries_ > b.nEntries_;
+    }
+  };
 };
 
 constexpr const int kMinSortType = -2;
@@ -60,16 +66,16 @@ template<typename T> inline void SortMultiItems(std::vector<MultiItem<T>>& vec, 
   case 0:
     break;
   case -1:
-    std::make_heap(vec.begin(), vec.end(), std::greater<MultiItem<T>>());
+    std::make_heap(vec.begin(), vec.end(), typename MultiItem<T>::FrequentLess());
     break;
   case 1:
-    std::make_heap(vec.begin(), vec.end());
+    std::make_heap(vec.begin(), vec.end(), typename MultiItem<T>::RareLess());
     break;
   case -2:
-    std::stable_sort(vec.begin(), vec.end(), std::greater<MultiItem<T>>());
+    std::stable_sort(vec.begin(), vec.end(), typename MultiItem<T>::FrequentLess());
     break;
   case 2:
-    std::stable_sort(vec.begin(), vec.end());
+    std::stable_sort(vec.begin(), vec.end(), typename MultiItem<T>::RareLess());
     break;
   }
 }
