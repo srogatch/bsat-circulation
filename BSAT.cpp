@@ -95,10 +95,7 @@ int main(int argc, char* argv[]) {
   BitVector bestAsg;
   VCTrackingSet startFront;
 
-
   std::atomic<int64_t> nParallelGD = 0, nSequentialGD = 0, nWalk = 0;
-  DefaultSatTracker satTr(formula);
-  satTr.Populate(formula.ans_);
   std::mutex muBestUpdate;
   #pragma omp parallel for schedule(dynamic, 1)
   for(int j=-1; j<=1; j++) {
@@ -114,7 +111,7 @@ int main(int argc, char* argv[]) {
       initAsg.SetTrue();
       break;
     }
-    VCTrackingSet initUnsatClauses = initSatTr.Populate(initAsg);
+    VCTrackingSet initUnsatClauses = initSatTr.Populate(initAsg, nullptr);
     {
       std::unique_lock<std::mutex> lock(muBestUpdate);
       if(initUnsatClauses.Size() < bestInit) {
@@ -130,14 +127,16 @@ int main(int argc, char* argv[]) {
       BitVector locAsg = initAsg;
       DefaultSatTracker locSatTr = initSatTr;
       VCTrackingSet locUnsatClauses = initUnsatClauses;
-      VCTrackingSet locFront = locUnsatClauses, locNextFront;
+      VCTrackingSet locFront = locUnsatClauses;
+      VCTrackingSet revVars;
       int64_t nCombs = 0;
       const auto tmInitStart = std::chrono::steady_clock::now();
       for(;;) {
         const auto tmNow = std::chrono::steady_clock::now();
         const double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmNow - tmInitStart).count() / 1e9;
-        if(nSec > kMaxInitSec) { break; }
-
+        if(nSec > kMaxInitSec) {
+          break; 
+        }
         const int8_t sortType = i % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
         bool moved = false;
         if(locFront.Size() == 0 || trav.IsSeenFront(locFront)) {
@@ -146,8 +145,9 @@ int main(int argc, char* argv[]) {
         }
         const VCIndex locBest = bestInit.load(std::memory_order_relaxed);
         const int64_t altNUnsat = locSatTr.GradientDescend(
-          trav, &locFront, locUnsatClauses, locFront, locNextFront, moved, locAsg, sortType,
-          locSatTr.NextUnsatCap(locUnsatClauses, locBest), locBest, nCombs
+          trav, &locFront, moved, locAsg, sortType,
+          locSatTr.NextUnsatCap(locUnsatClauses, locBest), nCombs,
+          locUnsatClauses, locFront, revVars
         );
         nSequentialGD.fetch_add(1);
         if(!moved) {
@@ -157,18 +157,17 @@ int main(int argc, char* argv[]) {
           std::unique_lock<std::mutex> lock(muBestUpdate);
           if(altNUnsat < bestInit) {
             bestInit = altNUnsat;
-            startFront = locNextFront;
+            startFront = locFront;
             bestAsg = locAsg;
           }
         }
-        locFront = locNextFront;
-        locNextFront.Clear();
       }
     }
   }
+  DefaultSatTracker satTr(formula);
   formula.ans_ = bestAsg;
   VCTrackingSet front = startFront;
-  VCTrackingSet unsatClauses = satTr.Populate(formula.ans_);
+  VCTrackingSet unsatClauses = satTr.Populate(formula.ans_, nullptr);
   assert(unsatClauses.Size() == bestInit);
 
   BitVector maxPartial;
@@ -230,7 +229,7 @@ int main(int argc, char* argv[]) {
           bool moved = false;
           const int64_t curNUnsat = newSatTr.ParallelGD(
             true, nIncl, locVarFront, sortType, next, trav, nullptr, front, stepRevs, 
-            newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 0
+            newSatTr.NextUnsatCap(unsatClauses, nStartUnsat), moved, 1
           );
 
           if(moved) {
@@ -259,8 +258,7 @@ int main(int argc, char* argv[]) {
         }
 
         if(trav.StepBack(formula.ans_)) {
-          unsatClauses = satTr.Populate(formula.ans_);
-          front = unsatClauses;
+          unsatClauses = satTr.Populate(formula.ans_, &front);
           assert(satTr.UnsatCount() == unsatClauses.Size());
           std::cout << "@";
           continue;
@@ -281,78 +279,82 @@ int main(int argc, char* argv[]) {
       std::cout << ">";
       nWalk++;
 
-      front.Clear();
+      VCTrackingSet oldUnsatCs = unsatClauses;
       std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
       //#pragma omp parallel for schedule(guided, kCacheLineSize)
       for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
         const int64_t revV = vBestRevVars[i];
         formula.ans_.Flip(revV);
-        satTr.FlipVar<true>(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, &front);
+        satTr.FlipVar<true>(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, nullptr);
       }
+      front = unsatClauses - oldUnsatCs;
       assert(satTr.UnsatCount() == bestUnsat);
       assert(unsatClauses.Size() == bestUnsat);
-      // TODO: this is too heavy
-      // assert(satTr.Verify(formula.ans_));
 
       if(unsatClauses.Size() < nStartUnsat) {
         break;
       }
 
-      bestUnsat = formula.nClauses_ + 1;
-      VCTrackingSet bestFront;
-      BitVector bestAsg;
       std::cout << "S";
+      bestUnsat = formula.nClauses_ + 1;
+      bestRevVars.Clear();
       #pragma omp parallel for num_threads(nSysCpus)
       for(uint32_t i=0; i<nSysCpus; i++) {
         VCTrackingSet locUnsatClauses = unsatClauses;
-        VCTrackingSet locFront = front;
+        VCTrackingSet locFront = front, nextFront;
         DefaultSatTracker locSatTr(satTr);
         BitVector locAsg = formula.ans_;
+        VCTrackingSet stepRevs;
         //std::mt19937_64 rng = GetSeededRandom();
 
         int64_t newUnsat = locUnsatClauses.Size();
         bool moved;
         int64_t nCombs = 0;
         for(;;) {
-          VCTrackingSet oldFront;
           if(locFront.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(locFront))) {
-            oldFront = locUnsatClauses;
-          } else {
-            oldFront = locFront;
+            locFront = locUnsatClauses;
           }
-          locFront.Clear();
           moved = false;
-          const int8_t sortType = omp_get_thread_num() % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
+          const int8_t sortType = i % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
+          //const int8_t sortType = rng() % knSortTypes + kMinSortType;
           newUnsat = locSatTr.GradientDescend(
-            trav, &oldFront, locUnsatClauses, oldFront, locFront, moved, locAsg, sortType,
-            locSatTr.NextUnsatCap(locUnsatClauses, nStartUnsat), nStartUnsat, nCombs
+            trav, &locFront, moved, locAsg, sortType,
+            locSatTr.NextUnsatCap(locUnsatClauses, nStartUnsat), nCombs,
+            locUnsatClauses, locFront, stepRevs
           );
           nSequentialGD.fetch_add(1);
+          if(!moved) {
+            // The data structures are corrupted already (not rolled back)
+            break;
+          }
           {
             std::unique_lock<std::mutex> lock(muBestUpdate);
             if(locUnsatClauses.Size() < bestUnsat) {
               bestUnsat = locUnsatClauses.Size();
-              bestAsg = locAsg;
-              bestFront = locFront;
+              bestRevVars = stepRevs;
             }
           }
-          if(!moved || newUnsat == 0 || locUnsatClauses.Size() < nStartUnsat + nCombs - 1) {
+          if(newUnsat == 0 || locUnsatClauses.Size() < nStartUnsat + nCombs - 1) {
             break;
           }
-          // TODO: what if newUnsat > oldUnsat? Breaking at this point is empirically inefficient (progress stops).
-          // Perhaps a better solution would be restoring the previous assignment, but it's slow.
         }
       }
       if(bestUnsat < formula.nClauses_) {
-        formula.ans_ = bestAsg;
-        front = bestFront;
-        unsatClauses = satTr.Populate(formula.ans_);
-        assert(bestUnsat == unsatClauses.Size());
+        oldUnsatCs = unsatClauses;
+        vBestRevVars = bestRevVars.ToVector();
+        //#pragma omp parallel for schedule(guided, kCacheLineSize)
+        for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
+          const int64_t revV = vBestRevVars[i];
+          formula.ans_.Flip(revV);
+          satTr.FlipVar<true>(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, nullptr);
+        }
+        front = unsatClauses - oldUnsatCs;
+        assert(satTr.UnsatCount() == bestUnsat);
+        assert(unsatClauses.Size() == bestUnsat);
       } else {
         trav.OnFrontExhausted(front);
-        front = unsatClauses;
+        front.Clear();
       }
-      // else use the old values for the next parallel search
     }
     std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
       << ", Known assignments: " << trav.seenAssignment_.Size()

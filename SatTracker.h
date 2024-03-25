@@ -48,7 +48,7 @@ template<typename TCounter> struct SatTracker {
     pFormula_ = src.pFormula_;
     totSat_.store(src.totSat_.load(std::memory_order_relaxed), std::memory_order_relaxed);
 
-    #pragma omp parallel for schedule(static, kRamPageBytes)
+    //#pragma omp parallel for schedule(static, kRamPageBytes)
     for(int64_t i=0; i<=pFormula_->nClauses_; i++) {
       nSat_[i] = src.nSat_[i];
     }
@@ -71,12 +71,16 @@ template<typename TCounter> struct SatTracker {
     fellow.totSat_.store(t, std::memory_order_relaxed);
   }
 
-  VCTrackingSet Populate(const BitVector& assignment) {
+  VCTrackingSet Populate(const BitVector& assignment, VCTrackingSet* front) {
     VCTrackingSet ans;
     int64_t curTot = 0;
     nSat_[0] = 1;
-    #pragma omp parallel for schedule(guided, kRamPageBytes) reduction(+:curTot)
+    if(front != nullptr) {
+      front->Clear();
+    }
+    //#pragma omp parallel for schedule(guided, kRamPageBytes) reduction(+:curTot)
     for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
+      VCIndex oldSat = nSat_[i];
       assert( pFormula_->clause2var_.ArcCount(i) <= std::numeric_limits<TCounter>::max() );
       // Prevent the counter flowing below 1 if it's a dummy (always satisfied) clause
       nSat_[i] = (pFormula_->dummySat_[i] ? 1 : 0);
@@ -98,6 +102,9 @@ template<typename TCounter> struct SatTracker {
       } else {
         // Unsatisfied clause
         ans.Add(i);
+        if(front != nullptr && oldSat > 0) {
+          front->Add(i);
+        }
       }
     }
     totSat_ = curTot;
@@ -176,9 +183,6 @@ template<typename TCounter> struct SatTracker {
   // Returns the change in satisfiability: positive - more satisfiable, negative - more unsatisfiable.
   template<bool concurrent> int64_t FlipVar(const int64_t iVar, VCTrackingSet* unsatClauses, VCTrackingSet* front)
   {
-    // TODO: remove this very heavy assert
-    // assert(unsatClauses == nullptr || ReallyUnsat(*unsatClauses));
-
     VCIndex balance = 0;
     //constexpr const int cChunkSize = (kRamPageBytes / sizeof(VCIndex));
     {
@@ -277,16 +281,30 @@ template<typename TCounter> struct SatTracker {
     return ans;
   }
 
+  VCTrackingSet GetFront(const SatTracker& oldSatTr) {
+    VCTrackingSet ans;
+    #pragma omp parallel for schedule(guided, kRamPageBytes)
+    for(int64_t i=1; i<=pFormula_->nClauses_; i++) {
+      if(nSat_.get()[i].load(std::memory_order_relaxed) == 0) {
+        if(oldSatTr.nSat_.get()[i].load(std::memory_order_relaxed) > 0) {
+          ans.Add(i);
+        }
+      }
+    }
+    return ans;
+  }
+
   int64_t UnsatCount() const {
     return pFormula_->nClauses_ - totSat_.load(std::memory_order_relaxed);
   }
 
   int64_t GradientDescend(Traversal& trav,
-    const VCTrackingSet* considerClauses, VCTrackingSet& unsatClauses, const VCTrackingSet& startFront,
-    VCTrackingSet& front, bool& moved, BitVector& startAsg, const int sortType,
-    const VCIndex unsatCap, const VCIndex initBest, int64_t& nCombs)
+    const VCTrackingSet* considerClauses,
+    bool& moved, BitVector& next, const int sortType,
+    const VCIndex unsatCap, int64_t& nCombs,
+    VCTrackingSet& unsatClauses, VCTrackingSet& front,
+    VCTrackingSet& origRevVars)
   {
-    BitVector next = startAsg;
     std::vector<MultiItem<VCIndex>> subsetVars, *pvVars = nullptr;
     if(considerClauses == nullptr) {
       pvVars = &vVars_;
@@ -297,53 +315,63 @@ template<typename TCounter> struct SatTracker {
     }
     SortMultiItems(*pvVars, sortType);
 
-    BitVector bestAsg;
-    VCTrackingSet bestFront;
-    VCIndex minUnsat = unsatCap;
+    VCIndex minUnsat = unsatCap+1;
+    VCTrackingSet bestRevVars;
 
     VCTrackingSet revVars;
-    VCTrackingSet tFront;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
     for(int64_t k=0; k<int64_t(pvVars->size()); k++) {
+      VCTrackingSet curRevVars;
       const int64_t aVar = (*pvVars)[k].item_;
       assert(1 <= aVar && aVar <= pFormula_->nVars_);
       const int64_t iVar = aVar * (next[aVar] ? 1 : -1);
       revVars.Flip(aVar);
-      if( trav.IsSeenMove(startFront, revVars) ) {
+      curRevVars.Flip(aVar);
+      if( trav.IsSeenMove(front, curRevVars) ) {
         revVars.Flip(aVar);
         continue;
       }
       nCombs++;
       next.Flip(aVar);
-      FlipVar<false>(-iVar, nullptr, &tFront);
-
-      if( (tFront.Size() == 0 || !trav.IsSeenFront(tFront)) && !trav.IsSeenAssignment(next)) {
+      if(!trav.IsSeenAssignment(next)) {
+        VCTrackingSet oldFront = front;
+        FlipVar<false>(-iVar, &unsatClauses, &front);
         const VCIndex newUnsat = UnsatCount();
-        trav.FoundMove(startFront, revVars, next, newUnsat);
+        trav.FoundMove(oldFront, curRevVars, next, newUnsat);
         if(newUnsat < minUnsat) {
           minUnsat = newUnsat;
-          bestFront = tFront;
-          bestAsg = next;
-          // if(newUnsat < initBest) {
-          //   break;
-          // }
+          bestRevVars = revVars;
         }
         if(newUnsat <= unsatCap) {
           continue;
         }
+        // Flip back
+        FlipVar<false>(iVar, &unsatClauses, &front);
       }
 
       // Flip back
       next.Flip(aVar);
-      FlipVar<false>(iVar, nullptr, &tFront);
       revVars.Flip(aVar);
     }
-    if(minUnsat < unsatCap) {
+    if(minUnsat <= unsatCap) {
+      // Move to a good next assignment
       moved = true;
-      front = bestFront;
-      startAsg = bestAsg;
-      unsatClauses = Populate(startAsg);
+      // TODO: a dedicated method for computing this subset operation
+      const VCTrackingSet toFlip = (revVars - bestRevVars) + (bestRevVars - revVars);
+      std::vector<VCIndex> vRevVars = toFlip.ToVector();
+      for(VCIndex i=0; i<vRevVars.size(); i++) {
+        const VCIndex revV = vRevVars[i];
+        next.Flip(revV);
+        FlipVar<false>(revV * (next[revV] ? 1 : -1), &unsatClauses, &front);
+      }
+      vRevVars = bestRevVars.ToVector();
+      // TODO: FlipAll method
+      for(VCIndex i=0; i<vRevVars.size(); i++) {
+        origRevVars.Flip(vRevVars[i]);
+      }
     } else {
+      // There's no tolerable assignment.
+      // Don't restore the initial parameters of |next|, |unsatClauses| and |front|
       moved = false;
     }
     return minUnsat;
@@ -351,67 +379,86 @@ template<typename TCounter> struct SatTracker {
 
   int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
     std::vector<MultiItem<VCIndex>>& varFront, const int sortType,
-    BitVector& next, Traversal& trav,
-    VCTrackingSet* unsatClauses, const VCTrackingSet& startClauseFront,
-    VCTrackingSet& revVars, int64_t minUnsat, bool& moved, int64_t level)
+    BitVector& next, Traversal& trav, VCTrackingSet* unsatClauses,
+    VCTrackingSet& front, VCTrackingSet& origRevVars, int64_t minUnsat,
+    bool& moved, int64_t level)
   {
     SortMultiItems(varFront, sortType);
+    VCTrackingSet revVars;
     for(int64_t i=0; i<int64_t(varFront.size()); i+=varsAtOnce) {
       std::vector<int64_t> selVars(varsAtOnce, 0);
       const int64_t nVars = std::min<int64_t>(varsAtOnce, int64_t(varFront.size()) - i);
+      VCTrackingSet curRevVars;
       for(int64_t j=0; j<nVars; j++) {
         int64_t aVar, iVar;
         aVar = varFront[i+j].item_;
         assert(1 <= aVar && aVar <= pFormula_->nVars_);
         iVar = aVar * (next[aVar] ? 1 : -1);
         selVars[j] = iVar;
-        revVars.Flip(aVar);
+        curRevVars.Flip(aVar);
       }
-      if( trav.IsSeenMove(startClauseFront, revVars) ) {
-        // Should be better sequential
-        for(int64_t j=0; j<nVars; j++) {
-          const int64_t iVar = selVars[j];
-          const int64_t aVar = llabs(iVar);
-          revVars.Flip(aVar);
-        }
+      if( trav.IsSeenMove(front, curRevVars) ) {
         continue;
       }
-      
-      VCTrackingSet newClauseFront;
       for(int64_t j=0; j<nVars; j++) {
         const int64_t iVar = selVars[j];
         const int64_t aVar = llabs(iVar);
+        revVars.Flip(aVar);
         next.Flip(aVar);
-        FlipVar<false>(aVar * (next[aVar] ? 1 : -1), unsatClauses, &newClauseFront);
       }
       if(!trav.IsSeenAssignment(next)) {
+        VCTrackingSet oldFront = front;
+        for(int64_t j=0; j<nVars; j++) {
+          const int64_t iVar = selVars[j];
+          const int64_t aVar = llabs(iVar);
+          FlipVar<false>(-iVar, unsatClauses, &front);
+        }
         const int64_t newNUnsat = UnsatCount();
-        trav.FoundMove(startClauseFront, revVars, next, newNUnsat);
+        trav.FoundMove(oldFront, curRevVars, next, newNUnsat);
         if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
           moved = true;
           minUnsat = newNUnsat;
+          for(int64_t j=0; j<nVars; j++) {
+            const int64_t iVar = selVars[j];
+            const int64_t aVar = llabs(iVar);
+            origRevVars.Flip(aVar);
+          }
           if(minUnsat == 0) {
             break;
           }
           continue;
         }
-        if(level > 0 && newClauseFront.Size() > 0) {
-          std::vector<MultiItem<VCIndex>> newVarFront = pFormula_->ClauseFrontToVars(newClauseFront, next);
+        if(level > 0 && front.Size() > 0 && !trav.IsSeenFront(front)) {
+          std::vector<MultiItem<VCIndex>> newVarFront = pFormula_->ClauseFrontToVars(
+            front, next);
           bool nextMoved = false;
           unsigned short r;
           while(!_rdrand16_step(&r));
+          VCTrackingSet newClauseFront = front;
           const int64_t subNUnsat = ParallelGD(
-            preferMove, varsAtOnce, newVarFront, r%knSortTypes + kMinSortType, next, trav, unsatClauses, startClauseFront,
+            preferMove, varsAtOnce, newVarFront, r%knSortTypes + kMinSortType,
+            next, trav, unsatClauses, newClauseFront,
             revVars, minUnsat, nextMoved, level-1
           );
           if(subNUnsat < minUnsat || (preferMove && nextMoved && subNUnsat == minUnsat)) {
             minUnsat = subNUnsat;
+            front = newClauseFront;
             moved = true;
+            for(int64_t j=0; j<nVars; j++) {
+              const int64_t iVar = selVars[j];
+              const int64_t aVar = llabs(iVar);
+              origRevVars.Flip(aVar);
+            }
             if(minUnsat == 0) {
               break;
             }
             continue;
           }
+        }
+        for(int64_t j=0; j<nVars; j++) {
+          const int64_t iVar = selVars[j];
+          const int64_t aVar = llabs(iVar);
+          FlipVar<false>(iVar, unsatClauses, &front);
         }
       }
 
@@ -419,7 +466,6 @@ template<typename TCounter> struct SatTracker {
         const int64_t iVar = selVars[j];
         const int64_t aVar = llabs(iVar);
         next.Flip(aVar);
-        FlipVar<false>(aVar * (next[aVar] ? 1 : -1), unsatClauses, nullptr);
         revVars.Flip(aVar);
       }
     }
