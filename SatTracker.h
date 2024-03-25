@@ -359,14 +359,14 @@ template<typename TCounter> struct SatTracker {
       // TODO: a dedicated method for computing this subset operation
       const VCTrackingSet toFlip = (revVars - bestRevVars) + (bestRevVars - revVars);
       std::vector<VCIndex> vRevVars = toFlip.ToVector();
-      for(VCIndex i=0; i<vRevVars.size(); i++) {
+      for(VCIndex i=0; i<VCIndex(vRevVars.size()); i++) {
         const VCIndex revV = vRevVars[i];
         next.Flip(revV);
         FlipVar<false>(revV * (next[revV] ? 1 : -1), &unsatClauses, &front);
       }
       vRevVars = bestRevVars.ToVector();
       // TODO: FlipAll method
-      for(VCIndex i=0; i<vRevVars.size(); i++) {
+      for(VCIndex i=0; i<VCIndex(vRevVars.size()); i++) {
         origRevVars.Flip(vRevVars[i]);
       }
     } else {
@@ -410,7 +410,6 @@ template<typename TCounter> struct SatTracker {
         VCTrackingSet oldFront = front;
         for(int64_t j=0; j<nVars; j++) {
           const int64_t iVar = selVars[j];
-          const int64_t aVar = llabs(iVar);
           FlipVar<false>(-iVar, unsatClauses, &front);
         }
         const int64_t newNUnsat = UnsatCount();
@@ -457,7 +456,6 @@ template<typename TCounter> struct SatTracker {
         }
         for(int64_t j=0; j<nVars; j++) {
           const int64_t iVar = selVars[j];
-          const int64_t aVar = llabs(iVar);
           FlipVar<false>(iVar, unsatClauses, &front);
         }
       }
