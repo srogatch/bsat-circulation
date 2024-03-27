@@ -309,7 +309,7 @@ template<typename TCounter> struct SatTracker {
     bool& moved, BitVector& next, const int sortType,
     const VCIndex unsatCap, int64_t& nCombs,
     VCTrackingSet& unsatClauses, VCTrackingSet& front,
-    VCTrackingSet& origRevVars)
+    VCTrackingSet& origRevVars, const VCIndex nStartUnsat)
   {
     std::vector<MultiItem<VCIndex>> subsetVars, *pvVars = nullptr;
     if(considerClauses == nullptr) {
@@ -355,7 +355,7 @@ template<typename TCounter> struct SatTracker {
             break;
           }
         }
-        if(newUnsat <= unsatCap) {
+        if(newUnsat < nStartUnsat) {
           continue;
         }
         // Flip back

@@ -149,7 +149,7 @@ int main(int argc, char* argv[]) {
           trav, &locFront, moved, locAsg, sortType,
           // locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
           locBest,
-          nCombs, locUnsatClauses, locFront, revVars
+          nCombs, locUnsatClauses, locFront, revVars, locBest
         );
         nSequentialGD.fetch_add(1);
         if(!moved) {
@@ -396,6 +396,7 @@ int main(int argc, char* argv[]) {
       bestUnsat = formula.nClauses_ + 1;
       bestRevVars.Clear();
 
+      std::atomic<uint64_t> totCombs = 0;
       omp_set_max_active_levels(1);
       #pragma omp parallel for num_threads(nSysCpus)
       for(uint32_t i=0; i<nSysCpus; i++) {
@@ -404,24 +405,25 @@ int main(int argc, char* argv[]) {
         DefaultSatTracker locSatTr(satTr);
         BitVector locAsg = formula.ans_;
         VCTrackingSet stepRevs;
-        std::mt19937_64 rng = GetSeededRandom();
+        //std::mt19937_64 rng = GetSeededRandom();
 
         int64_t newUnsat = locUnsatClauses.Size();
         bool moved;
-        int64_t nCombs = 0;
         for(;;) {
           if(locFront.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(locFront))) {
             locFront = locUnsatClauses;
           }
           moved = false;
           //const int8_t sortType = i % knSortTypes + kMinSortType;
-          const int8_t sortType = rng() % knSortTypes + kMinSortType;
+          const int8_t sortType = i % knSortTypes + kMinSortType;
+          int64_t nCombs = 0;
           newUnsat = locSatTr.GradientDescend(
             trav, &locFront, moved, locAsg, sortType,
-            locSatTr.NextUnsatCap(nCombs, locUnsatClauses, nStartUnsat),
+            locSatTr.NextUnsatCap(totCombs, locUnsatClauses, nStartUnsat),
             //nStartUnsat-1,
-            nCombs, locUnsatClauses, locFront, stepRevs
+            nCombs, locUnsatClauses, locFront, stepRevs, nStartUnsat
           );
+          totCombs.fetch_add(nCombs);
           nSequentialGD.fetch_add(1);
           if(!moved) {
             // The data structures are corrupted already (not rolled back)
@@ -434,7 +436,7 @@ int main(int argc, char* argv[]) {
               bestRevVars = stepRevs;
             }
           }
-          if(newUnsat == 0) {
+          if(newUnsat < nStartUnsat) {
             break;
           }
         }
