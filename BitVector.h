@@ -60,7 +60,7 @@ struct BitVector {
         nQwords_ = fellow.nQwords_;
         bits_.reset(new uint64_t[nQwords_]);
       }
-      memcpy(bits_.get(), fellow.bits_.get(), nQwords_ * sizeof(bits_[0]));
+      memcpy(bits_.get(), fellow.bits_.get(), nQwords_ * sizeof(*bits_.get()));
       hash_ = fellow.hash_;
     }
     return *this;

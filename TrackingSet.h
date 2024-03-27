@@ -23,7 +23,7 @@ template<typename TItem> struct MulKHashBaseWithSalt {
 template<typename TItem> struct MultiItem {
   using value_type = TItem;
 
-  mutable VCIndex nEntries_ = -1;
+  VCIndex nEntries_ = -1;
   VCIndex randRank_;
   TItem item_;
 
@@ -31,10 +31,16 @@ template<typename TItem> struct MultiItem {
 
   MultiItem(const TItem& item) : nEntries_(0), item_(item) { }
 
-  MultiItem(const MultiItem& src) = default;
-  MultiItem& operator=(const MultiItem& src) = default;
-  MultiItem(MultiItem&& src) = default;
-  MultiItem& operator=(MultiItem&& src) = default;
+  MultiItem(const MultiItem& src) : nEntries_(src.nEntries_), randRank_(src.randRank_), item_(src.item_)  {
+  }
+  MultiItem& operator=(const MultiItem& src) {
+    if(this != &src) {
+      nEntries_ = src.nEntries_;
+      item_ = src.item_;
+      randRank_ = src.randRank_;
+    }
+    return *this;
+  }
 
   bool operator==(const MultiItem& fellow) const {
     return item_ == fellow.item_;
@@ -61,6 +67,16 @@ constexpr const int knSortTypes = (kMaxSortType - kMinSortType + 1);
 
 template<typename T> inline void SortMultiItems(std::vector<MultiItem<T>>& vec, const int sortType) {
   assert(kMinSortType <= sortType && sortType <= kMaxSortType);
+  // assert([&vec] {
+  //   std::unordered_set<VCIndex> items;
+  //   for(VCIndex i=0; i<VCIndex(vec.size()); i++) {
+  //     if(items.find(vec[i].item_) != items.end()) {
+  //       return false;
+  //     }
+  //     items.emplace(vec[i].item_);
+  //   }
+  //   return true;
+  // }());
   // sort? heap? reverse sort/heap?
   ParallelShuffle(vec.data(), vec.size());
   if(sortType == 0) {
@@ -168,19 +184,19 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
 
   template<typename TValue> std::enable_if<std::is_same<TItem, MultiItem<TValue>>::value, int64_t>::type
   Add(const TValue item) {
-    Bucket<TItem, THasher>& b = GetBucket(item);
     MultiItem<TValue> mi(item);
+    Bucket<TItem, THasher>& b = GetBucket(mi);
     {
       SpinLock lock(b.sync_);
       typename std::unordered_set<MultiItem<TValue>, MulKHashBaseWithSalt<MultiItem<TValue>>>::iterator it = b.set_.find(mi);
       if(it == b.set_.end()) {
         mi.nEntries_ =  1;
-        b.set_.emplace(mi);
       }
       else {
         mi.nEntries_ = it->nEntries_ + 1;
-        it->nEntries_ = mi.nEntries_;
+        b.set_.erase(it);
       }
+      b.set_.emplace(mi);
     }
     assert(mi.nEntries_ >= 1);
     if(mi.nEntries_ == 1) {
@@ -330,6 +346,12 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
         j++;
       }
     }
+  
+    // std::unordered_set<TItem, THasher> items;
+    // for(VCIndex i=0; i<VCIndex(ans.size()); i++) {
+    //   assert(items.find(ans[i]) == items.end());
+    //   items.emplace(ans[i]);
+    // }
     return ans;
   }
 };

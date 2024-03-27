@@ -235,13 +235,15 @@ int main(int argc, char* argv[]) {
       std::atomic<uint64_t> nCombs = 0;
       const uint64_t maxCombs = 1000 * 1000;
       omp_set_max_active_levels(2);
-      #pragma omp parallel for schedule(dynamic, 1)
+      #pragma omp parallel for schedule(dynamic, 1) collapse(2)
       for(VCIndex nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
-        omp_set_max_active_levels(2);
-        #pragma omp parallel for schedule(dynamic, 1)
         for(int j=kMinSortType; j<=kMaxSortType; j++) {
           const VCIndex iTopThread = 0, nTopThreads = 1;
+          // Note that for nested parallelism omp_get_thread_num() returns the thread ordinal number within the inner team
           const int iExec = omp_get_thread_num();
+          // std::cout << " " << iExec << " ";
+          // std::cout.flush();
+          assert(0 <= iExec && iExec < maxThreads);
           std::vector<MultiItem<VCIndex>>& varFront = execVarFront[iExec];
           SortMultiItems(varFront, j);
           VCTrackingSet stepRevs;
@@ -258,7 +260,7 @@ int main(int argc, char* argv[]) {
             );
           }
           for(;;) {
-            assert(execSatTr[iExec].Verify(execNext[iExec])); // TODO: very heavy
+            //assert(execSatTr[iExec].Verify(execNext[iExec])); // TODO: very heavy
             if(nCombs >= maxCombs) {
               for(VCIndex i=0; i<nIncl; i++) {
                 assert(stepRevs.Contains(varFront[incl[i]].item_));
