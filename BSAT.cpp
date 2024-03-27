@@ -257,7 +257,8 @@ int main(int argc, char* argv[]) {
             if(execFront[iExec].Size() == 0) {
               execFront[iExec] = execUnsatClauses[iExec];
             }
-            if( (curNUnsat == 0) || (!trav.IsSeenMove(execFront[iExec], stepRevs) && !trav.IsSeenAssignment(execNext[iExec])) ) {
+            if( (curNUnsat == 0) || ( !trav.IsSeenMove(execFront[iExec], stepRevs) && !trav.IsSeenAssignment(execNext[iExec]) ) ) {
+              nCombs++;
               trav.FoundMove(execFront[iExec], stepRevs, execNext[iExec], curNUnsat);
               if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                 std::unique_lock<std::mutex> lock(muBestUpdate);
@@ -265,12 +266,11 @@ int main(int argc, char* argv[]) {
                   bestUnsat.store(curNUnsat, std::memory_order_release);
                   bestRevVars = stepRevs;
                   if(curNUnsat < nStartUnsat) {
-                    maxCombs += 100;
+                    maxCombs += 1000;
                   }
                 }
               }
             }
-            nCombs++;
             if(nCombs >= maxCombs) {
               for(VCIndex i=0; i<nIncl; i++) {
                 stepRevs.Flip(varFront[incl[i]].item_);
@@ -371,6 +371,7 @@ int main(int argc, char* argv[]) {
       front = unsatClauses - oldUnsatCs;
       assert(satTr.UnsatCount() == bestUnsat);
       assert(unsatClauses.Size() == bestUnsat);
+      trav.seenAssignment_.Add(formula.ans_.hash_);
 
       if(unsatClauses.Size() < nStartUnsat) {
         break;
@@ -403,8 +404,8 @@ int main(int argc, char* argv[]) {
           const int8_t sortType = rng() % knSortTypes + kMinSortType;
           newUnsat = locSatTr.GradientDescend(
             trav, &locFront, moved, locAsg, sortType,
-            //locSatTr.NextUnsatCap(nCombs, locUnsatClauses, nStartUnsat),
-            nStartUnsat-1,
+            locSatTr.NextUnsatCap(nCombs, locUnsatClauses, nStartUnsat),
+            //nStartUnsat-1,
             nCombs, locUnsatClauses, locFront, stepRevs
           );
           nSequentialGD.fetch_add(1);

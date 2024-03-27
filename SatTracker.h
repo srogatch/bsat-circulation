@@ -339,7 +339,8 @@ template<typename TCounter> struct SatTracker {
       }
       nCombs++;
       next.Flip(aVar);
-      if(!trav.IsSeenAssignment(next)) {
+      if(!trav.IsSeenAssignment(next))
+      {
         VCTrackingSet oldFront = front;
         FlipVar<false>(-iVar, &unsatClauses, &front);
         const VCIndex newUnsat = UnsatCount();
@@ -419,7 +420,8 @@ template<typename TCounter> struct SatTracker {
         revVars.Flip(aVar);
         next.Flip(aVar);
       }
-      if(!trav.IsSeenAssignment(next)) {
+      if(!trav.IsSeenAssignment(next))
+      {
         VCTrackingSet oldFront = front;
         for(int64_t j=0; j<nVars; j++) {
           const int64_t iVar = selVars[j];
