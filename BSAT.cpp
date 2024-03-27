@@ -93,7 +93,7 @@ int main(int argc, char* argv[]) {
   BitVector bestAsg;
   VCTrackingSet startFront;
 
-  std::atomic<int64_t> nParallelGD = 0, nSequentialGD = 0, nWalk = 0;
+  std::atomic<uint64_t> nSequentialGD = 0, nWalk = 0, totCombs = 0;
   std::mutex muBestUpdate;
 
   omp_set_max_active_levels(2);
@@ -139,15 +139,16 @@ int main(int argc, char* argv[]) {
           break; 
         }
         const int8_t sortType = i % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
-        bool moved = false;
         if(locFront.Size() == 0 || trav.IsSeenFront(locFront)) {
           std::cout << "%";
           locFront = locUnsatClauses;
         }
+        bool moved = false;
         VCIndex locBest = bestInit.load(std::memory_order_relaxed);
         const int64_t altNUnsat = locSatTr.GradientDescend(
           trav, &locFront, moved, locAsg, sortType,
-          locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
+          // locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
+          locBest,
           nCombs, locUnsatClauses, locFront, revVars
         );
         nSequentialGD.fetch_add(1);
@@ -163,7 +164,6 @@ int main(int argc, char* argv[]) {
             bestAsg = locAsg;
           }
         }
-        locBest = bestInit.load(std::memory_order_relaxed);
       }
     }
   }
@@ -206,51 +206,99 @@ int main(int argc, char* argv[]) {
         std::cout << "%";
       }
 
-      int64_t bestUnsat = formula.nClauses_+1;
+      std::atomic<VCIndex> bestUnsat = formula.nClauses_+1;
       VCTrackingSet bestRevVars;
 
-      std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(unsatClauses, formula.ans_);
-      const int64_t startNIncl = 1;
-      const int64_t endNIncl = std::min<int64_t>(varFront.size(), 4);
-      const int64_t nInnerLoop = nSysCpus / (endNIncl - startNIncl + 1);
-      std::cout << "P"; // << varFront.size() << "," << unsatClauses.Size();
-      //std::cout.flush();
-      #pragma omp parallel for schedule(dynamic, 1) collapse(2)
-      for(int64_t nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
-        // 0: shuffle
-        // -1: reversed heap
-        // 1: heap
-        // -2: reversed full sort
-        // 2: full sort
-        for(int64_t i=0; i<nInnerLoop; i++) {
-          const int8_t sortType = i % knSortTypes + kMinSortType;
-          BitVector next = formula.ans_;
-          DefaultSatTracker newSatTr = satTr;
-          VCTrackingSet stepRevs;
-          std::vector<MultiItem<VCIndex>> locVarFront = varFront;
-          VCTrackingSet locFront = front;
-          VCTrackingSet locUnsatCs = unsatClauses;
-          int64_t nCombs = 0;
-          for(;;) {
-            bool moved = false;
-            const int64_t curNUnsat = newSatTr.ParallelGD(
-              true, nIncl, locVarFront, sortType, next, trav, locUnsatCs, locFront, stepRevs, 
-              newSatTr.NextUnsatCap(nCombs, locUnsatCs, nStartUnsat), nCombs, moved, 0
-            );
+      // TODO: shall we get only vars for the |front| here, or for all the |unsatClauses| ?
+      std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(front, formula.ans_);
+      unsigned short random;
+      while(!_rdrand16_step(&random));
+      SortMultiItems(varFront, int(random % knSortTypes) + kMinSortType);
 
-            if(moved) {
-              std::unique_lock<std::mutex> lock(muBestUpdate);
-              if(curNUnsat < bestUnsat) {
-                bestUnsat = curNUnsat;
-                bestRevVars = stepRevs;
+      std::cout << "C";
+      const VCIndex startNIncl = 2;
+      const VCIndex maxCombs = 10 * 1000;
+      const int nTopThreads = std::min<VCIndex>(varFront.size() - startNIncl + 1, nSysCpus);
+      const int maxThreads = omp_get_max_threads();
+      std::vector<DefaultSatTracker> execSatTr(maxThreads, satTr);
+      std::vector<BitVector> execNext(maxThreads, formula.ans_);
+      std::vector<VCTrackingSet> execUnsatClauses(maxThreads, unsatClauses);
+      std::vector<VCTrackingSet> execFront(maxThreads, front);
+      #pragma omp parallel for schedule(dynamic, 1) collapse(2)
+      for(VCIndex iTopThread=0; iTopThread<nTopThreads; iTopThread++) {
+        for(VCIndex nIncl=startNIncl; nIncl<=VCIndex(varFront.size()) - iTopThread; nIncl++) {
+          const int iExec = omp_get_thread_num();
+          VCTrackingSet stepRevs;
+          int64_t nCombs = 0;
+          std::vector<VCIndex> incl(nIncl);
+          for(VCIndex i=0; i<nIncl; i++) {
+            incl[i] = iTopThread + i;
+            stepRevs.Flip(varFront[incl[i]].item_);
+            execNext[iExec].Flip(varFront[incl[i]].item_);
+            execSatTr[iExec].FlipVar<false>(
+              varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
+            );
+          }
+          for(;;) {
+            const VCIndex curNUnsat = unsatClauses.Size();
+            if(!trav.IsSeenMove(execFront[iExec], stepRevs) && !trav.IsSeenAssignment(execNext[iExec])) {
+              trav.FoundMove(execFront[iExec], stepRevs, execNext[iExec], curNUnsat);
+              if(curNUnsat < bestUnsat.load(std::memory_order_relaxed)) {
+                std::unique_lock<std::mutex> lock(muBestUpdate);
+                if(curNUnsat < bestUnsat) {
+                  bestUnsat.store(curNUnsat, std::memory_order_relaxed);
+                  bestRevVars = stepRevs;
+                }
               }
-            } else {
+            }
+            nCombs++;
+            if(nCombs >= maxCombs) {
+              for(VCIndex i=0; i<nIncl; i++) {
+                stepRevs.Flip(varFront[incl[i]].item_);
+                execNext[iExec].Flip(varFront[incl[i]].item_);
+                execSatTr[iExec].FlipVar<false>(
+                  varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
+                );
+              }
               break;
             }
+            VCIndex i=nIncl-1;
+            for(; i>=0; i--) {
+              stepRevs.Flip(varFront[incl[i]].item_);
+              execNext[iExec].Flip(varFront[incl[i]].item_);
+              execSatTr[iExec].FlipVar<false>(
+                varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
+              );
+              if(incl[i] + nIncl - i < VCIndex(varFront.size())) {
+                break;
+              }
+            }
+            if(i < 0) {
+              break;
+            }
+            incl[i]++;
+            stepRevs.Flip(varFront[incl[i]].item_);
+            execNext[iExec].Flip(varFront[incl[i]].item_);
+            execSatTr[iExec].FlipVar<false>(
+              varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
+            );
+            for(i = i+1; i<nIncl; i++) {
+              stepRevs.Flip(varFront[incl[i]].item_);
+              execNext[iExec].Flip(varFront[incl[i]].item_);
+              execSatTr[iExec].FlipVar<false>(
+                varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
+              );
+              incl[i] = incl[i-1]+1;
+              stepRevs.Flip(varFront[incl[i]].item_);
+              execNext[iExec].Flip(varFront[incl[i]].item_);
+              execSatTr[iExec].FlipVar<false>(
+                varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
+              );
+            }
           }
+          totCombs.fetch_add(nCombs);
         }
       }
-      nParallelGD.fetch_add((endNIncl - startNIncl + 1) * knSortTypes);
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
@@ -368,7 +416,7 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
       << ", Known assignments: " << trav.seenAssignment_.Size()
-      << ", nParallelGD: " << nParallelGD << ", nSequentialGD: " << nSequentialGD << std::endl;
+      << ", nCombinations: " << totCombs << ", nSequentialGD: " << nSequentialGD << std::endl;
   }
 
   {

@@ -86,6 +86,7 @@ template<typename TItem> struct MulKHashBaseWithSalt<MultiItem<TItem>> {
   }
 };
 
+//TODO: non-parallel specialization of the tracking set for better performance
 template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct TrackingSet {
   static constexpr const int64_t cSyncContention = 3;
 
