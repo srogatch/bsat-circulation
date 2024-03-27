@@ -23,7 +23,8 @@ template<typename TItem> struct MulKHashBaseWithSalt {
 template<typename TItem> struct MultiItem {
   using value_type = TItem;
 
-  mutable int64_t nEntries_ = -1;
+  mutable VCIndex nEntries_ = -1;
+  VCIndex randRank_;
   TItem item_;
 
   MultiItem() { }
@@ -44,12 +45,12 @@ template<typename TItem> struct MultiItem {
   
   struct FrequentLess {
     bool operator()(const MultiItem& a, const MultiItem& b) const {
-      return a.nEntries_ < b.nEntries_;
+      return a.nEntries_ < b.nEntries_ || (a.nEntries_ == b.nEntries_ && a.randRank_ < b.randRank_);
     }
   };
   struct RareLess {
     bool operator()(const MultiItem& a, const MultiItem& b) const {
-      return a.nEntries_ > b.nEntries_;
+      return a.nEntries_ > b.nEntries_ || (a.nEntries_ == b.nEntries_ && a.randRank_ > b.randRank_);
     }
   };
 };
@@ -62,9 +63,13 @@ template<typename T> inline void SortMultiItems(std::vector<MultiItem<T>>& vec, 
   assert(kMinSortType <= sortType && sortType <= kMaxSortType);
   // sort? heap? reverse sort/heap?
   ParallelShuffle(vec.data(), vec.size());
+  if(sortType == 0) {
+    return;
+  }
+  for(VCIndex i=0; i<VCIndex(vec.size()); i++) {
+    vec[i].randRank_ = i;
+  }
   switch(sortType) {
-  case 0:
-    break;
   case -1:
     std::make_heap(vec.begin(), vec.end(), typename MultiItem<T>::FrequentLess());
     break;

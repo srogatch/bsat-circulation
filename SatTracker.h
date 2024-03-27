@@ -48,19 +48,22 @@ template<typename TCounter> struct SatTracker {
       nSat_.reset(new TCounter[src.pFormula_->nClauses_+1]);
     }
     pFormula_ = src.pFormula_;
-    totSat_.store(src.totSat_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    totSat_.store(src.totSat_.load(std::memory_order_release), std::memory_order_acquire);
 
     //#pragma omp parallel for schedule(static, kRamPageBytes)
     // for(int64_t i=0; i<=pFormula_->nClauses_; i++) {
     //   nSat_[i] = src.nSat_[i];
     // }
-    memcpy(nSat_.get(), src.nSat_.get(), sizeof(nSat_[0]) * (pFormula_->nClauses_+1));
+    memcpy(nSat_.get(), src.nSat_.get(), sizeof(TCounter) * (pFormula_->nClauses_+1));
 
     // Ignore vVars_ here: they're randomized each time anyway
   }
 
   SatTracker& operator=(const SatTracker& src) {
     if(this != &src) {
+      if(pFormula_ == nullptr) {
+        Init(src.pFormula_);
+      }
       CopyFrom(src);
     }
     return *this;
@@ -489,12 +492,12 @@ template<typename TCounter> struct SatTracker {
   }
 
   int64_t NextUnsatCap(const int64_t nCombs, const VCTrackingSet& unsatClauses, const int64_t nStartUnsat) const {
-    return std::max(nStartUnsat, 
+    return std::max<int64_t>(nStartUnsat - 1, 
       std::max<int64_t>(
         unsatClauses.Size() * 2,
         DivUp(pFormula_->nVars_, nStartUnsat+1) + unsatClauses.Size()
       )
-      - nCombs);
+      - std::sqrt(nCombs)*std::log2(nCombs+1));
   }
 };
 
