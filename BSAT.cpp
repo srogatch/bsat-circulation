@@ -234,8 +234,8 @@ int main(int argc, char* argv[]) {
 
       #pragma omp parallel for schedule(guided, 1) collapse(2)
       for(VCIndex iTopThread=0; iTopThread<nTopThreads; iTopThread++) {
-        for(VCIndex nIncl=startNIncl; nIncl<=std::min<VCIndex>(VCIndex(varFront.size()) - iTopThread, 20); nIncl++) {
-          const VCIndex endNIncl=std::min<VCIndex>(VCIndex(varFront.size()) - iTopThread, 20);
+        for(VCIndex nIncl=startNIncl; nIncl<=std::min<VCIndex>(VCIndex(varFront.size()) - iTopThread, 5); nIncl++) {
+          const VCIndex endNIncl=std::min<VCIndex>(VCIndex(varFront.size()) - iTopThread, 5);
           VCIndex maxCombs = DivUp(10 * 1000, nTopThreads*(endNIncl - startNIncl + 1));
           const int iExec = omp_get_thread_num();
           VCTrackingSet stepRevs;
