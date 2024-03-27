@@ -217,7 +217,6 @@ int main(int argc, char* argv[]) {
 
       std::cout << "C";
       const VCIndex startNIncl = 2;
-      const VCIndex maxCombs = 10 * 1000;
       const int nTopThreads = std::min<VCIndex>(varFront.size() - startNIncl + 1, nSysCpus);
       const int maxThreads = omp_get_max_threads();
       std::vector<DefaultSatTracker> execSatTr(maxThreads, satTr);
@@ -226,7 +225,8 @@ int main(int argc, char* argv[]) {
       std::vector<VCTrackingSet> execFront(maxThreads, front);
       #pragma omp parallel for schedule(dynamic, 1) collapse(2)
       for(VCIndex iTopThread=0; iTopThread<nTopThreads; iTopThread++) {
-        for(VCIndex nIncl=startNIncl; nIncl<=VCIndex(varFront.size()) - iTopThread; nIncl++) {
+        for(VCIndex nIncl=startNIncl; nIncl<=std::min<VCIndex>(VCIndex(varFront.size()) - iTopThread, 10); nIncl++) {
+          const VCIndex maxCombs = 10 * 1000;
           const int iExec = omp_get_thread_num();
           VCTrackingSet stepRevs;
           int64_t nCombs = 0;
@@ -243,13 +243,13 @@ int main(int argc, char* argv[]) {
           for(;;) {
             assert( VCIndex(incl.size()) == nIncl );
             assert( stepRevs.Size() == nIncl );
-            const VCIndex curNUnsat = unsatClauses.Size();
+            const VCIndex curNUnsat = execUnsatClauses[iExec].Size();
             if(!trav.IsSeenMove(execFront[iExec], stepRevs) && !trav.IsSeenAssignment(execNext[iExec])) {
               trav.FoundMove(execFront[iExec], stepRevs, execNext[iExec], curNUnsat);
-              if(curNUnsat < bestUnsat.load(std::memory_order_relaxed)) {
+              if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                 std::unique_lock<std::mutex> lock(muBestUpdate);
-                if(curNUnsat < bestUnsat) {
-                  bestUnsat.store(curNUnsat, std::memory_order_relaxed);
+                if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
+                  bestUnsat.store(curNUnsat, std::memory_order_release);
                   bestRevVars = stepRevs;
                 }
               }
@@ -350,7 +350,7 @@ int main(int argc, char* argv[]) {
       for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
         const int64_t revV = vBestRevVars[i];
         formula.ans_.Flip(revV);
-        satTr.FlipVar<true>(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, nullptr);
+        satTr.FlipVar<false>(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, nullptr);
       }
       front = unsatClauses - oldUnsatCs;
       assert(satTr.UnsatCount() == bestUnsat);
