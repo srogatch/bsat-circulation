@@ -230,16 +230,19 @@ int main(int argc, char* argv[]) {
           const int iExec = omp_get_thread_num();
           VCTrackingSet stepRevs;
           int64_t nCombs = 0;
-          std::vector<VCIndex> incl(nIncl);
+          std::vector<VCIndex> incl(nIncl, 0);
           for(VCIndex i=0; i<nIncl; i++) {
             incl[i] = iTopThread + i;
             stepRevs.Flip(varFront[incl[i]].item_);
             execNext[iExec].Flip(varFront[incl[i]].item_);
             execSatTr[iExec].FlipVar<false>(
-              varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
+              varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1),
+              &execUnsatClauses[iExec], &execFront[iExec]
             );
           }
           for(;;) {
+            assert( VCIndex(incl.size()) == nIncl );
+            assert( stepRevs.Size() == nIncl );
             const VCIndex curNUnsat = unsatClauses.Size();
             if(!trav.IsSeenMove(execFront[iExec], stepRevs) && !trav.IsSeenAssignment(execNext[iExec])) {
               trav.FoundMove(execFront[iExec], stepRevs, execNext[iExec], curNUnsat);
@@ -257,9 +260,11 @@ int main(int argc, char* argv[]) {
                 stepRevs.Flip(varFront[incl[i]].item_);
                 execNext[iExec].Flip(varFront[incl[i]].item_);
                 execSatTr[iExec].FlipVar<false>(
-                  varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
+                  varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1),
+                  &execUnsatClauses[iExec], &execFront[iExec]
                 );
               }
+              assert(stepRevs.Size() == 0);
               break;
             }
             VCIndex i=nIncl-1;
@@ -267,7 +272,8 @@ int main(int argc, char* argv[]) {
               stepRevs.Flip(varFront[incl[i]].item_);
               execNext[iExec].Flip(varFront[incl[i]].item_);
               execSatTr[iExec].FlipVar<false>(
-                varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
+                varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1),
+                &execUnsatClauses[iExec], &execFront[iExec]
               );
               if(incl[i] + nIncl - i < VCIndex(varFront.size())) {
                 break;
@@ -276,18 +282,21 @@ int main(int argc, char* argv[]) {
             if(i < 0) {
               break;
             }
-            incl[i]++;
+            if(i == 0) {
+              incl[0] += nTopThreads;
+              if(incl[0] + nIncl > VCIndex(varFront.size())) {
+                break;
+              }
+            }
+            else {
+              incl[i]++;
+            }
             stepRevs.Flip(varFront[incl[i]].item_);
             execNext[iExec].Flip(varFront[incl[i]].item_);
             execSatTr[iExec].FlipVar<false>(
               varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
             );
             for(i = i+1; i<nIncl; i++) {
-              stepRevs.Flip(varFront[incl[i]].item_);
-              execNext[iExec].Flip(varFront[incl[i]].item_);
-              execSatTr[iExec].FlipVar<false>(
-                varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
-              );
               incl[i] = incl[i-1]+1;
               stepRevs.Flip(varFront[incl[i]].item_);
               execNext[iExec].Flip(varFront[incl[i]].item_);
