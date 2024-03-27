@@ -38,7 +38,7 @@ struct Traversal {
   void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat)
   {
     seenMove_.Add(std::make_pair(front.hash_, revVars.hash_));
-    if(seenAssignment_.Contains(assignment.hash_)) {
+    if( !seenAssignment_.Add(assignment.hash_) ) {
       return; // added earlier, perhaps concurrently by another thread - don't put it to DFS here thus
     }
     { // DFS

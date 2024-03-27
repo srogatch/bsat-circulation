@@ -497,7 +497,8 @@ template<typename TCounter> struct SatTracker {
         unsatClauses.Size() * 2,
         DivUp(pFormula_->nVars_, nStartUnsat+1) + unsatClauses.Size()
       )
-      - std::sqrt(nCombs)*std::log2(nCombs+1));
+      - std::sqrt(nCombs) // *std::log2(nCombs+1)
+    );
   }
 };
 

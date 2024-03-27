@@ -233,7 +233,7 @@ int main(int argc, char* argv[]) {
 
 
       std::atomic<uint64_t> nCombs = 0;
-      const uint64_t maxCombs = 1000 * 1000;
+      const uint64_t maxCombs = 100 * 1000;
       omp_set_max_active_levels(2);
       #pragma omp parallel for schedule(dynamic, 1) collapse(2)
       for(VCIndex nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
@@ -385,7 +385,7 @@ int main(int argc, char* argv[]) {
       front = unsatClauses - oldUnsatCs;
       assert(satTr.UnsatCount() == bestUnsat);
       assert(unsatClauses.Size() == bestUnsat);
-      trav.seenAssignment_.Add(formula.ans_.hash_);
+      //trav.seenAssignment_.Add(formula.ans_.hash_);
 
       if(unsatClauses.Size() < nStartUnsat) {
         break;
