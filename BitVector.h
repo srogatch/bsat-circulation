@@ -35,7 +35,7 @@ struct BitVector {
     }
   }
 
-  BitVector() {}
+  BitVector() = default;
 
   explicit BitVector(const int64_t nBits) {
     nBits_ = nBits;

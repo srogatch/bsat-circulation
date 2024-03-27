@@ -216,17 +216,27 @@ int main(int argc, char* argv[]) {
       SortMultiItems(varFront, int(random % knSortTypes) + kMinSortType);
 
       std::cout << "C";
+      std::cout.flush();
       const VCIndex startNIncl = 2;
       const int nTopThreads = std::min<VCIndex>(varFront.size() - startNIncl + 1, nSysCpus);
       const int maxThreads = omp_get_max_threads();
-      std::vector<DefaultSatTracker> execSatTr(maxThreads, satTr);
-      std::vector<BitVector> execNext(maxThreads, formula.ans_);
-      std::vector<VCTrackingSet> execUnsatClauses(maxThreads, unsatClauses);
-      std::vector<VCTrackingSet> execFront(maxThreads, front);
-      #pragma omp parallel for schedule(dynamic, 1) collapse(2)
+      std::vector<DefaultSatTracker> execSatTr(maxThreads); //, satTr);
+      std::vector<BitVector> execNext(maxThreads); // , formula.ans_);
+      std::vector<VCTrackingSet> execUnsatClauses(maxThreads, true); // , unsatClauses);
+      std::vector<VCTrackingSet> execFront(maxThreads, true); // , front);
+      #pragma omp parallel for num_threads(maxThreads)
+      for(VCIndex i=0; i<maxThreads; i++) {
+        execSatTr[i] = satTr;
+        execNext[i] = formula.ans_;
+        execUnsatClauses[i] = unsatClauses;
+        execFront[i] = front;
+      }
+
+      #pragma omp parallel for schedule(guided, 1) collapse(2)
       for(VCIndex iTopThread=0; iTopThread<nTopThreads; iTopThread++) {
-        for(VCIndex nIncl=startNIncl; nIncl<=std::min<VCIndex>(VCIndex(varFront.size()) - iTopThread, 10); nIncl++) {
-          const VCIndex maxCombs = 10 * 1000;
+        for(VCIndex nIncl=startNIncl; nIncl<=std::min<VCIndex>(VCIndex(varFront.size()) - iTopThread, 20); nIncl++) {
+          const VCIndex endNIncl=std::min<VCIndex>(VCIndex(varFront.size()) - iTopThread, 20);
+          VCIndex maxCombs = DivUp(10 * 1000, nTopThreads*(endNIncl - startNIncl + 1));
           const int iExec = omp_get_thread_num();
           VCTrackingSet stepRevs;
           int64_t nCombs = 0;
@@ -244,13 +254,19 @@ int main(int argc, char* argv[]) {
             assert( VCIndex(incl.size()) == nIncl );
             assert( stepRevs.Size() == nIncl );
             const VCIndex curNUnsat = execUnsatClauses[iExec].Size();
-            if(!trav.IsSeenMove(execFront[iExec], stepRevs) && !trav.IsSeenAssignment(execNext[iExec])) {
+            if(execFront[iExec].Size() == 0) {
+              execFront[iExec] = execUnsatClauses[iExec];
+            }
+            if( (curNUnsat == 0) || (!trav.IsSeenMove(execFront[iExec], stepRevs) && !trav.IsSeenAssignment(execNext[iExec])) ) {
               trav.FoundMove(execFront[iExec], stepRevs, execNext[iExec], curNUnsat);
               if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                 std::unique_lock<std::mutex> lock(muBestUpdate);
                 if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                   bestUnsat.store(curNUnsat, std::memory_order_release);
                   bestRevVars = stepRevs;
+                  if(curNUnsat < nStartUnsat) {
+                    maxCombs += 100;
+                  }
                 }
               }
             }
@@ -361,6 +377,7 @@ int main(int argc, char* argv[]) {
       }
 
       std::cout << "S";
+      std::cout.flush();
       bestUnsat = formula.nClauses_ + 1;
       bestRevVars.Clear();
 
@@ -386,7 +403,8 @@ int main(int argc, char* argv[]) {
           const int8_t sortType = rng() % knSortTypes + kMinSortType;
           newUnsat = locSatTr.GradientDescend(
             trav, &locFront, moved, locAsg, sortType,
-            locSatTr.NextUnsatCap(nCombs, locUnsatClauses, nStartUnsat),
+            //locSatTr.NextUnsatCap(nCombs, locUnsatClauses, nStartUnsat),
+            nStartUnsat-1,
             nCombs, locUnsatClauses, locFront, stepRevs
           );
           nSequentialGD.fetch_add(1);

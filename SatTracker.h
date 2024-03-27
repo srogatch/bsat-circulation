@@ -30,6 +30,8 @@ template<typename TCounter> struct SatTracker {
     }
   }
 
+  SatTracker() = default;
+
   explicit SatTracker(Formula& formula)
   {
     Init(&formula);
@@ -49,9 +51,10 @@ template<typename TCounter> struct SatTracker {
     totSat_.store(src.totSat_.load(std::memory_order_relaxed), std::memory_order_relaxed);
 
     //#pragma omp parallel for schedule(static, kRamPageBytes)
-    for(int64_t i=0; i<=pFormula_->nClauses_; i++) {
-      nSat_[i] = src.nSat_[i];
-    }
+    // for(int64_t i=0; i<=pFormula_->nClauses_; i++) {
+    //   nSat_[i] = src.nSat_[i];
+    // }
+    memcpy(nSat_.get(), src.nSat_.get(), sizeof(nSat_[0]) * (pFormula_->nClauses_+1));
 
     // Ignore vVars_ here: they're randomized each time anyway
   }

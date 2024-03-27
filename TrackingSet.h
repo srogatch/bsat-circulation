@@ -90,11 +90,15 @@ template<typename TItem> struct MulKHashBaseWithSalt<MultiItem<TItem>> {
 template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct TrackingSet {
   static constexpr const int64_t cSyncContention = 3;
 
-  std::unique_ptr<Bucket<TItem, THasher>[]> buckets_ = std::make_unique<Bucket<TItem, THasher>[]>(cSyncContention * nSysCpus);
+  std::unique_ptr<Bucket<TItem, THasher>[]> buckets_;
   uint128 hash_ = 0;
   std::atomic<int64_t> size_ = 0;
 
-  TrackingSet() = default;
+  TrackingSet(const bool empty = false) {
+    if(!empty) {
+      buckets_ = std::make_unique<Bucket<TItem, THasher>[]>(cSyncContention * nSysCpus);
+    }
+  }
 
   void UpdateHash(const TItem& item) {
     const uint128 h = THasher()(item);
@@ -105,9 +109,16 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   void CopyFrom(const TrackingSet& src) {
     hash_ = src.hash_;
     size_ = src.Size();
-    //#pragma omp parallel for schedule(guided, cSyncContention)
-    for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
-      buckets_[i].set_ = src.buckets_[i].set_;
+    if(src.buckets_ == nullptr) {
+      buckets_.reset();
+    }
+    else {
+      if(buckets_ == nullptr) {
+        buckets_ = std::make_unique<Bucket<TItem, THasher>[]>(cSyncContention * nSysCpus);
+      }
+      for(int64_t i=0; i<cSyncContention * nSysCpus; i++) {
+        buckets_[i].set_ = src.buckets_[i].set_;
+      }
     }
   }
 
@@ -117,6 +128,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
 
   TrackingSet& operator=(const TrackingSet& src) {
     if(this != &src) {
+
       CopyFrom(src);
     }
     return *this;
