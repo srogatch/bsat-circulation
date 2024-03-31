@@ -82,11 +82,14 @@ int main(int argc, char* argv[]) {
     return 0;
   }
   int64_t prevNUnsat = formula.nClauses_;
-  Traversal trav;
 
   std::cout << "Precomputing..." << std::endl;
   // Now there are both variable and clause bitvectors
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
+  const uint64_t maxThreads = omp_get_max_threads();
+  // TODO: shall it depend on the formula size? nVars_ or nClauses_
+  const uint64_t maxCombs = 1ULL << 13; // 8192
+  Traversal trav;
 
   std::cout << "Choosing the best initial variable assignment..." << std::endl;
   std::atomic<int64_t> bestInit = formula.nClauses_ + 1;
@@ -96,10 +99,12 @@ int main(int argc, char* argv[]) {
   std::atomic<uint64_t> nSequentialGD = 0, nWalk = 0, totCombs = 0;
   std::mutex muBestUpdate;
 
+  const uint32_t nCpusPerInit = DivUp<uint32_t>(nSysCpus, 3);
   omp_set_max_active_levels(2);
   #pragma omp parallel for schedule(dynamic, 1)
   for(int j=-1; j<=1; j++) {
     omp_set_max_active_levels(2);
+
     BitVector initAsg(formula.nVars_+1);
     DefaultSatTracker initSatTr(formula);
     switch(j) {
@@ -121,9 +126,9 @@ int main(int argc, char* argv[]) {
         bestAsg = initAsg;
       }
     }
-    const int64_t nInnerLoop = std::max<int64_t>(1, nSysCpus / 3);
+
     #pragma omp parallel for schedule(dynamic, 1)
-    for(int i=0; i<nInnerLoop; i++) {
+    for(uint32_t i=0; i<nCpusPerInit; i++) {
       //std::mt19937_64 rng = GetSeededRandom();
       BitVector locAsg = initAsg;
       DefaultSatTracker locSatTr = initSatTr;
@@ -131,19 +136,14 @@ int main(int argc, char* argv[]) {
       VCTrackingSet locFront = locUnsatClauses;
       VCTrackingSet revVars;
       int64_t nCombs = 0;
-      const auto tmInitStart = std::chrono::steady_clock::now();
-      for(;;) {
-        const auto tmNow = std::chrono::steady_clock::now();
-        const double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmNow - tmInitStart).count() / 1e9;
-        if(nSec > kMaxInitSec) {
-          break; 
-        }
+      while(nCombs < maxCombs) {
         const int8_t sortType = i % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
         if(locFront.Size() == 0 || trav.IsSeenFront(locFront)) {
           std::cout << "%";
           locFront = locUnsatClauses;
         }
         bool moved = false;
+        VCTrackingSet oldUnsatCs = locUnsatClauses;
         VCIndex locBest = bestInit.load(std::memory_order_relaxed);
         const int64_t altNUnsat = locSatTr.GradientDescend(
           trav, &locFront, moved, locAsg, sortType,
@@ -155,6 +155,7 @@ int main(int argc, char* argv[]) {
         if(!moved) {
           break;
         }
+        locFront = locUnsatClauses - oldUnsatCs;
         locBest = bestInit.load(std::memory_order_relaxed);
         if(altNUnsat < locBest) {
           std::unique_lock<std::mutex> lock(muBestUpdate);
@@ -216,10 +217,8 @@ int main(int argc, char* argv[]) {
       // TODO: shall we get only vars for the |front| here, or for all the |unsatClauses| ?
       std::vector<MultiItem<VCIndex>> baseVarFront = formula.ClauseFrontToVars(unsatClauses, formula.ans_);
 
-      const uint64_t maxThreads = omp_get_max_threads();
-      const uint64_t maxCombs = maxThreads * kRamPageBytes;
       bool allCombs = false;
-      if(baseVarFront.size() < std::log2(maxCombs+1)) {
+      if(baseVarFront.size() < std::log2(uint64_t(nSysCpus)*maxCombs+1)) {
         // Consider all combinations without different methods of sorting
         allCombs = true;
       } else {
@@ -238,7 +237,6 @@ int main(int argc, char* argv[]) {
         int8_t sortType_;
       };
       std::vector<Exec> execs(maxThreads);
-      std::atomic<uint64_t> nCombs = 0;
       #pragma omp parallel for schedule(static, 1) num_threads(maxThreads)
       for(uint32_t iExec=0; iExec<maxThreads; iExec++) {
         Exec& curExec = execs[iExec];
@@ -247,7 +245,8 @@ int main(int argc, char* argv[]) {
         curExec.unsatClauses_ = unsatClauses;
         curExec.front_ = front;
         if(allCombs) {
-          curExec.firstComb_ = ((1ULL<<baseVarFront.size()) * iExec) / maxThreads;
+          // Don't try combination 0 - nothing flipped - because we're already at it
+          curExec.firstComb_ = ((1ULL<<baseVarFront.size()) * iExec) / maxThreads + 1;
         } else {
           std::mt19937_64 rng = GetSeededRandom();
           curExec.varFront_ = baseVarFront;
@@ -259,7 +258,7 @@ int main(int argc, char* argv[]) {
         if(allCombs) {
           uint64_t curComb = curExec.firstComb_;
           for(int i=0; i<baseVarFront.size(); i++) {
-            if(curComb & (1u<<i)) {
+            if(curComb & (1ULL<<i)) {
               const VCIndex iVar = baseVarFront[i].item_;
               stepRevs.Add(iVar);
               curExec.next_.Flip(iVar);
@@ -275,7 +274,6 @@ int main(int argc, char* argv[]) {
             if( (curNUnsat == 0)
               || (!trav.IsSeenFront(viableFront) && !trav.IsSeenMove(front, stepRevs) && !trav.IsSeenAssignment(curExec.next_)) ) 
             {
-              nCombs.fetch_add(1);
               trav.FoundMove(front, stepRevs, curExec.next_, curNUnsat);
               if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                 std::unique_lock<std::mutex> lock(muBestUpdate);
@@ -304,6 +302,7 @@ int main(int argc, char* argv[]) {
               break;
             }
           }
+          totCombs.fetch_add( (1ULL<<baseVarFront.size()) - 1 );
         } else { // !allCombs
 
         }
@@ -446,7 +445,6 @@ int main(int argc, char* argv[]) {
         }
         assert(stepRevs.Size() == 0);
       }
-      totCombs.fetch_add(nCombs);
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
@@ -505,7 +503,6 @@ int main(int argc, char* argv[]) {
       std::cout.flush();
       bestUnsat = formula.nClauses_ + 1;
       bestRevVars.Clear();
-      nCombs.store(0, std::memory_order_release);
       std::atomic<bool> newEpoch = false;
       // omp_set_max_active_levels(1);
       #pragma omp parallel for num_threads(nSysCpus)
@@ -517,9 +514,10 @@ int main(int argc, char* argv[]) {
         VCTrackingSet stepRevs;
         //std::mt19937_64 rng = GetSeededRandom();
 
+        int64_t nCombs = 0;
         int64_t newUnsat = locUnsatClauses.Size();
         bool moved;
-        while( !newEpoch.load(std::memory_order_acquire) && nCombs.load(std::memory_order_acquire) < maxCombs ) {
+        while( !newEpoch.load(std::memory_order_acquire) && nCombs < maxCombs ) {
           if(locFront.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(locFront))) {
             // TODO: maybe select a random subset of the locUnsatClauses here?
             locFront = locUnsatClauses;
@@ -527,14 +525,13 @@ int main(int argc, char* argv[]) {
           moved = false;
           //const int8_t sortType = i % knSortTypes + kMinSortType;
           const int8_t sortType = i % knSortTypes + kMinSortType;
-          int64_t nLocCombs = 0;
+          VCTrackingSet oldUnsatCs = locUnsatClauses;
           newUnsat = locSatTr.GradientDescend(
             trav, &locFront, moved, locAsg, sortType,
-            locSatTr.NextUnsatCap(totCombs, locUnsatClauses, nStartUnsat),
+            locSatTr.NextUnsatCap(nCombs, locUnsatClauses, nStartUnsat),
             //nStartUnsat-1,
-            nLocCombs, locUnsatClauses, locFront, stepRevs, nStartUnsat
+            nCombs, locUnsatClauses, locFront, stepRevs, nStartUnsat
           );
-          nCombs.fetch_add(nLocCombs);
           nSequentialGD.fetch_add(1);
           if(!moved) {
             // The data structures are corrupted already (not rolled back)
@@ -551,6 +548,7 @@ int main(int argc, char* argv[]) {
             newEpoch.store(true, std::memory_order_release);
             break;
           }
+          locFront = locUnsatClauses - oldUnsatCs;
         }
       }
       if(bestUnsat < formula.nClauses_) {
