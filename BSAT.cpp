@@ -207,16 +207,21 @@ int main(int argc, char* argv[]) {
         std::cout << "%";
       }
 
+      std::cout << "C";
+      std::cout.flush();
+
       std::atomic<VCIndex> bestUnsat = formula.nClauses_+1;
       VCTrackingSet bestRevVars;
-
       // TODO: shall we get only vars for the |front| here, or for all the |unsatClauses| ?
       std::vector<MultiItem<VCIndex>> baseVarFront = formula.ClauseFrontToVars(unsatClauses, formula.ans_);
 
-      std::cout << "C";
-      std::cout.flush();
-      const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(baseVarFront.size(), 5);
-      const int maxThreads = omp_get_max_threads();
+      const uint64_t maxThreads = omp_get_max_threads();
+      const uint64_t maxCombs = maxThreads * kRamPageBytes;
+      if(baseVarFront.size() < std::log2(maxCombs+1)) {
+        // Consider all combinations without different methods of sorting
+      } else {
+        // Consider some combinations for each method of sorting
+      }
       std::vector<DefaultSatTracker> execSatTr(maxThreads); //, satTr);
       std::vector<BitVector> execNext(maxThreads); // , formula.ans_);
       std::vector<VCTrackingSet> execUnsatClauses(maxThreads, true); // , unsatClauses);
@@ -233,8 +238,9 @@ int main(int argc, char* argv[]) {
       }
 
       std::atomic<uint64_t> nCombs = 0;
-      const uint64_t maxCombs = 100 * 1000;
-      omp_set_max_active_levels(2);
+      const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(baseVarFront.size(), 5);
+
+      // omp_set_max_active_levels(2);
       #pragma omp parallel for schedule(dynamic, 1) collapse(2)
       for(VCIndex nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
         for(int j=kMinSortType; j<=kMaxSortType; j++) {
