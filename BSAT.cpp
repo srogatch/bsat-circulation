@@ -269,7 +269,7 @@ int main(int argc, char* argv[]) {
           const uint64_t limitComb = (iExec+1 < maxThreads) ? execs[iExec+1].firstComb_ : 1ULL<<baseVarFront.size();
           while(curComb < limitComb) {
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
-            const VCTrackingSet viableFront = (curExec.front_.Size() == 0) ? curExec.unsatClauses_ : curExec.front_;
+            const VCTrackingSet& viableFront = (curExec.front_.Size() == 0) ? curExec.unsatClauses_ : curExec.front_;
             // TODO: perhaps cutting off front here is too restrictive
             if( (curNUnsat == 0)
               || (!trav.IsSeenFront(viableFront) && !trav.IsSeenMove(front, stepRevs) && !trav.IsSeenAssignment(curExec.next_)) ) 
@@ -287,9 +287,23 @@ int main(int argc, char* argv[]) {
                 // }
               }
             }
-
+            int i=0;
+            for(; i<baseVarFront.size(); i++) {
+              curComb ^= 1ULL << i;
+              const VCIndex iVar = baseVarFront[i].item_;
+              stepRevs.Add(iVar);
+              curExec.next_.Flip(iVar);
+              curExec.satTr_.FlipVar<false>(
+                iVar * (curExec.next_[iVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
+              if( (curComb & (1ULL << i)) != 0 ) {
+                break;
+              }
+            }
+            if(i >= baseVarFront.size() || curComb >= limitComb) {
+              break;
+            }
           }
-        } else {
+        } else { // !allCombs
 
         }
       }
