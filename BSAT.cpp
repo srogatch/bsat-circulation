@@ -217,28 +217,41 @@ int main(int argc, char* argv[]) {
 
       const uint64_t maxThreads = omp_get_max_threads();
       const uint64_t maxCombs = maxThreads * kRamPageBytes;
+      bool allCombs = false;
       if(baseVarFront.size() < std::log2(maxCombs+1)) {
         // Consider all combinations without different methods of sorting
+        allCombs = true;
       } else {
         // Consider some combinations for each method of sorting
       }
+      const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(baseVarFront.size(), 5);
       std::vector<DefaultSatTracker> execSatTr(maxThreads); //, satTr);
       std::vector<BitVector> execNext(maxThreads); // , formula.ans_);
       std::vector<VCTrackingSet> execUnsatClauses(maxThreads, true); // , unsatClauses);
       std::vector<VCTrackingSet> execFront(maxThreads, true); // , front);
       std::vector<std::vector<MultiItem<VCIndex>>> execVarFront(maxThreads);
       std::vector<VCTrackingSet> execImprovingRevs(maxThreads);
+      std::vector<uint64_t> execFirstComb(maxThreads);
+      std::vector<int8_t> execNIncl(maxThreads);
+      std::vector<int8_t> execSortType(maxThreads);
       #pragma omp parallel for num_threads(maxThreads)
       for(VCIndex i=0; i<maxThreads; i++) {
+        std::mt19937_64 rng = GetSeededRandom();
         execSatTr[i] = satTr;
         execNext[i] = formula.ans_;
         execUnsatClauses[i] = unsatClauses;
         execFront[i] = front;
         execVarFront[i] = baseVarFront;
+        if(allCombs) {
+          execFirstComb[i] = ((1ULL<<baseVarFront.size()) * i) / maxThreads;
+        } else {
+          execNIncl[i] = rng() % (endNIncl - startNIncl + 1) + startNIncl;
+          execSortType[i] = rng() % knSortTypes + kMinSortType;
+          execFirstComb[i] = (1ULL << (rng() % 64));
+        }
       }
 
       std::atomic<uint64_t> nCombs = 0;
-      const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(baseVarFront.size(), 5);
 
       // omp_set_max_active_levels(2);
       #pragma omp parallel for schedule(dynamic, 1) collapse(2)
