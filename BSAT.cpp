@@ -147,9 +147,9 @@ int main(int argc, char* argv[]) {
         VCIndex locBest = bestInit.load(std::memory_order_relaxed);
         const int64_t altNUnsat = locSatTr.GradientDescend(
           trav, &locFront, moved, locAsg, sortType,
-          // locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
-          locBest,
-          nCombs, locUnsatClauses, locFront, revVars, locBest
+          locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
+          //locBest,
+          nCombs, maxCombs, locUnsatClauses, locFront, revVars, locBest
         );
         nSequentialGD.fetch_add(1);
         if(!moved) {
@@ -530,7 +530,7 @@ int main(int argc, char* argv[]) {
             trav, &locFront, moved, locAsg, sortType,
             locSatTr.NextUnsatCap(nCombs, locUnsatClauses, nStartUnsat),
             //nStartUnsat-1,
-            nCombs, locUnsatClauses, locFront, stepRevs, nStartUnsat
+            nCombs, maxCombs, locUnsatClauses, locFront, stepRevs, nStartUnsat
           );
           nSequentialGD.fetch_add(1);
           if(!moved) {

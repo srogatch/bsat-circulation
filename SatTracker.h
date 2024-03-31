@@ -307,7 +307,7 @@ template<typename TCounter> struct SatTracker {
   int64_t GradientDescend(Traversal& trav,
     const VCTrackingSet* considerClauses,
     bool& moved, BitVector& next, const int sortType,
-    const VCIndex unsatCap, int64_t& nCombs,
+    const VCIndex unsatCap, int64_t& nCombs, const int64_t maxCombs,
     VCTrackingSet& unsatClauses, VCTrackingSet& front,
     VCTrackingSet& origRevVars, const VCIndex nStartUnsat)
   {
@@ -327,7 +327,7 @@ template<typename TCounter> struct SatTracker {
     const VCTrackingSet startFront = front;
     VCTrackingSet revVars;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
-    for(int64_t k=0; k<int64_t(pvVars->size()); k++) {
+    for(int64_t k=0; k<int64_t(pvVars->size()) && nCombs < maxCombs; k++) {
       VCTrackingSet curRevVars;
       const int64_t aVar = (*pvVars)[k].item_;
       assert(1 <= aVar && aVar <= pFormula_->nVars_);
