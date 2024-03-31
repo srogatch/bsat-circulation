@@ -222,176 +222,210 @@ int main(int argc, char* argv[]) {
         // Consider all combinations without different methods of sorting
         allCombs = true;
       } else {
-        // Consider some combinations for each method of sorting
+        // Consider some combinations for different methods of sorting and number of included 
       }
       const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(baseVarFront.size(), 5);
-      std::vector<DefaultSatTracker> execSatTr(maxThreads); //, satTr);
-      std::vector<BitVector> execNext(maxThreads); // , formula.ans_);
-      std::vector<VCTrackingSet> execUnsatClauses(maxThreads, true); // , unsatClauses);
-      std::vector<VCTrackingSet> execFront(maxThreads, true); // , front);
-      std::vector<std::vector<MultiItem<VCIndex>>> execVarFront(maxThreads);
-      std::vector<VCTrackingSet> execImprovingRevs(maxThreads);
-      std::vector<uint64_t> execFirstComb(maxThreads);
-      std::vector<int8_t> execNIncl(maxThreads);
-      std::vector<int8_t> execSortType(maxThreads);
-      #pragma omp parallel for num_threads(maxThreads)
-      for(VCIndex i=0; i<maxThreads; i++) {
-        std::mt19937_64 rng = GetSeededRandom();
-        execSatTr[i] = satTr;
-        execNext[i] = formula.ans_;
-        execUnsatClauses[i] = unsatClauses;
-        execFront[i] = front;
-        execVarFront[i] = baseVarFront;
-        if(allCombs) {
-          execFirstComb[i] = ((1ULL<<baseVarFront.size()) * i) / maxThreads;
-        } else {
-          execNIncl[i] = rng() % (endNIncl - startNIncl + 1) + startNIncl;
-          execSortType[i] = rng() % knSortTypes + kMinSortType;
-          execFirstComb[i] = (1ULL << (rng() % 64));
-        }
-      }
-
+      struct Exec {
+        std::vector<MultiItem<VCIndex>> varFront_;
+        DefaultSatTracker satTr_;
+        BitVector next_;
+        VCTrackingSet unsatClauses_ = true;
+        VCTrackingSet front_ = true;
+        VCTrackingSet improvingRevs_;
+        uint64_t firstComb_;
+        int8_t nIncl_;
+        int8_t sortType_;
+      };
+      std::vector<Exec> execs(maxThreads);
       std::atomic<uint64_t> nCombs = 0;
-
-      // omp_set_max_active_levels(2);
-      #pragma omp parallel for schedule(dynamic, 1) collapse(2)
-      for(VCIndex nIncl=startNIncl; nIncl<=endNIncl; nIncl++) {
-        for(int j=kMinSortType; j<=kMaxSortType; j++) {
-          const VCIndex iTopThread = 0, nTopThreads = 1;
-          // Note that for nested parallelism omp_get_thread_num() returns the thread ordinal number within the inner team
-          const int iExec = omp_get_thread_num();
-          // std::cout << " " << iExec << " ";
-          // std::cout.flush();
-          assert(0 <= iExec && iExec < maxThreads);
-          std::vector<MultiItem<VCIndex>>& varFront = execVarFront[iExec];
-          SortMultiItems(varFront, j);
-          VCTrackingSet stepRevs = execImprovingRevs[iExec];
-          std::vector<VCIndex> incl(nIncl, 0);
-          assert(stepRevs.Size() == 0);
-          VCIndex i=0;
-          for(; i<nIncl; i++) {
-            int step;
-            if(i == 0) {
-              incl[i] = iTopThread;
-              step = nTopThreads;
+      #pragma omp parallel for schedule(static, 1) num_threads(maxThreads)
+      for(uint32_t iExec=0; iExec<maxThreads; iExec++) {
+        Exec& curExec = execs[iExec];
+        curExec.satTr_ = satTr;
+        curExec.next_ = formula.ans_;
+        curExec.unsatClauses_ = unsatClauses;
+        curExec.front_ = front;
+        if(allCombs) {
+          curExec.firstComb_ = ((1ULL<<baseVarFront.size()) * iExec) / maxThreads;
+        } else {
+          std::mt19937_64 rng = GetSeededRandom();
+          curExec.varFront_ = baseVarFront;
+          curExec.nIncl_ = rng() % (endNIncl - startNIncl + 1) + startNIncl;
+          curExec.sortType_ = rng() % knSortTypes + kMinSortType;
+          curExec.firstComb_ = (1ULL << (rng() % 64));
+        }
+        VCTrackingSet stepRevs;
+        if(allCombs) {
+          uint64_t curComb = curExec.firstComb_;
+          for(int i=0; i<baseVarFront.size(); i++) {
+            if(curComb & (1u<<i)) {
+              const VCIndex iVar = baseVarFront[i].item_;
+              stepRevs.Add(iVar);
+              curExec.next_.Flip(iVar);
+              curExec.satTr_.FlipVar<false>(
+                iVar * (curExec.next_[iVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
             }
-            else {
-              step = 1;
-              incl[i] = incl[i-1] + 1;
-            }
-            while(execImprovingRevs[iExec].Contains(incl[i]) && incl[i] + nIncl - i < VCIndex(varFront.size())) {
-              incl[i] += step;
-            }
-            if(incl[i] + nIncl - i >= VCIndex(varFront.size())) {
-              break;
-            }
-            stepRevs.Flip(varFront[incl[i]].item_);
-            execNext[iExec].Flip(varFront[incl[i]].item_);
-            execSatTr[iExec].FlipVar<false>(
-              varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1),
-              &execUnsatClauses[iExec], &execFront[iExec]
-            );
           }
-          if(i < nIncl) { // not enough variables to combine
-            // Revert
-            for(int k=0; k<i; k++) {
-              // stepRevs.Flip(varFront[incl[i]].item_);
-              execNext[iExec].Flip(varFront[incl[k]].item_);
-              execSatTr[iExec].FlipVar<false>(
-                varFront[incl[k]].item_ * (execNext[iExec][varFront[incl[k]].item_] ? 1 : -1),
-                &execUnsatClauses[iExec], &execFront[iExec]
-              );
-            }
-            continue;
-          }
-          for(;;) {
-            //assert(execSatTr[iExec].Verify(execNext[iExec])); // TODO: very heavy
-            if(nCombs >= maxCombs) {
-              for(VCIndex i=0; i<nIncl; i++) {
-                if(!execImprovingRevs[iExec].Contains(varFront[incl[i]].item_)) {
-                  // Not needed - we are cleaning up, and this is a temporary
-                  // stepRevs.Flip(varFront[incl[i]].item_);
-                  execNext[iExec].Flip(varFront[incl[i]].item_);
-                  execSatTr[iExec].FlipVar<false>(
-                    varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1),
-                    &execUnsatClauses[iExec], &execFront[iExec]
-                  );
-                }
-              }
-              // assert(stepRevs.Size() == 0);
-              break;
-            }
-            assert( VCIndex(incl.size()) == nIncl );
-            // assert( stepRevs.Size() == nIncl );
-            const VCIndex curNUnsat = execUnsatClauses[iExec].Size();
-            if(execFront[iExec].Size() == 0) {
-              execFront[iExec] = execUnsatClauses[iExec];
-            }
-            if( (curNUnsat == 0) || ( !trav.IsSeenMove(execFront[iExec], stepRevs) && !trav.IsSeenAssignment(execNext[iExec]) ) ) {
+          const uint64_t limitComb = (iExec+1 < maxThreads) ? execs[iExec+1].firstComb_ : 1ULL<<baseVarFront.size();
+          while(curComb < limitComb) {
+            const VCIndex curNUnsat = curExec.unsatClauses_.Size();
+            const VCTrackingSet viableFront = (curExec.front_.Size() == 0) ? curExec.unsatClauses_ : curExec.front_;
+            // TODO: perhaps cutting off front here is too restrictive
+            if( (curNUnsat == 0)
+              || (!trav.IsSeenFront(viableFront) && !trav.IsSeenMove(front, stepRevs) && !trav.IsSeenAssignment(curExec.next_)) ) 
+            {
               nCombs.fetch_add(1);
-              trav.FoundMove(execFront[iExec], stepRevs, execNext[iExec], curNUnsat);
+              trav.FoundMove(front, stepRevs, curExec.next_, curNUnsat);
               if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                 std::unique_lock<std::mutex> lock(muBestUpdate);
                 if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                   bestUnsat.store(curNUnsat, std::memory_order_release);
                   bestRevVars = stepRevs;
                 }
-                if(curNUnsat < nStartUnsat) {
-                  execImprovingRevs[iExec] = stepRevs;
-                }
+                // if(curNUnsat < nStartUnsat) {
+                //   execImprovingRevs[iExec] = stepRevs;
+                // }
               }
             }
-            VCIndex i=nIncl-1;
-            for(; i>=0; i--) {
-              // assert(stepRevs.Contains(varFront[incl[i]].item_));
+
+          }
+        } else {
+
+        }
+      }
+
+
+      // Note that for nested parallelism omp_get_thread_num() returns the thread ordinal number within the inner team
+      #pragma omp parallel for schedule(static, 1) num_threads(maxThreads)
+      for(uint32_t iExec=0; iExec<maxThreads; iExec++) {
+        std::vector<MultiItem<VCIndex>>& varFront = execVarFront[iExec];
+        SortMultiItems(varFront, j);
+        VCTrackingSet stepRevs = execImprovingRevs[iExec];
+        std::vector<VCIndex> incl(nIncl, 0);
+        assert(stepRevs.Size() == 0);
+        VCIndex i=0;
+        for(; i<nIncl; i++) {
+          int step;
+          if(i == 0) {
+            incl[i] = iTopThread;
+            step = nTopThreads;
+          }
+          else {
+            step = 1;
+            incl[i] = incl[i-1] + 1;
+          }
+          while(execImprovingRevs[iExec].Contains(incl[i]) && incl[i] + nIncl - i < VCIndex(varFront.size())) {
+            incl[i] += step;
+          }
+          if(incl[i] + nIncl - i >= VCIndex(varFront.size())) {
+            break;
+          }
+          stepRevs.Flip(varFront[incl[i]].item_);
+          execNext[iExec].Flip(varFront[incl[i]].item_);
+          execSatTr[iExec].FlipVar<false>(
+            varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1),
+            &execUnsatClauses[iExec], &execFront[iExec]
+          );
+        }
+        if(i < nIncl) { // not enough variables to combine
+          // Revert
+          for(int k=0; k<i; k++) {
+            // stepRevs.Flip(varFront[incl[i]].item_);
+            execNext[iExec].Flip(varFront[incl[k]].item_);
+            execSatTr[iExec].FlipVar<false>(
+              varFront[incl[k]].item_ * (execNext[iExec][varFront[incl[k]].item_] ? 1 : -1),
+              &execUnsatClauses[iExec], &execFront[iExec]
+            );
+          }
+          continue;
+        }
+        for(;;) {
+          //assert(execSatTr[iExec].Verify(execNext[iExec])); // TODO: very heavy
+          if(nCombs >= maxCombs) {
+            for(VCIndex i=0; i<nIncl; i++) {
               if(!execImprovingRevs[iExec].Contains(varFront[incl[i]].item_)) {
-                stepRevs.Flip(varFront[incl[i]].item_);
+                // Not needed - we are cleaning up, and this is a temporary
+                // stepRevs.Flip(varFront[incl[i]].item_);
                 execNext[iExec].Flip(varFront[incl[i]].item_);
                 execSatTr[iExec].FlipVar<false>(
                   varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1),
                   &execUnsatClauses[iExec], &execFront[iExec]
                 );
               }
-              const int step = (i == 0 ? nTopThreads : 1);
-              while(incl[i] + step - 1 + nIncl - i < VCIndex(varFront.size())
-                && execImprovingRevs[iExec].Contains(varFront[incl[i]+step].item_))
-              {
-                incl[i]++;
+            }
+            // assert(stepRevs.Size() == 0);
+            break;
+          }
+          assert( VCIndex(incl.size()) == nIncl );
+          // assert( stepRevs.Size() == nIncl );
+          const VCIndex curNUnsat = execUnsatClauses[iExec].Size();
+          if(execFront[iExec].Size() == 0) {
+            execFront[iExec] = execUnsatClauses[iExec];
+          }
+          if( (curNUnsat == 0) || ( !trav.IsSeenMove(execFront[iExec], stepRevs) && !trav.IsSeenAssignment(execNext[iExec]) ) ) {
+            nCombs.fetch_add(1);
+            trav.FoundMove(execFront[iExec], stepRevs, execNext[iExec], curNUnsat);
+            if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
+              std::unique_lock<std::mutex> lock(muBestUpdate);
+              if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
+                bestUnsat.store(curNUnsat, std::memory_order_release);
+                bestRevVars = stepRevs;
               }
-              if(incl[i] + nIncl - i < VCIndex(varFront.size())) {
-                break;
+              if(curNUnsat < nStartUnsat) {
+                execImprovingRevs[iExec] = stepRevs;
               }
             }
-            if(i < 0) {
-              break;
+          }
+          VCIndex i=nIncl-1;
+          for(; i>=0; i--) {
+            // assert(stepRevs.Contains(varFront[incl[i]].item_));
+            if(!execImprovingRevs[iExec].Contains(varFront[incl[i]].item_)) {
+              stepRevs.Flip(varFront[incl[i]].item_);
+              execNext[iExec].Flip(varFront[incl[i]].item_);
+              execSatTr[iExec].FlipVar<false>(
+                varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1),
+                &execUnsatClauses[iExec], &execFront[iExec]
+              );
             }
-            if(i == 0) {
-              incl[0] += nTopThreads;
-            }
-            else {
+            const int step = (i == 0 ? nTopThreads : 1);
+            while(incl[i] + step - 1 + nIncl - i < VCIndex(varFront.size())
+              && execImprovingRevs[iExec].Contains(varFront[incl[i]+step].item_))
+            {
               incl[i]++;
             }
-            // TODO: continue from here adding the improving reversal variables
+            if(incl[i] + nIncl - i < VCIndex(varFront.size())) {
+              break;
+            }
+          }
+          if(i < 0) {
+            break;
+          }
+          if(i == 0) {
+            incl[0] += nTopThreads;
+          }
+          else {
+            incl[i]++;
+          }
+          // TODO: continue from here adding the improving reversal variables
+          assert(!stepRevs.Contains(varFront[incl[i]].item_));
+          stepRevs.Flip(varFront[incl[i]].item_);
+          execNext[iExec].Flip(varFront[incl[i]].item_);
+          execSatTr[iExec].FlipVar<false>(
+            varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
+          );
+          i++;
+          for(; i<nIncl; i++) {
+            incl[i] = incl[i-1]+1;
+            assert(incl[i] < VCIndex(varFront.size()));
             assert(!stepRevs.Contains(varFront[incl[i]].item_));
             stepRevs.Flip(varFront[incl[i]].item_);
             execNext[iExec].Flip(varFront[incl[i]].item_);
             execSatTr[iExec].FlipVar<false>(
               varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
             );
-            i++;
-            for(; i<nIncl; i++) {
-              incl[i] = incl[i-1]+1;
-              assert(incl[i] < VCIndex(varFront.size()));
-              assert(!stepRevs.Contains(varFront[incl[i]].item_));
-              stepRevs.Flip(varFront[incl[i]].item_);
-              execNext[iExec].Flip(varFront[incl[i]].item_);
-              execSatTr[iExec].FlipVar<false>(
-                varFront[incl[i]].item_ * (execNext[iExec][varFront[incl[i]].item_] ? 1 : -1), &execUnsatClauses[iExec], &execFront[iExec]
-              );
-            }
           }
-          assert(stepRevs.Size() == 0);
         }
+        assert(stepRevs.Size() == 0);
       }
       totCombs.fetch_add(nCombs);
 
@@ -457,7 +491,7 @@ int main(int argc, char* argv[]) {
       #pragma omp parallel for num_threads(nSysCpus)
       for(uint32_t i=0; i<nSysCpus; i++) {
         VCTrackingSet locUnsatClauses = unsatClauses;
-        VCTrackingSet locFront = front, nextFront;
+        VCTrackingSet locFront = front;
         DefaultSatTracker locSatTr(satTr);
         BitVector locAsg = formula.ans_;
         VCTrackingSet stepRevs;

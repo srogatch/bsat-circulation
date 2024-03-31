@@ -35,9 +35,13 @@ struct Traversal {
   std::deque<Point> dfs_;
   mutable std::atomic_flag syncDfs_ = ATOMIC_FLAG_INIT;
 
+
+  void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars) {
+    seenMove_.Add(std::make_pair(front.hash_, revVars.hash_));
+  }
   void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat)
   {
-    seenMove_.Add(std::make_pair(front.hash_, revVars.hash_));
+    FoundMove(front, revVars);
     if( !seenAssignment_.Add(assignment.hash_) ) {
       return; // added earlier, perhaps concurrently by another thread - don't put it to DFS here thus
     }

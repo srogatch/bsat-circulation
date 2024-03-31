@@ -324,6 +324,7 @@ template<typename TCounter> struct SatTracker {
     VCIndex minUnsat = unsatCap+1;
     VCTrackingSet bestRevVars;
 
+    const VCTrackingSet startFront = front;
     VCTrackingSet revVars;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
     for(int64_t k=0; k<int64_t(pvVars->size()); k++) {
@@ -331,39 +332,51 @@ template<typename TCounter> struct SatTracker {
       const int64_t aVar = (*pvVars)[k].item_;
       assert(1 <= aVar && aVar <= pFormula_->nVars_);
       const int64_t iVar = aVar * (next[aVar] ? 1 : -1);
-      revVars.Flip(aVar);
-      curRevVars.Flip(aVar);
-      if(front.Size() == 0) {
-        front = unsatClauses;
-      }
-      if( trav.IsSeenMove(front, curRevVars) ) {
-        revVars.Flip(aVar);
+      curRevVars.Add(aVar);
+      const VCTrackingSet viableFront = (front.Size() == 0) ? unsatClauses : front;
+      if( trav.IsSeenMove(viableFront, curRevVars) ) {
         continue;
       }
-      nCombs++;
+      revVars.Flip(aVar);
+      if(trav.IsSeenMove(startFront, revVars)) {
+        goto sgd_unflip_0:
+      }
       next.Flip(aVar);
-      if(!trav.IsSeenAssignment(next))
-      {
-        VCTrackingSet oldFront = front;
-        FlipVar<false>(-iVar, &unsatClauses, &front);
-        const VCIndex newUnsat = UnsatCount();
-        trav.FoundMove(oldFront, curRevVars, next, newUnsat);
-        if(newUnsat < minUnsat) {
-          minUnsat = newUnsat;
-          bestRevVars = revVars;
-          if(newUnsat == 0) {
-            break;
-          }
+      if(trav.IsSeenAssignment(next)) {
+        goto sgd_unflip_1;
+      }
+      FlipVar<false>(-iVar, &unsatClauses, &front);
+      if( front.Size() != 0 && trav.IsSeenFront(front) ) {
+        goto sgd_unflip_2;
+      }
+
+      nCombs++;
+      const VCIndex newUnsat = UnsatCount();
+      if(k != 0) {
+        trav.FoundMove(startFront, revVars);
+      }
+      trav.FoundMove(viableFront, curRevVars, next, newUnsat);
+      if(newUnsat < minUnsat) {
+        minUnsat = newUnsat;
+        bestRevVars = revVars;
+        if(newUnsat == 0) {
+          revVars.Flip(aVar);
+          // Return immediately the assignment satisfying the formula
+          break;
         }
-        if(newUnsat < nStartUnsat) {
-          continue;
-        }
-        // Flip back
-        FlipVar<false>(iVar, &unsatClauses, &front);
+      }
+      if(newUnsat < nStartUnsat) {
+        revVars.Flip(aVar);
+        // Don't unflip
+        continue;
       }
 
       // Flip back
+sgd_unflip_2:
+      FlipVar<false>(iVar, &unsatClauses, &front);
+sgd_unflip_1:
       next.Flip(aVar);
+sgd_unflip_0:
       revVars.Flip(aVar);
     }
     if(minUnsat <= unsatCap) {
@@ -377,6 +390,7 @@ template<typename TCounter> struct SatTracker {
         next.Flip(revV);
         FlipVar<false>(revV * (next[revV] ? 1 : -1), &unsatClauses, &front);
       }
+      assert(UnsatCount() == minUnsat);
       vRevVars = bestRevVars.ToVector();
       // TODO: FlipAll method
       for(VCIndex i=0; i<VCIndex(vRevVars.size()); i++) {
@@ -396,6 +410,7 @@ template<typename TCounter> struct SatTracker {
     VCTrackingSet& front, VCTrackingSet& origRevVars, int64_t minUnsat,
     int64_t& nCombs, bool& moved, int64_t level)
   {
+    const VCTrackingSet startFront = front;
     SortMultiItems(varFront, sortType);
     VCTrackingSet revVars;
     for(int64_t i=0; i<int64_t(varFront.size()); i+=varsAtOnce) {
@@ -410,81 +425,67 @@ template<typename TCounter> struct SatTracker {
         selVars[j] = iVar;
         curRevVars.Flip(aVar);
       }
-      if(front.Size() == 0) {
-        front = unsatClauses;
-      }
-      if( trav.IsSeenMove(front, curRevVars) ) {
+      const VCTrackingSet viableFront = (front.Size() == 0) ? unsatClauses : front;
+      if( trav.IsSeenMove(viableFront, curRevVars) ) {
         continue;
       }
-      nCombs++;
       for(int64_t j=0; j<nVars; j++) {
         const int64_t iVar = selVars[j];
         const int64_t aVar = llabs(iVar);
         revVars.Flip(aVar);
-        next.Flip(aVar);
       }
-      if(!trav.IsSeenAssignment(next))
-      {
-        VCTrackingSet oldFront = front;
-        for(int64_t j=0; j<nVars; j++) {
-          const int64_t iVar = selVars[j];
-          FlipVar<false>(-iVar, &unsatClauses, &front);
-        }
-        const int64_t newNUnsat = UnsatCount();
-        trav.FoundMove(oldFront, curRevVars, next, newNUnsat);
-        if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
-          moved = true;
-          minUnsat = newNUnsat;
-          for(int64_t j=0; j<nVars; j++) {
-            const int64_t iVar = selVars[j];
-            const int64_t aVar = llabs(iVar);
-            origRevVars.Flip(aVar);
-          }
-          if(minUnsat == 0) {
-            break;
-          }
-          continue;
-        }
-        if(front.Size() == 0) {
-          front = unsatClauses;
-        }
-        if(level > 0 && (front == unsatClauses || !trav.IsSeenFront(front)) ) {
-          std::vector<MultiItem<VCIndex>> newVarFront = pFormula_->ClauseFrontToVars(
-            front, next);
-          bool nextMoved = false;
-          unsigned short r;
-          while(!_rdrand16_step(&r));
-          VCTrackingSet newClauseFront = front;
-          const int64_t subNUnsat = ParallelGD(
-            preferMove, varsAtOnce, newVarFront, r%knSortTypes + kMinSortType,
-            next, trav, unsatClauses, newClauseFront,
-            revVars, minUnsat, nCombs, nextMoved, level-1
-          );
-          if(subNUnsat < minUnsat || (preferMove && nextMoved && subNUnsat == minUnsat)) {
-            minUnsat = subNUnsat;
-            front = newClauseFront;
-            moved = true;
-            for(int64_t j=0; j<nVars; j++) {
-              const int64_t iVar = selVars[j];
-              const int64_t aVar = llabs(iVar);
-              origRevVars.Flip(aVar);
-            }
-            if(minUnsat == 0) {
-              break;
-            }
-            continue;
-          }
-        }
-        for(int64_t j=0; j<nVars; j++) {
-          const int64_t iVar = selVars[j];
-          FlipVar<false>(iVar, &unsatClauses, &front);
-        }
+      if( trav.IsSeenMove(startFront, revVars) ) {
+        goto pgd_unflip_0;
       }
-
       for(int64_t j=0; j<nVars; j++) {
         const int64_t iVar = selVars[j];
         const int64_t aVar = llabs(iVar);
         next.Flip(aVar);
+      }
+      if(trav.IsSeenAssignment(next)) {
+        goto pgd_unflip_1;
+      }
+      nCombs++;
+      for(int64_t j=0; j<nVars; j++) {
+        const int64_t iVar = selVars[j];
+        FlipVar<false>(-iVar, &unsatClauses, &front);
+      }
+      if(front.Size() != 0 && trav.IsSeenFront(front)) {
+        goto pgd_unflip_2;
+      }
+      const int64_t newNUnsat = UnsatCount();
+      if(i != 0) {
+        trav.FoundMove(startFront, revVars);
+      }
+      trav.FoundMove(viableFront, curRevVars, next, newNUnsat);
+      if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
+        moved = true;
+        minUnsat = newNUnsat;
+        for(int64_t j=0; j<nVars; j++) {
+          const int64_t iVar = selVars[j];
+          const int64_t aVar = llabs(iVar);
+          origRevVars.Flip(aVar);
+        }
+        if(minUnsat == 0) {
+          break;
+        }
+        continue;
+      }
+pgd_unflip_2:
+      for(int64_t j=0; j<nVars; j++) {
+        const int64_t iVar = selVars[j];
+        FlipVar<false>(iVar, &unsatClauses, &front);
+      }
+pgd_unflip_1:
+      for(int64_t j=0; j<nVars; j++) {
+        const int64_t iVar = selVars[j];
+        const int64_t aVar = llabs(iVar);
+        next.Flip(aVar);
+      }
+pgd_unflip_0:
+      for(int64_t j=0; j<nVars; j++) {
+        const int64_t iVar = selVars[j];
+        const int64_t aVar = llabs(iVar);
         revVars.Flip(aVar);
       }
     }
