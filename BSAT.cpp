@@ -203,6 +203,7 @@ int main(int argc, char* argv[]) {
     while(unsatClauses.Size() >= nStartUnsat) {
       assert(satTr.UnsatCount() == unsatClauses.Size() && satTr.ReallyUnsat(unsatClauses));
       if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
+        // TODO: maybe select a random subset here?
         front = unsatClauses;
         std::cout << "%";
       }
@@ -306,6 +307,10 @@ int main(int argc, char* argv[]) {
         } else { // !allCombs
 
         }
+      }
+
+      if(allCombs) {
+        trav.OnFrontExhausted(front);
       }
 
 
@@ -446,10 +451,7 @@ int main(int argc, char* argv[]) {
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
 
-        //std::cout << "The front of " << front.size() << " clauses doesn't lead anywhere." << std::endl;
-        if(!allowDuplicateFront) {
-          trav.OnFrontExhausted(front);
-        }
+        trav.OnFrontExhausted(front);
 
         if(front != unsatClauses) {
           // Retry with full/random front
@@ -486,22 +488,26 @@ int main(int argc, char* argv[]) {
         formula.ans_.Flip(revV);
         satTr.FlipVar<false>(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, nullptr);
       }
-      front = unsatClauses - oldUnsatCs;
       assert(satTr.UnsatCount() == bestUnsat);
       assert(unsatClauses.Size() == bestUnsat);
-      //trav.seenAssignment_.Add(formula.ans_.hash_);
+      front = unsatClauses - oldUnsatCs;
 
       if(unsatClauses.Size() < nStartUnsat) {
         break;
+      }
+
+      if( front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front)) ) {
+        std::cout << "%";
+        front = unsatClauses;
       }
 
       std::cout << "S";
       std::cout.flush();
       bestUnsat = formula.nClauses_ + 1;
       bestRevVars.Clear();
-
-      std::atomic<uint64_t> totCombs = 0;
-      omp_set_max_active_levels(1);
+      nCombs.store(0, std::memory_order_release);
+      std::atomic<bool> newEpoch = false;
+      // omp_set_max_active_levels(1);
       #pragma omp parallel for num_threads(nSysCpus)
       for(uint32_t i=0; i<nSysCpus; i++) {
         VCTrackingSet locUnsatClauses = unsatClauses;
@@ -513,21 +519,22 @@ int main(int argc, char* argv[]) {
 
         int64_t newUnsat = locUnsatClauses.Size();
         bool moved;
-        for(;;) {
+        while( !newEpoch.load(std::memory_order_acquire) && nCombs.load(std::memory_order_acquire) < maxCombs ) {
           if(locFront.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(locFront))) {
+            // TODO: maybe select a random subset of the locUnsatClauses here?
             locFront = locUnsatClauses;
           }
           moved = false;
           //const int8_t sortType = i % knSortTypes + kMinSortType;
           const int8_t sortType = i % knSortTypes + kMinSortType;
-          int64_t nCombs = 0;
+          int64_t nLocCombs = 0;
           newUnsat = locSatTr.GradientDescend(
             trav, &locFront, moved, locAsg, sortType,
             locSatTr.NextUnsatCap(totCombs, locUnsatClauses, nStartUnsat),
             //nStartUnsat-1,
-            nCombs, locUnsatClauses, locFront, stepRevs, nStartUnsat
+            nLocCombs, locUnsatClauses, locFront, stepRevs, nStartUnsat
           );
-          totCombs.fetch_add(nCombs);
+          nCombs.fetch_add(nLocCombs);
           nSequentialGD.fetch_add(1);
           if(!moved) {
             // The data structures are corrupted already (not rolled back)
@@ -541,6 +548,7 @@ int main(int argc, char* argv[]) {
             }
           }
           if(newUnsat < nStartUnsat) {
+            newEpoch.store(true, std::memory_order_release);
             break;
           }
         }
