@@ -361,13 +361,13 @@ template<typename TCounter> struct SatTracker {
           minUnsat = newUnsat;
           bestRevVars = revVars;
           if(newUnsat == 0) {
-            revVars.Flip(aVar);
+            //revVars.Flip(aVar);
             // Return immediately the assignment satisfying the formula
             break;
           }
         }
         if(newUnsat < nStartUnsat) {
-          revVars.Flip(aVar);
+          //revVars.Flip(aVar);
           // Don't unflip
           continue;
         }
@@ -393,6 +393,7 @@ sgd_unflip_0:
         FlipVar<false>(revV * (next[revV] ? 1 : -1), &unsatClauses, &front);
       }
       assert(UnsatCount() == minUnsat);
+      assert(unsatClauses.Size() == minUnsat);
       vRevVars = bestRevVars.ToVector();
       // TODO: FlipAll method
       for(VCIndex i=0; i<VCIndex(vRevVars.size()); i++) {
