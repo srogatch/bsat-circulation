@@ -156,7 +156,7 @@ int main(int argc, char* argv[]) {
         }
         locFront = locUnsatClauses - oldUnsatCs;
         locBest = bestInit.load(std::memory_order_relaxed);
-        if(altNUnsat < locBest) {
+        if(altNUnsat < locBest && locUnsatClauses != initUnsatClauses) {
           std::unique_lock<std::mutex> lock(muBestUpdate);
           if(altNUnsat < bestInit) {
             bestInit = altNUnsat;
@@ -201,7 +201,7 @@ int main(int argc, char* argv[]) {
     prevNUnsat = nStartUnsat;
     bool allowDuplicateFront = false;
     while(unsatClauses.Size() >= nStartUnsat) {
-      assert(satTr.UnsatCount() == unsatClauses.Size() && satTr.ReallyUnsat(unsatClauses));
+      // assert(satTr.UnsatCount() == unsatClauses.Size() && satTr.ReallyUnsat(unsatClauses));
       if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
         // TODO: maybe select a random subset here?
         front = unsatClauses;
@@ -232,7 +232,7 @@ int main(int argc, char* argv[]) {
         DefaultSatTracker satTr_;
         BitVector next_;
         VCTrackingSet unsatClauses_ = true;
-        VCTrackingSet front_ = true;
+        VCTrackingSet front_;
         //VCTrackingSet improvingRevs_;
         uint64_t firstComb_;
         int8_t nIncl_;
@@ -245,7 +245,6 @@ int main(int argc, char* argv[]) {
         curExec.satTr_ = satTr;
         curExec.next_ = formula.ans_;
         curExec.unsatClauses_ = unsatClauses;
-        curExec.front_ = front;
         if(allCombs) {
           // Don't try combination 0 - nothing flipped - because we're already at it
           curExec.firstComb_ = ((1ULL<<baseVarFront.size()) * iExec) / maxThreads + 1;
@@ -254,9 +253,7 @@ int main(int argc, char* argv[]) {
           curExec.varFront_ = baseVarFront;
           curExec.nIncl_ = rng() % rangeNIncl + startNIncl;
           curExec.sortType_ = rng() % knSortTypes + kMinSortType;
-          // TODO: this produces a very skewed distributions where the same combinations are traversed multiple times for low bits
-          //curExec.firstComb_ = (1ULL << (rng() % std::min<VCIndex>(64, baseVarFront.size())));
-          curExec.firstComb_ = ((1ULL << std::min<VCIndex>(32, baseVarFront.size())) * iExec) / maxThreads + 1;
+          curExec.firstComb_ = (maxCombs * iExec) / maxThreads + 1;
         }
         VCTrackingSet stepRevs;
         if(allCombs) {
@@ -274,14 +271,13 @@ int main(int argc, char* argv[]) {
           int64_t nCombs = 0;
           while(curComb < limitComb) {
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
-            const VCTrackingSet& viableFront = (curExec.front_.Size() == 0) ? curExec.unsatClauses_ : curExec.front_;
-            // TODO: perhaps cutting off front here is too restrictive
             if( (curNUnsat == 0)
-              || (!trav.IsSeenFront(viableFront) && !trav.IsSeenMove(front, stepRevs) && !trav.IsSeenAssignment(curExec.next_)) ) 
+              || ((allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
+                && !trav.IsSeenMove(front, stepRevs) && !trav.IsSeenAssignment(curExec.next_)) ) 
             {
               nCombs++;
               trav.FoundMove(front, stepRevs, curExec.next_, curNUnsat);
-              if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
+              if(curNUnsat < bestUnsat.load(std::memory_order_acquire) && curExec.unsatClauses_ != unsatClauses) {
                 std::unique_lock<std::mutex> lock(muBestUpdate);
                 if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                   bestUnsat.store(curNUnsat, std::memory_order_release);
@@ -325,9 +321,11 @@ int main(int argc, char* argv[]) {
           }
           for(; i<curExec.nIncl_; i++) {
             incl[i] = incl[i-1] + 1;
+            assert(0 <= incl[i] && incl[i] < VCIndex(curExec.varFront_.size()));
           }
           for(i=0; i<curExec.nIncl_; i++) {
             const VCIndex aVar = curExec.varFront_[incl[i]].item_;
+            assert(0 < aVar && aVar <= formula.nVars_);
             stepRevs.Flip(aVar);
             curExec.next_.Flip(aVar);
             curExec.satTr_.FlipVar<false>( aVar * (curExec.next_[aVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_ );
@@ -339,16 +337,15 @@ int main(int argc, char* argv[]) {
               // No need to cleanup - there is 1:1 mapping between threads and data structures
               break;
             }
-            const VCTrackingSet& viableFront = (curExec.front_.Size() == 0) ? curExec.unsatClauses_ : curExec.front_;
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
             bool bFlipBack = true;
             if( (curNUnsat == 0)
-              || ( (allowDuplicateFront || !trav.IsSeenFront(viableFront))
+              || ( (allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
                 && !trav.IsSeenMove(front, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
             {
               nCombs++;
               trav.FoundMove(front, stepRevs, curExec.next_, curNUnsat);
-              if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
+              if(curNUnsat < bestUnsat.load(std::memory_order_acquire)  && curExec.unsatClauses_ != unsatClauses) {
                 std::unique_lock<std::mutex> lock(muBestUpdate);
                 if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                   bestUnsat.store(curNUnsat, std::memory_order_release);
@@ -406,14 +403,10 @@ int main(int argc, char* argv[]) {
         }
       }
 
-      //if(allCombs) {
       trav.OnFrontExhausted(front);
-      //}
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
-
-        trav.OnFrontExhausted(front);
 
         if(front != unsatClauses) {
           // Retry with full/random front
@@ -501,7 +494,7 @@ int main(int argc, char* argv[]) {
             // The data structures are corrupted already (not rolled back)
             break;
           }
-          {
+          if(locUnsatClauses != unsatClauses) {
             std::unique_lock<std::mutex> lock(muBestUpdate);
             if(locUnsatClauses.Size() < bestUnsat) {
               bestUnsat = locUnsatClauses.Size();
@@ -527,9 +520,6 @@ int main(int argc, char* argv[]) {
         front = unsatClauses - oldUnsatCs;
         assert(satTr.UnsatCount() == bestUnsat);
         assert(unsatClauses.Size() == bestUnsat);
-      } else {
-        trav.OnFrontExhausted(front);
-        front.Clear();
       }
     }
     std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
