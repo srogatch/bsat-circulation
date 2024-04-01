@@ -319,6 +319,7 @@ int main(int argc, char* argv[]) {
           while(curComb != 0) {
             incl[i] = __builtin_ctzll(curComb);
             curComb &= curComb-1;
+            i++;
           }
           for(; i<curExec.nIncl_; i++) {
             incl[i] = incl[i-1] + 1;
