@@ -97,9 +97,9 @@ struct BitVector {
   }
 
   void Randomize() {
-    //#pragma omp parallel for schedule(static, cParChunkSize)
+    std::mt19937_64 rng = GetSeededRandom();
     for(int64_t i=0; i<nQwords_; i++) {
-      while(!_rdrand64_step(reinterpret_cast<unsigned long long*>(bits_.get()+i)));
+      bits_[i]  = rng();
     }
     // Ensure the dummy bit for the formula is always false
     if(bits_[0]) {
