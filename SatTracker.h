@@ -361,13 +361,11 @@ template<typename TCounter> struct SatTracker {
           minUnsat = newUnsat;
           bestRevVars = revVars;
           if(newUnsat == 0) {
-            //revVars.Flip(aVar);
             // Return immediately the assignment satisfying the formula
             break;
           }
         }
         if(newUnsat < nStartUnsat) {
-          //revVars.Flip(aVar);
           // Don't unflip
           continue;
         }
@@ -497,13 +495,13 @@ pgd_unflip_0:
     return minUnsat;
   }
 
-  int64_t NextUnsatCap(const int64_t nCombs, const VCTrackingSet& unsatClauses, const int64_t nStartUnsat) const {
+  int64_t NextUnsatCap([[maybe_unused]] const int64_t nCombs, const VCTrackingSet& unsatClauses, const int64_t nStartUnsat) const {
     return std::max<int64_t>(nStartUnsat - 1, 
       std::max<int64_t>(
         unsatClauses.Size() * 2,
         DivUp(pFormula_->nVars_, nStartUnsat+1) + unsatClauses.Size()
       )
-      - std::sqrt(nCombs) // *std::log2(nCombs+1)
+      //- std::sqrt(nCombs) // *std::log2(nCombs+1)
     );
   }
 };

@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
   const uint64_t maxThreads = omp_get_max_threads();
   // TODO: shall it depend on the formula size? nVars_ or nClauses_
-  const int64_t maxCombs = 1ULL << 13; // 8192
+  const int64_t maxCombs = 1ULL << 11;
   Traversal trav;
 
   std::cout << "Choosing the best initial variable assignment..." << std::endl;
@@ -146,8 +146,8 @@ int main(int argc, char* argv[]) {
         VCIndex locBest = bestInit.load(std::memory_order_relaxed);
         const int64_t altNUnsat = locSatTr.GradientDescend(
           trav, &locFront, moved, locAsg, sortType,
-          locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
-          //locBest,
+          //locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
+          locBest,
           nCombs, maxCombs, locUnsatClauses, locFront, revVars, locBest
         );
         nSequentialGD.fetch_add(1);
@@ -209,7 +209,6 @@ int main(int argc, char* argv[]) {
       }
 
       std::cout << "C";
-      std::cout.flush();
 
       std::atomic<VCIndex> bestUnsat = formula.nClauses_+1;
       VCTrackingSet bestRevVars;
@@ -220,9 +219,12 @@ int main(int argc, char* argv[]) {
       if(baseVarFront.size() < std::log2(uint64_t(nSysCpus)*maxCombs+1)) {
         // Consider all combinations without different methods of sorting
         allCombs = true;
+        std::cout << "a";
       } else {
         // Consider some combinations for different methods of sorting and number of included 
+        std::cout << "p";
       }
+      std::cout.flush();
       const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(baseVarFront.size(), 5);
       const VCIndex rangeNIncl = endNIncl - startNIncl + 1;
       struct Exec {
@@ -404,9 +406,9 @@ int main(int argc, char* argv[]) {
         }
       }
 
-      if(allCombs) {
-        trav.OnFrontExhausted(front);
-      }
+      //if(allCombs) {
+      trav.OnFrontExhausted(front);
+      //}
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
