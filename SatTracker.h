@@ -353,7 +353,7 @@ template<typename TCounter> struct SatTracker {
         nCombs++;
         const VCIndex newUnsat = UnsatCount();
         trav.FoundMove(startFront, revVars, next, newUnsat);
-        if(newUnsat < minUnsat && unsatClauses != oldUnsatCs) {
+        if( newUnsat < minUnsat && (unsatClauses.Size() < nStartUnsat || !trav.IsSeenFront(unsatClauses)) ) {
           minUnsat = newUnsat;
           bestRevVars = revVars;
           if(newUnsat == 0) {
@@ -402,7 +402,7 @@ sgd_unflip_0:
     std::vector<MultiItem<VCIndex>>& varFront, const int sortType,
     BitVector& next, Traversal& trav, VCTrackingSet& unsatClauses,
     VCTrackingSet& front, VCTrackingSet& origRevVars, int64_t minUnsat,
-    int64_t& nCombs, bool& moved)
+    int64_t& nCombs, bool& moved, const VCIndex nStartUnsat)
   {
     SortMultiItems(varFront, sortType);
     const VCTrackingSet startFront = front;
@@ -447,7 +447,8 @@ sgd_unflip_0:
       {
         const int64_t newNUnsat = UnsatCount();
         trav.FoundMove(startFront, revVars, next, newNUnsat);
-        if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
+        if(newNUnsat < minUnsat + (preferMove ? 1 : 0)
+          && (unsatClauses.Size() < nStartUnsat || !trav.IsSeenFront(unsatClauses)) ) {
           moved = true;
           minUnsat = newNUnsat;
           for(int64_t j=0; j<nVars; j++) {

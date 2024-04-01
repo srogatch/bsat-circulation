@@ -277,7 +277,9 @@ int main(int argc, char* argv[]) {
             {
               nCombs++;
               trav.FoundMove(front, stepRevs, curExec.next_, curNUnsat);
-              if(curNUnsat < bestUnsat.load(std::memory_order_acquire) && curExec.unsatClauses_ != unsatClauses) {
+              if(curNUnsat < bestUnsat.load(std::memory_order_acquire) &&
+                (curExec.unsatClauses_.Size() < nStartUnsat || !trav.IsSeenFront(curExec.unsatClauses_))) 
+              {
                 std::unique_lock<std::mutex> lock(muBestUpdate);
                 if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                   bestUnsat.store(curNUnsat, std::memory_order_release);
@@ -345,7 +347,9 @@ int main(int argc, char* argv[]) {
             {
               nCombs++;
               trav.FoundMove(front, stepRevs, curExec.next_, curNUnsat);
-              if(curNUnsat < bestUnsat.load(std::memory_order_acquire)  && curExec.unsatClauses_ != unsatClauses) {
+              if(curNUnsat < bestUnsat.load(std::memory_order_acquire) &&
+                (curExec.unsatClauses_.Size() < nStartUnsat || !trav.IsSeenFront(curExec.unsatClauses_)) )
+              {
                 std::unique_lock<std::mutex> lock(muBestUpdate);
                 if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                   bestUnsat.store(curNUnsat, std::memory_order_release);
@@ -404,6 +408,7 @@ int main(int argc, char* argv[]) {
       }
 
       trav.OnFrontExhausted(front);
+      trav.OnFrontExhausted(unsatClauses);
 
       if(bestUnsat >= formula.nClauses_) {
         std::cout << "#";
@@ -472,7 +477,6 @@ int main(int argc, char* argv[]) {
         //std::mt19937_64 rng = GetSeededRandom();
 
         int64_t nCombs = 0;
-        int64_t newUnsat = locUnsatClauses.Size();
         bool moved;
         while( !newEpoch.load(std::memory_order_acquire) && nCombs < maxCombs ) {
           if(locFront.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(locFront))) {
@@ -483,7 +487,7 @@ int main(int argc, char* argv[]) {
           //const int8_t sortType = i % knSortTypes + kMinSortType;
           const int8_t sortType = i % knSortTypes + kMinSortType;
           VCTrackingSet oldUnsatCs = locUnsatClauses;
-          newUnsat = locSatTr.GradientDescend(
+          locSatTr.GradientDescend(
             trav, &locFront, moved, locAsg, sortType,
             locSatTr.NextUnsatCap(nCombs, locUnsatClauses, nStartUnsat),
             //nStartUnsat-1,
@@ -494,16 +498,16 @@ int main(int argc, char* argv[]) {
             // The data structures are corrupted already (not rolled back)
             break;
           }
-          if(locUnsatClauses != unsatClauses) {
+          if( locUnsatClauses.Size() < nStartUnsat || !trav.IsSeenFront(locUnsatClauses) ) {
             std::unique_lock<std::mutex> lock(muBestUpdate);
             if(locUnsatClauses.Size() < bestUnsat) {
               bestUnsat = locUnsatClauses.Size();
               bestRevVars = stepRevs;
             }
-          }
-          if(newUnsat < nStartUnsat) {
-            newEpoch.store(true, std::memory_order_release);
-            break;
+            if(locUnsatClauses.Size() < nStartUnsat) {
+              newEpoch.store(true, std::memory_order_release);
+              break;
+            }
           }
           locFront = locUnsatClauses - oldUnsatCs;
         }
