@@ -54,7 +54,6 @@ void signalHandler(int signum) {
 }
 
 std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
-constexpr const float kMaxInitSec = 1.0;
 
 int main(int argc, char* argv[]) {
   auto tmStart = std::chrono::steady_clock::now();
@@ -88,7 +87,7 @@ int main(int argc, char* argv[]) {
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
   const uint64_t maxThreads = omp_get_max_threads();
   // TODO: shall it depend on the formula size? nVars_ or nClauses_
-  const uint64_t maxCombs = 1ULL << 13; // 8192
+  const int64_t maxCombs = 1ULL << 13; // 8192
   Traversal trav;
 
   std::cout << "Choosing the best initial variable assignment..." << std::endl;
@@ -260,7 +259,7 @@ int main(int argc, char* argv[]) {
         VCTrackingSet stepRevs;
         if(allCombs) {
           uint64_t curComb = curExec.firstComb_;
-          for(int i=0; i<baseVarFront.size(); i++) {
+          for(int i=0; i<int(baseVarFront.size()); i++) {
             if(curComb & (1ULL<<i)) {
               const VCIndex iVar = baseVarFront[i].item_;
               stepRevs.Add(iVar);
@@ -270,6 +269,7 @@ int main(int argc, char* argv[]) {
             }
           }
           const uint64_t limitComb = (iExec+1 < maxThreads) ? execs[iExec+1].firstComb_ : 1ULL<<baseVarFront.size();
+          int64_t nCombs = 0;
           while(curComb < limitComb) {
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
             const VCTrackingSet& viableFront = (curExec.front_.Size() == 0) ? curExec.unsatClauses_ : curExec.front_;
@@ -277,6 +277,7 @@ int main(int argc, char* argv[]) {
             if( (curNUnsat == 0)
               || (!trav.IsSeenFront(viableFront) && !trav.IsSeenMove(front, stepRevs) && !trav.IsSeenAssignment(curExec.next_)) ) 
             {
+              nCombs++;
               trav.FoundMove(front, stepRevs, curExec.next_, curNUnsat);
               if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
                 std::unique_lock<std::mutex> lock(muBestUpdate);
@@ -290,7 +291,7 @@ int main(int argc, char* argv[]) {
               }
             }
             int i=0;
-            for(; i<baseVarFront.size(); i++) {
+            for(; i<int(baseVarFront.size()); i++) {
               curComb ^= 1ULL << i;
               const VCIndex iVar = baseVarFront[i].item_;
               stepRevs.Add(iVar);
@@ -301,11 +302,11 @@ int main(int argc, char* argv[]) {
                 break;
               }
             }
-            if(i >= baseVarFront.size() || curComb >= limitComb) {
+            if(i >= int(baseVarFront.size()) || curComb >= limitComb) {
               break;
             }
           }
-          totCombs.fetch_add( (1ULL<<baseVarFront.size()) - 1 );
+          totCombs.fetch_add( nCombs );
         } else { // !allCombs
           SortMultiItems(curExec.varFront_, curExec.sortType_);
           VCTrackingSet stepRevs;
@@ -398,6 +399,7 @@ int main(int argc, char* argv[]) {
               );
             }
           }
+          totCombs.fetch_add(nCombs);
         }
       }
 

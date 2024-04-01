@@ -339,7 +339,7 @@ template<typename TCounter> struct SatTracker {
       }
       revVars.Flip(aVar);
       if(trav.IsSeenMove(startFront, revVars)) {
-        goto sgd_unflip_0:
+        goto sgd_unflip_0;
       }
       next.Flip(aVar);
       if(trav.IsSeenAssignment(next)) {
@@ -350,25 +350,27 @@ template<typename TCounter> struct SatTracker {
         goto sgd_unflip_2;
       }
 
-      nCombs++;
-      const VCIndex newUnsat = UnsatCount();
-      if(k != 0) {
-        trav.FoundMove(startFront, revVars);
-      }
-      trav.FoundMove(viableFront, curRevVars, next, newUnsat);
-      if(newUnsat < minUnsat) {
-        minUnsat = newUnsat;
-        bestRevVars = revVars;
-        if(newUnsat == 0) {
-          revVars.Flip(aVar);
-          // Return immediately the assignment satisfying the formula
-          break;
+      {
+        nCombs++;
+        const VCIndex newUnsat = UnsatCount();
+        if(k != 0) {
+          trav.FoundMove(startFront, revVars);
         }
-      }
-      if(newUnsat < nStartUnsat) {
-        revVars.Flip(aVar);
-        // Don't unflip
-        continue;
+        trav.FoundMove(viableFront, curRevVars, next, newUnsat);
+        if(newUnsat < minUnsat) {
+          minUnsat = newUnsat;
+          bestRevVars = revVars;
+          if(newUnsat == 0) {
+            revVars.Flip(aVar);
+            // Return immediately the assignment satisfying the formula
+            break;
+          }
+        }
+        if(newUnsat < nStartUnsat) {
+          revVars.Flip(aVar);
+          // Don't unflip
+          continue;
+        }
       }
 
       // Flip back
@@ -408,7 +410,7 @@ sgd_unflip_0:
     std::vector<MultiItem<VCIndex>>& varFront, const int sortType,
     BitVector& next, Traversal& trav, VCTrackingSet& unsatClauses,
     VCTrackingSet& front, VCTrackingSet& origRevVars, int64_t minUnsat,
-    int64_t& nCombs, bool& moved, int64_t level)
+    int64_t& nCombs, bool& moved)
   {
     const VCTrackingSet startFront = front;
     SortMultiItems(varFront, sortType);
@@ -453,23 +455,25 @@ sgd_unflip_0:
       if(front.Size() != 0 && trav.IsSeenFront(front)) {
         goto pgd_unflip_2;
       }
-      const int64_t newNUnsat = UnsatCount();
-      if(i != 0) {
-        trav.FoundMove(startFront, revVars);
-      }
-      trav.FoundMove(viableFront, curRevVars, next, newNUnsat);
-      if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
-        moved = true;
-        minUnsat = newNUnsat;
-        for(int64_t j=0; j<nVars; j++) {
-          const int64_t iVar = selVars[j];
-          const int64_t aVar = llabs(iVar);
-          origRevVars.Flip(aVar);
+      {
+        const int64_t newNUnsat = UnsatCount();
+        if(i != 0) {
+          trav.FoundMove(startFront, revVars);
         }
-        if(minUnsat == 0) {
-          break;
+        trav.FoundMove(viableFront, curRevVars, next, newNUnsat);
+        if(newNUnsat < minUnsat + (preferMove ? 1 : 0)) {
+          moved = true;
+          minUnsat = newNUnsat;
+          for(int64_t j=0; j<nVars; j++) {
+            const int64_t iVar = selVars[j];
+            const int64_t aVar = llabs(iVar);
+            origRevVars.Flip(aVar);
+          }
+          if(minUnsat == 0) {
+            break;
+          }
+          continue;
         }
-        continue;
       }
 pgd_unflip_2:
       for(int64_t j=0; j<nVars; j++) {
