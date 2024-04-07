@@ -143,7 +143,7 @@ int main(int argc, char* argv[]) {
         VCTrackingSet oldUnsatCs = locUnsatClauses;
         VCIndex locBest = nGlobalUnsat.load(std::memory_order_relaxed);
         const int64_t altNUnsat = locSatTr.GradientDescend(
-          trav, &locFront, moved, locAsg, sortType,
+          trav, false, &locFront, moved, locAsg, sortType,
           //locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
           locBest,
           nCombs, maxCombs, locUnsatClauses, locFront, revVars, locBest
@@ -163,26 +163,38 @@ int main(int argc, char* argv[]) {
       }
     }
   }
-
   formula.ans_ = trav.dfs_.back().assignment_;
+
+  {
+    auto tmEnd = std::chrono::steady_clock::now();
+    double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmStart).count() / 1e9;
+    double clausesPerSec = (prevNUnsat - nGlobalUnsat) / nSec;
+    std::cout << "\tUnsatisfied clauses: " << nGlobalUnsat << " - elapsed " << nSec << " seconds, ";
+    if(clausesPerSec >= 1 || clausesPerSec == 0) {
+      std::cout << clausesPerSec << " clauses per second.";
+    } else {
+      std::cout << 1.0 / clausesPerSec << " seconds per clause.";
+    }
+    tmStart = tmEnd;
+    prevNUnsat = nGlobalUnsat;
+  }
+
+  std::atomic<int> nMaybeSat = maxThreads;
   std::vector<Exec> execs(maxThreads, formula);
   #pragma omp parallel num_threads(maxThreads)
   {
     const uint32_t iExec = omp_get_thread_num();
     Exec& curExec = execs[iExec];
+    bool usedFA = false;
     if(!trav.PopIfNotWorse(curExec.next_, nGlobalUnsat)) {
       curExec.next_ = formula.ans_;
+      usedFA = true;
     }
-    const bool isVeryTop = curExec.next_ == formula.ans_;
-    curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, isVeryTop ? nullptr : &curExec.front_);
-    // Will be randomized in the walking loop once size is seen to be 0
-    // if(isVeryTop) {
-    //   curExec.RandomizeFront();
-    // }
-    while(maybeSat && nGlobalUnsat > 0) {
-      #pragma omp barrier
-      curExec.nStartUnsat_ = nGlobalUnsat;
-      #pragma omp barrier
+    curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, usedFA ? nullptr : &curExec.front_);
+    curExec.nStartUnsat_ = nGlobalUnsat;
+    #pragma omp barrier
+    while(nGlobalUnsat > 0) {
+      bool allowDuplicateFront = false;
       while(nGlobalUnsat >= curExec.nStartUnsat_) {
         if(curExec.front_.Size() == 0 || trav.IsSeenFront(curExec.front_)) {
           curExec.RandomizeFront();
@@ -190,7 +202,7 @@ int main(int argc, char* argv[]) {
         VCIndex bestUnsat = formula.nClauses_+1;
         VCTrackingSet bestRevVars;
         // TODO: shall we get only vars for the front here, or for all the unsatisfied clauses?
-        std::vector<MultiItem<VCIndex>> baseVarFront = formula.ClauseFrontToVars(curExec.front_, formula.ans_);
+        std::vector<MultiItem<VCIndex>> baseVarFront = formula.ClauseFrontToVars(curExec.front_, curExec.next_);
         bool allCombs = false;
         if(baseVarFront.size() < std::log2(uint64_t(nSysCpus)*maxCombs+1)) {
           // Consider all combinations without different methods of sorting
@@ -202,7 +214,8 @@ int main(int argc, char* argv[]) {
         const VCIndex rangeNIncl = endNIncl - startNIncl + 1;
 
         VCTrackingSet stepRevs;
-        const VCTrackingSet oldFront = curExec.front_, oldUnsatCs = curExec.unsatClauses_;
+        VCTrackingSet oldFront = curExec.front_, oldUnsatCs = curExec.unsatClauses_;
+        BitVector oldAsg = curExec.next_;
         if(allCombs) {
           uint64_t curComb = curExec.firstComb_;
           for(int i=0; i<int(baseVarFront.size()); i++) {
@@ -219,250 +232,17 @@ int main(int argc, char* argv[]) {
           while(curComb < limitComb) {
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
             if( (curNUnsat == 0)
-              || ( (curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
+              || ( (allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
                 && !trav.IsSeenMove(oldFront, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
             {
               nCombs++;
               trav.FoundMove(oldFront, stepRevs, curExec.next_, curNUnsat);
-              if( curExec.unsatClauses_.Size() < nGlobalUnsat || !trav.IsSeenFront(curExec.unsatClauses_) ) 
+              if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront || !trav.IsSeenFront(curExec.unsatClauses_) )
               {
                 if(curNUnsat < bestUnsat) {
                   bestUnsat = curNUnsat;
                   bestRevVars = stepRevs;
                 }
-              }
-            }
-            int i=0;
-            for(; i<int(baseVarFront.size()); i++) {
-              curComb ^= 1ULL << i;
-              const VCIndex iVar = baseVarFront[i].item_;
-              stepRevs.Add(iVar);
-              curExec.next_.Flip(iVar);
-              curExec.satTr_.FlipVar<false>(
-                iVar * (curExec.next_[iVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
-              if( (curComb & (1ULL << i)) != 0 ) {
-                break;
-              }
-            }
-            if(i >= int(baseVarFront.size()) || curComb >= limitComb) {
-              break;
-            }
-          }
-          totCombs.fetch_add( nCombs );
-        } else { // !allCombs
-          SortMultiItems(curExec.varFront_, curExec.sortType_);
-          VCTrackingSet stepRevs;
-          std::vector<VCIndex> incl(curExec.nIncl_, 0);
-          uint64_t curComb = curExec.firstComb_;
-          while(__builtin_popcountll(curComb) > curExec.nIncl_) {
-            curComb &= curComb-1;
-          }
-          VCIndex i=0;
-          while(curComb != 0) {
-            incl[i] = __builtin_ctzll(curComb);
-            curComb &= curComb-1;
-            i++;
-          }
-          for(; i<curExec.nIncl_; i++) {
-            incl[i] = incl[i-1] + 1;
-            assert(0 <= incl[i] && incl[i] < VCIndex(curExec.varFront_.size()));
-          }
-          for(i=0; i<curExec.nIncl_; i++) {
-            const VCIndex aVar = curExec.varFront_[incl[i]].item_;
-            assert(0 < aVar && aVar <= formula.nVars_);
-            stepRevs.Flip(aVar);
-            curExec.next_.Flip(aVar);
-            curExec.satTr_.FlipVar<false>( aVar * (curExec.next_[aVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_ );
-          }
-          int64_t nCombs = 0;
-          for(;;) {
-            //assert(execSatTr[iExec].Verify(execNext[iExec])); // TODO: very heavy
-            if(nCombs >= maxCombs) {
-              // No need to cleanup - there is 1:1 mapping between threads and data structures
-              break;
-            }
-            const VCIndex curNUnsat = curExec.unsatClauses_.Size();
-            bool bFlipBack = true;
-            if( (curNUnsat == 0)
-              || ( (curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
-                && !trav.IsSeenMove(oldFront, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
-            {
-              nCombs++;
-              trav.FoundMove(oldFront, stepRevs, curExec.next_, curNUnsat);
-              if( curExec.unsatClauses_.Size() < nGlobalUnsat || !trav.IsSeenFront(curExec.unsatClauses_) )
-              {
-                if(curNUnsat < bestUnsat) {
-                  bestUnsat = curNUnsat;
-                  bestRevVars = stepRevs;
-                }
-                if(curNUnsat < curExec.nStartUnsat_) {
-                  // Maybe we'll find an even better assignment with small modifications based on the current assignment
-                  bFlipBack = false;
-                }
-              }
-            }
-            VCIndex i=curExec.nIncl_-1;
-            for(; i>=0; i--) {
-              if(bFlipBack) {
-                const VCIndex aVar = curExec.varFront_[incl[i]].item_;
-                stepRevs.Flip(aVar);
-                curExec.next_.Flip(aVar);
-                curExec.satTr_.FlipVar<false>(
-                  aVar * (curExec.next_[aVar] ? 1 : -1),
-                  &curExec.unsatClauses_, &curExec.front_
-                );
-              }
-              if(incl[i] + curExec.nIncl_ - i < VCIndex(curExec.varFront_.size())) {
-                break;
-              }
-            }
-            if(i < 0) {
-              break;
-            }
-
-            incl[i]++;
-            {
-              const VCIndex aVar = curExec.varFront_[incl[i]].item_;
-              stepRevs.Flip(aVar);
-              curExec.next_.Flip(aVar);
-              curExec.satTr_.FlipVar<false>(
-                aVar * (curExec.next_[aVar] ? 1 : -1),
-                &curExec.unsatClauses_, &curExec.front_
-              );
-            }
-            i++;
-            for(; i<curExec.nIncl_; i++) {
-              incl[i] = incl[i-1]+1;
-              assert(incl[i] < VCIndex(curExec.varFront_.size()));
-              const VCIndex aVar = curExec.varFront_[incl[i]].item_;
-              stepRevs.Flip(aVar);
-              curExec.next_.Flip(aVar);
-              curExec.satTr_.FlipVar<false>(
-                aVar * (curExec.next_[aVar] ? 1 : -1),
-                &curExec.unsatClauses_, &curExec.front_
-              );
-            }
-          }
-          totCombs.fetch_add(nCombs);
-        }
-        // TODO: walk
-      }
-      // TODO: can we eliminate some barriers e.g. this one or in the beginning of the loop?
-      #pragma omp barrier
-      if(trav.dfs_.empty()) {
-        // Either it's already satisfied, or we deem it unsatisfiable
-      }
-      else {
-        // Save the best partial assignment
-        formula.ans_ = trav.dfs_.back().assignment_;
-      }
-      // TODO: pop the currently best assignments from the stack
-    }
-  }
-
-  BitVector maxPartial;
-  int64_t nStartUnsat;
-
-  while(maybeSat) {
-    maxPartial = formula.ans_;
-    nStartUnsat = unsatClauses.Size();
-    assert(satTr.UnsatCount() == nStartUnsat);
-    if(nStartUnsat == 0) {
-      std::cout << "Satisfied" << std::endl;
-      break;
-    }
-    auto tmEnd = std::chrono::steady_clock::now();
-    double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmStart).count() / 1e9;
-    double clausesPerSec = (prevNUnsat - nStartUnsat) / nSec;
-    std::cout << "\tUnsatisfied clauses: " << nStartUnsat << " - elapsed " << nSec << " seconds, ";
-    if(clausesPerSec >= 1 || clausesPerSec == 0) {
-      std::cout << clausesPerSec << " clauses per second.";
-    } else {
-      std::cout << 1.0 / clausesPerSec << " seconds per clause.";
-    }
-    std::cout << " Time since very start: "
-      << std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmVeryStart).count() / (60 * 1e9)
-      << " minutes." << std::endl;
-    tmStart = tmEnd;
-    prevNUnsat = nStartUnsat;
-    bool allowDuplicateFront = false;
-    while(unsatClauses.Size() >= nStartUnsat) {
-      // assert(satTr.UnsatCount() == unsatClauses.Size() && satTr.ReallyUnsat(unsatClauses));
-      if(front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front))) {
-        // TODO: maybe select a random subset here?
-        front = unsatClauses;
-        std::cout << "%";
-      }
-
-      std::cout << "C";
-
-      std::atomic<VCIndex> bestUnsat = formula.nClauses_+1;
-      VCTrackingSet bestRevVars;
-      // TODO: shall we get only vars for the |front| here, or for all the |unsatClauses| ?
-      std::vector<MultiItem<VCIndex>> baseVarFront = formula.ClauseFrontToVars(unsatClauses, formula.ans_);
-
-      bool allCombs = false;
-      if(baseVarFront.size() < std::log2(uint64_t(nSysCpus)*maxCombs+1)) {
-        // Consider all combinations without different methods of sorting
-        allCombs = true;
-        std::cout << "a";
-      } else {
-        // Consider some combinations for different methods of sorting and number of included 
-        std::cout << "p";
-      }
-      std::cout.flush();
-      const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(baseVarFront.size(), 5);
-      const VCIndex rangeNIncl = endNIncl - startNIncl + 1;
-      
-      #pragma omp parallel for schedule(static, 1) num_threads(maxThreads)
-      for(uint32_t iExec=0; iExec<maxThreads; iExec++) {
-        Exec& curExec = execs[iExec];
-        curExec.satTr_ = satTr;
-        curExec.next_ = formula.ans_;
-        curExec.unsatClauses_ = unsatClauses;
-        if(allCombs) {
-          // Don't try combination 0 - nothing flipped - because we're already at it
-          curExec.firstComb_ = ((1ULL<<baseVarFront.size()) * iExec) / maxThreads + 1;
-        } else {
-          std::mt19937_64 rng = GetSeededRandom();
-          curExec.varFront_ = baseVarFront;
-          curExec.nIncl_ = rng() % rangeNIncl + startNIncl;
-          curExec.sortType_ = rng() % knSortTypes + kMinSortType;
-          curExec.firstComb_ = (maxCombs * iExec) / maxThreads + 1;
-        }
-        VCTrackingSet stepRevs;
-        if(allCombs) {
-          uint64_t curComb = curExec.firstComb_;
-          for(int i=0; i<int(baseVarFront.size()); i++) {
-            if(curComb & (1ULL<<i)) {
-              const VCIndex iVar = baseVarFront[i].item_;
-              stepRevs.Add(iVar);
-              curExec.next_.Flip(iVar);
-              curExec.satTr_.FlipVar<false>(
-                iVar * (curExec.next_[iVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
-            }
-          }
-          const uint64_t limitComb = (iExec+1 < maxThreads) ? execs[iExec+1].firstComb_ : 1ULL<<baseVarFront.size();
-          int64_t nCombs = 0;
-          while(curComb < limitComb) {
-            const VCIndex curNUnsat = curExec.unsatClauses_.Size();
-            if( (curNUnsat == 0)
-              || ((allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
-                && !trav.IsSeenMove(front, stepRevs) && !trav.IsSeenAssignment(curExec.next_)) ) 
-            {
-              nCombs++;
-              trav.FoundMove(front, stepRevs, curExec.next_, curNUnsat);
-              if(curNUnsat < bestUnsat.load(std::memory_order_acquire) &&
-                (curExec.unsatClauses_.Size() < nStartUnsat || !trav.IsSeenFront(curExec.unsatClauses_))) 
-              {
-                std::unique_lock<std::mutex> lock(muBestUpdate);
-                if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
-                  bestUnsat.store(curNUnsat, std::memory_order_release);
-                  bestRevVars = stepRevs;
-                }
-                // if(curNUnsat < nStartUnsat) {
-                //   execImprovingRevs[iExec] = stepRevs;
-                // }
               }
             }
             int i=0;
@@ -518,19 +298,17 @@ int main(int argc, char* argv[]) {
             bool bFlipBack = true;
             if( (curNUnsat == 0)
               || ( (allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
-                && !trav.IsSeenMove(front, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
+                && !trav.IsSeenMove(oldFront, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
             {
               nCombs++;
-              trav.FoundMove(front, stepRevs, curExec.next_, curNUnsat);
-              if(curNUnsat < bestUnsat.load(std::memory_order_acquire) &&
-                (curExec.unsatClauses_.Size() < nStartUnsat || !trav.IsSeenFront(curExec.unsatClauses_)) )
+              trav.FoundMove(oldFront, stepRevs, curExec.next_, curNUnsat);
+              if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront || !trav.IsSeenFront(curExec.unsatClauses_) )
               {
-                std::unique_lock<std::mutex> lock(muBestUpdate);
-                if(curNUnsat < bestUnsat.load(std::memory_order_acquire)) {
-                  bestUnsat.store(curNUnsat, std::memory_order_release);
+                if(curNUnsat < bestUnsat) {
+                  bestUnsat = curNUnsat;
                   bestRevVars = stepRevs;
                 }
-                if(curNUnsat < nStartUnsat) {
+                if(curNUnsat < curExec.nStartUnsat_) {
                   // Maybe we'll find an even better assignment with small modifications based on the current assignment
                   bFlipBack = false;
                 }
@@ -580,130 +358,192 @@ int main(int argc, char* argv[]) {
           }
           totCombs.fetch_add(nCombs);
         }
-      }
 
-      trav.OnFrontExhausted(front);
-      trav.OnFrontExhausted(unsatClauses);
+        trav.OnFrontExhausted(oldFront);
+        trav.OnFrontExhausted(oldUnsatCs);
 
-      if(bestUnsat >= formula.nClauses_) {
-        std::cout << "#";
+        if(bestUnsat >= formula.nClauses_) {
+          std::cout << "#";
 
-        if(front != unsatClauses) {
-          // Retry with full/random front
-          front = unsatClauses;
-          continue;
+          if(oldFront != oldUnsatCs) {
+            // Retry with full front
+            curExec.front_ = curExec.unsatClauses_ = oldUnsatCs;
+            continue;
+          }
+
+          if(trav.StepBack(curExec.next_)) {
+            curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, &curExec.front_);
+            assert(curExec.satTr_.UnsatCount() == curExec.unsatClauses_.Size());
+            std::cout << "@";
+            continue;
+          }
+
+          if(!allowDuplicateFront) {
+            allowDuplicateFront = true;
+            curExec.unsatClauses_ = oldUnsatCs;
+            curExec.front_.Clear();
+            std::cout << "X";
+            continue;
+          }
+
+          // The current executor considers it unsatisfiable, but let's wait for the rest of executors
+          nMaybeSat.fetch_sub(1);
+          break;
         }
 
-        if(trav.StepBack(formula.ans_)) {
-          unsatClauses = satTr.Populate(formula.ans_, &front);
-          assert(satTr.UnsatCount() == unsatClauses.Size());
-          std::cout << "@";
-          continue;
+        std::cout << ">";
+        nWalk++;
+        
+        curExec.next_ = oldAsg;
+        curExec.unsatClauses_ = oldUnsatCs;
+        curExec.front_.Clear();
+        std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
+        for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
+          const int64_t revV = vBestRevVars[i];
+          curExec.next_.Flip(revV);
+          curExec.satTr_.FlipVar<false>(revV * (curExec.next_[revV] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
+        }
+        assert(curExec.satTr_.UnsatCount() == bestUnsat);
+        assert(curExec.unsatClauses_.Size() == bestUnsat);
+        assert(curExec.front_ == curExec.unsatClauses_ - oldUnsatCs);
+
+        if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
+          std::unique_lock<std::mutex> lock(muGlobal);
+          if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
+            nGlobalUnsat = curExec.unsatClauses_.Size();
+            // Save the best partial assignment
+            formula.ans_ = curExec.next_;
+          }
+          // Perhaps Gradient Descent will greatly improve over a successful combination
+          // break;
         }
 
-        if(!allowDuplicateFront) {
-          allowDuplicateFront = true;
-          std::cout << "X";
-          continue;
+        if( curExec.front_.Size() == 0
+          || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)) )
+        {
+          // curExec.front_ = curExec.unsatClauses_; // full front
+          curExec.RandomizeFront(); // random front
         }
 
-        // Unsatisfiable
-        std::cout << "...Nothing reversed - unsatisfiable..." << std::endl;
-        maybeSat = false;
-        break;
-      }
+        bestUnsat = formula.nClauses_ + 1;
+        bestRevVars.Clear();
 
-      std::cout << ">";
-      nWalk++;
-
-      VCTrackingSet oldUnsatCs = unsatClauses;
-      std::vector<int64_t> vBestRevVars = bestRevVars.ToVector();
-      for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
-        const int64_t revV = vBestRevVars[i];
-        formula.ans_.Flip(revV);
-        satTr.FlipVar<false>(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, nullptr);
-      }
-      assert(satTr.UnsatCount() == bestUnsat);
-      assert(unsatClauses.Size() == bestUnsat);
-      front = unsatClauses - oldUnsatCs;
-
-      if(unsatClauses.Size() < nStartUnsat) {
-        break;
-      }
-
-      if( front.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(front)) ) {
-        std::cout << "%";
-        front = unsatClauses;
-      }
-
-      std::cout << "S";
-      std::cout.flush();
-      bestUnsat = formula.nClauses_ + 1;
-      bestRevVars.Clear();
-      std::atomic<bool> newEpoch = false;
-      // omp_set_max_active_levels(1);
-      #pragma omp parallel for num_threads(nSysCpus)
-      for(uint32_t i=0; i<nSysCpus; i++) {
-        VCTrackingSet locUnsatClauses = unsatClauses;
-        VCTrackingSet locFront = front;
-        DefaultSatTracker locSatTr(satTr);
-        BitVector locAsg = formula.ans_;
-        VCTrackingSet stepRevs;
-        //std::mt19937_64 rng = GetSeededRandom();
-
+        oldUnsatCs = curExec.unsatClauses_;
+        oldFront = curExec.front_;
+        oldAsg = curExec.next_;
+        
         int64_t nCombs = 0;
         bool moved;
-        while( !newEpoch.load(std::memory_order_acquire) && nCombs < maxCombs ) {
-          if(locFront.Size() == 0 || (!allowDuplicateFront && trav.IsSeenFront(locFront))) {
-            // TODO: maybe select a random subset of the locUnsatClauses here?
-            locFront = locUnsatClauses;
+        while( nCombs < maxCombs ) {
+          if(curExec.front_.Size() == 0 || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)))
+          {
+            curExec.RandomizeFront();
           }
           moved = false;
-          //const int8_t sortType = i % knSortTypes + kMinSortType;
-          const int8_t sortType = i % knSortTypes + kMinSortType;
-          VCTrackingSet oldUnsatCs = locUnsatClauses;
-          locSatTr.GradientDescend(
-            trav, &locFront, moved, locAsg, sortType,
-            locSatTr.NextUnsatCap(nCombs, locUnsatClauses, nStartUnsat),
+          const int8_t sortType = int8_t(curExec.rng_() % knSortTypes) + kMinSortType;
+          curExec.satTr_.GradientDescend(
+            trav, allowDuplicateFront, &curExec.front_, moved, curExec.next_, sortType,
+            curExec.satTr_.NextUnsatCap(nCombs, curExec.unsatClauses_, nGlobalUnsat),
             //nStartUnsat-1,
-            nCombs, maxCombs, locUnsatClauses, locFront, stepRevs, nStartUnsat
+            nCombs, maxCombs, curExec.unsatClauses_, curExec.front_, stepRevs, nGlobalUnsat
           );
           nSequentialGD.fetch_add(1);
           if(!moved) {
             // The data structures are corrupted already (not rolled back)
             break;
           }
-          if( locUnsatClauses.Size() < nStartUnsat || !trav.IsSeenFront(locUnsatClauses) ) {
-            std::unique_lock<std::mutex> lock(muBestUpdate);
-            if(locUnsatClauses.Size() < bestUnsat) {
-              bestUnsat = locUnsatClauses.Size();
+          if( curExec.unsatClauses_.Size() < nGlobalUnsat || !trav.IsSeenFront(curExec.unsatClauses_) ) {
+            if(curExec.unsatClauses_.Size() < bestUnsat) {
+              bestUnsat = curExec.unsatClauses_.Size();
               bestRevVars = stepRevs;
             }
-            if(locUnsatClauses.Size() < nStartUnsat) {
-              newEpoch.store(true, std::memory_order_release);
-              break;
-            }
           }
-          locFront = locUnsatClauses - oldUnsatCs;
+        }
+
+        if(bestUnsat < formula.nClauses_ + 1) {
+          curExec.next_ = oldAsg;
+          curExec.unsatClauses_ = oldUnsatCs;
+          curExec.front_.Clear();
+          vBestRevVars = bestRevVars.ToVector();
+          for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
+            const int64_t revV = vBestRevVars[i];
+            curExec.next_.Flip(revV);
+            curExec.satTr_.FlipVar<false>(revV * (curExec.next_[revV] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
+          }
+          assert(curExec.satTr_.UnsatCount() == bestUnsat);
+          assert(curExec.unsatClauses_.Size() == bestUnsat);
+          assert(curExec.front_ == curExec.unsatClauses_ - oldUnsatCs);
+
+          if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
+            std::unique_lock<std::mutex> lock(muGlobal);
+            if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
+              nGlobalUnsat = curExec.unsatClauses_.Size();
+              formula.ans_ = curExec.next_;
+            }
+            // Perhaps Gradient Descent will greatly improve over a successful combination
+            // break;
+          }
+        } else {
+          assert(curExec.next_ == oldAsg);
         }
       }
-      if(bestUnsat < formula.nClauses_) {
-        oldUnsatCs = unsatClauses;
-        vBestRevVars = bestRevVars.ToVector();
-        //#pragma omp parallel for schedule(guided, kCacheLineSize)
-        for(int64_t i=0; i<int64_t(vBestRevVars.size()); i++) {
-          const int64_t revV = vBestRevVars[i];
-          formula.ans_.Flip(revV);
-          satTr.FlipVar<true>(revV * (formula.ans_[revV] ? 1 : -1), &unsatClauses, nullptr);
-        }
-        front = unsatClauses - oldUnsatCs;
-        assert(satTr.UnsatCount() == bestUnsat);
-        assert(unsatClauses.Size() == bestUnsat);
+      // TODO: can we eliminate some barriers e.g. this one or in the beginning of the loop?
+      #pragma omp barrier
+      if(nGlobalUnsat == 0) {  
+        break;
       }
+      assert(nMaybeSat >= 0);
+      if(nMaybeSat == 0) {
+        if(iExec == 0) {
+          std::cout << "Unsatisfiable in all executors." << std::endl;
+        }
+        maybeSat = false;
+        break;
+      }
+      if(iExec == 0) {
+        nMaybeSat = maxThreads;
+      }
+      #pragma omp barrier
+      // Pop the currently best assignments from the stack
+      if(trav.PopIfNotWorse(curExec.next_, nGlobalUnsat)) {
+        curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, &curExec.front_);
+      } else {
+        nMaybeSat.fetch_sub(0);
+        curExec.next_ = formula.ans_;
+        curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, nullptr);
+        curExec.front_.Clear();
+      }
+      curExec.nStartUnsat_ = nGlobalUnsat;
+      #pragma omp barrier
+      if(iExec == 0) {
+        auto tmEnd = std::chrono::steady_clock::now();
+        double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmStart).count() / 1e9;
+        double clausesPerSec = (prevNUnsat - nGlobalUnsat) / nSec;
+        std::cout << "\tUnsatisfied clauses: " << nGlobalUnsat << " - elapsed " << nSec << " seconds, ";
+        if(clausesPerSec >= 1 || clausesPerSec == 0) {
+          std::cout << clausesPerSec << " clauses per second.";
+        } else {
+          std::cout << 1.0 / clausesPerSec << " seconds per clause.";
+        }
+        std::cout << " Time since very start: "
+          << std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmVeryStart).count() / (60 * 1e9)
+          << " minutes." << std::endl;
+        tmStart = tmEnd;
+        prevNUnsat = nGlobalUnsat;
+        nMaybeSat = maxThreads;
+
+        std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
+          << ", Known assignments: " << trav.seenAssignment_.Size()
+          << ", nCombinations: " << totCombs << ", nSequentialGD: " << nSequentialGD
+          << ", Current wave: " << maxThreads-nMaybeSat << " different assignments." << std::endl;
+      }
+      #pragma omp barrier
     }
-    std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
-      << ", Known assignments: " << trav.seenAssignment_.Size()
-      << ", nCombinations: " << totCombs << ", nSequentialGD: " << nSequentialGD << std::endl;
+  }
+
+  if(nGlobalUnsat == 0) {
+    std::cout << "SATISFIED" << std::endl;
+    assert(formula.SolWorks());
   }
 
   {
@@ -715,12 +555,11 @@ int main(int argc, char* argv[]) {
     }
 
     if(maybeSat) {
-      assert(formula.SolWorks());
+      assert( nGlobalUnsat == 0 );
       ofs << "s SATISFIABLE" << std::endl;
     } else {
-      formula.ans_ = maxPartial;
       ofs << "s UNKNOWN" << std::endl;
-      ofs << "c Unsatisfied clause count: " << nStartUnsat << std::endl;
+      ofs << "c Unsatisfied clause count: " << nGlobalUnsat << std::endl;
     }
     int64_t nInLine = 0;
     for(int64_t i=1; i<=formula.nVars_; i++) {

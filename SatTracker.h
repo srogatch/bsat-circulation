@@ -305,7 +305,7 @@ template<typename TCounter> struct SatTracker {
     return pFormula_->nClauses_ - totSat_.load(std::memory_order_relaxed);
   }
 
-  int64_t GradientDescend(Traversal& trav,
+  int64_t GradientDescend(Traversal& trav, const bool allowDuplicateFront,
     const VCTrackingSet* considerClauses,
     bool& moved, BitVector& next, const int sortType,
     const VCIndex unsatCap, int64_t& nCombs, const int64_t maxCombs,
