@@ -16,7 +16,7 @@ struct Exec {
   int8_t nIncl_;
   int8_t sortType_;
 
-  Exec(const Formula& formula) : rng_(GetSeededRandom()), pFormula_(&formula) { }
+  Exec() : rng_(GetSeededRandom()) { }
 
   void RandomizeFront() {
     std::vector<MultiItem<VCIndex>> baseVarFront = pFormula_->ClauseFrontToVars(unsatClauses_, next_);

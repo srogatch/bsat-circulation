@@ -309,8 +309,8 @@ template<typename TCounter> struct SatTracker {
     const VCTrackingSet* considerClauses,
     bool& moved, BitVector& next, const int sortType,
     const VCIndex unsatCap, int64_t& nCombs, const int64_t maxCombs,
-    VCTrackingSet& unsatClauses, VCTrackingSet& front,
-    VCTrackingSet& origRevVars, const VCIndex nStartUnsat)
+    VCTrackingSet& unsatClauses, const VCTrackingSet& startFront,
+    VCTrackingSet& front, VCTrackingSet& origRevVars, const VCIndex nStartUnsat)
   {
     std::vector<MultiItem<VCIndex>> subsetVars, *pvVars = nullptr;
     if(considerClauses == nullptr) {
@@ -324,10 +324,7 @@ template<typename TCounter> struct SatTracker {
 
     VCIndex minUnsat = unsatCap+1;
     VCTrackingSet bestRevVars;
-    VCTrackingSet oldUnsatCs = unsatClauses;
 
-    const VCTrackingSet startFront = front;
-    front.Clear();
     VCTrackingSet revVars;
     // TODO: flip a random number of consecutive vars in each step (i.e. new random count in each step)
     for(int64_t k=0; k<int64_t(pvVars->size()) && nCombs < maxCombs; k++) {
@@ -337,7 +334,7 @@ template<typename TCounter> struct SatTracker {
       const int64_t iVar = aVar * (next[aVar] ? 1 : -1);
       curRevVars.Add(aVar);
       revVars.Flip(aVar);
-      if(trav.IsSeenMove(startFront, revVars)) {
+      if(trav.IsSeenMove(startFront, revVars) || trav.IsSeenMove(front, curRevVars)) {
         goto sgd_unflip_0;
       }
       next.Flip(aVar);
@@ -352,6 +349,7 @@ template<typename TCounter> struct SatTracker {
       {
         nCombs++;
         const VCIndex newUnsat = UnsatCount();
+        trav.FoundMove(front, curRevVars);
         trav.FoundMove(startFront, revVars, next, newUnsat);
         if( newUnsat < minUnsat && (unsatClauses.Size() < nStartUnsat || allowDuplicateFront || !trav.IsSeenFront(unsatClauses)) ) {
           minUnsat = newUnsat;
