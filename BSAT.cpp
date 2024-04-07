@@ -175,15 +175,18 @@ int main(int argc, char* argv[]) {
     } else {
       std::cout << 1.0 / clausesPerSec << " seconds per clause.";
     }
+    std::cout << std::endl;
     tmStart = tmEnd;
     prevNUnsat = nGlobalUnsat;
   }
 
   std::atomic<int> nMaybeSat = maxThreads;
   std::vector<Exec> execs(maxThreads);
+  omp_set_max_active_levels(1);
   #pragma omp parallel num_threads(maxThreads)
   {
     const uint32_t iExec = omp_get_thread_num();
+    assert(iExec < maxThreads);
     Exec& curExec = execs[iExec];
     curExec.pFormula_ = &formula;
     bool usedFA = false;
@@ -260,6 +263,9 @@ int main(int argc, char* argv[]) {
                 break;
               }
             }
+            if(i >= int(curExec.varFront_.size())) {
+              break;
+            }
           }
           totCombs.fetch_add( nCombs );
         } else { // !allCombs
@@ -300,7 +306,13 @@ int main(int argc, char* argv[]) {
           for(;;) {
             //assert(execSatTr[iExec].Verify(execNext[iExec])); // TODO: very heavy
             if(nCombs >= maxCombs) {
-              // No need to cleanup - there is 1:1 mapping between threads and data structures
+              for(i=0; i<curExec.nIncl_; i++) {
+                const VCIndex aVar = curExec.varFront_[incl[i]].item_;
+                assert(0 < aVar && aVar <= formula.nVars_);
+                stepRevs.Flip(aVar);
+                curExec.next_.Flip(aVar);
+                curExec.satTr_.FlipVar<false>( aVar * (curExec.next_[aVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_ );
+              }
               break;
             }
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
