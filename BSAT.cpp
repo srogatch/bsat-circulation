@@ -185,11 +185,13 @@ int main(int argc, char* argv[]) {
   {
     const uint32_t iExec = omp_get_thread_num();
     Exec& curExec = execs[iExec];
+    curExec.rng_ = GetSeededRandom();
     bool usedFA = false;
     if(!trav.PopIfNotWorse(curExec.next_, nGlobalUnsat)) {
       curExec.next_ = formula.ans_;
       usedFA = true;
     }
+    curExec.satTr_ = DefaultSatTracker(formula);
     curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, usedFA ? nullptr : &curExec.front_);
     curExec.nStartUnsat_ = nGlobalUnsat;
     #pragma omp barrier
@@ -199,35 +201,37 @@ int main(int argc, char* argv[]) {
         if(curExec.front_.Size() == 0 || trav.IsSeenFront(curExec.front_)) {
           curExec.RandomizeFront();
         }
+
         VCIndex bestUnsat = formula.nClauses_+1;
         VCTrackingSet bestRevVars;
         // TODO: shall we get only vars for the front here, or for all the unsatisfied clauses?
-        std::vector<MultiItem<VCIndex>> baseVarFront = formula.ClauseFrontToVars(curExec.front_, curExec.next_);
-        bool allCombs = false;
-        if(baseVarFront.size() < std::log2(uint64_t(nSysCpus)*maxCombs+1)) {
+        curExec.varFront_ = formula.ClauseFrontToVars(curExec.front_, curExec.next_);
+        const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(curExec.varFront_.size(), 5);
+        const VCIndex rangeNIncl = endNIncl - startNIncl + 1;
+        bool allCombs;
+        if(curExec.varFront_.size() < std::log2(maxCombs+1)) {
           // Consider all combinations without different methods of sorting
           allCombs = true;
         } else {
-          // Consider some combinations for different methods of sorting and number of included ;
+          // Consider some combinations for different methods of sorting and number of included vars
+          allCombs = false;
         }
-        const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(baseVarFront.size(), 5);
-        const VCIndex rangeNIncl = endNIncl - startNIncl + 1;
 
         VCTrackingSet stepRevs;
         VCTrackingSet oldFront = curExec.front_, oldUnsatCs = curExec.unsatClauses_;
         BitVector oldAsg = curExec.next_;
         if(allCombs) {
-          uint64_t curComb = curExec.firstComb_;
-          for(int i=0; i<int(baseVarFront.size()); i++) {
+          uint64_t curComb = 0;
+          for(int i=0; i<int(curExec.varFront_.size()); i++) {
             if(curComb & (1ULL<<i)) {
-              const VCIndex iVar = baseVarFront[i].item_;
+              const VCIndex iVar = curExec.varFront_[i].item_;
               stepRevs.Add(iVar);
               curExec.next_.Flip(iVar);
               curExec.satTr_.FlipVar<false>(
                 iVar * (curExec.next_[iVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
             }
           }
-          const uint64_t limitComb = (iExec+1 < maxThreads) ? execs[iExec+1].firstComb_ : 1ULL<<baseVarFront.size();
+          const uint64_t limitComb = 1ULL<<curExec.varFront_.size();
           int64_t nCombs = 0;
           while(curComb < limitComb) {
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
@@ -246,9 +250,9 @@ int main(int argc, char* argv[]) {
               }
             }
             int i=0;
-            for(; i<int(baseVarFront.size()); i++) {
+            for(; i<int(curExec.varFront_.size()); i++) {
               curComb ^= 1ULL << i;
-              const VCIndex iVar = baseVarFront[i].item_;
+              const VCIndex iVar = curExec.varFront_[i].item_;
               stepRevs.Add(iVar);
               curExec.next_.Flip(iVar);
               curExec.satTr_.FlipVar<false>(
@@ -257,16 +261,25 @@ int main(int argc, char* argv[]) {
                 break;
               }
             }
-            if(i >= int(baseVarFront.size()) || curComb >= limitComb) {
+            if(i >= int(curExec.varFront_.size()) || curComb >= limitComb) {
               break;
             }
           }
           totCombs.fetch_add( nCombs );
         } else { // !allCombs
+          curExec.sortType_ = curExec.rng_() % knSortTypes + kMinSortType;
+          curExec.nIncl_ = curExec.rng_() % rangeNIncl + startNIncl;
           SortMultiItems(curExec.varFront_, curExec.sortType_);
           VCTrackingSet stepRevs;
           std::vector<VCIndex> incl(curExec.nIncl_, 0);
-          uint64_t curComb = curExec.firstComb_;
+          uint64_t curComb;
+          if(VCIndex(curExec.varFront_.size()) >= 64 + curExec.nIncl_) {
+            curComb = curExec.rng_();
+          } else if(VCIndex(curExec.varFront_.size()) <= curExec.nIncl_) {
+            curComb = 0;
+          } else {
+            curComb = curExec.rng_() % (1ULL<<(VCIndex(curExec.varFront_.size()) - curExec.nIncl_));
+          }
           while(__builtin_popcountll(curComb) > curExec.nIncl_) {
             curComb &= curComb-1;
           }

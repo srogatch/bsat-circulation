@@ -345,7 +345,7 @@ template<typename TCounter> struct SatTracker {
         goto sgd_unflip_1;
       }
       FlipVar<false>(-iVar, &unsatClauses, &front);
-      if( front.Size() != 0 && trav.IsSeenFront(front) ) {
+      if( !allowDuplicateFront && front.Size() != 0 && trav.IsSeenFront(front) ) {
         goto sgd_unflip_2;
       }
 
@@ -353,7 +353,7 @@ template<typename TCounter> struct SatTracker {
         nCombs++;
         const VCIndex newUnsat = UnsatCount();
         trav.FoundMove(startFront, revVars, next, newUnsat);
-        if( newUnsat < minUnsat && (unsatClauses.Size() < nStartUnsat || !trav.IsSeenFront(unsatClauses)) ) {
+        if( newUnsat < minUnsat && (unsatClauses.Size() < nStartUnsat || allowDuplicateFront || !trav.IsSeenFront(unsatClauses)) ) {
           minUnsat = newUnsat;
           bestRevVars = revVars;
           if(newUnsat == 0) {

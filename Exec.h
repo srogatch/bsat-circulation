@@ -12,7 +12,6 @@ struct Exec {
   VCTrackingSet unsatClauses_ = true;
   VCTrackingSet front_;
   const Formula* pFormula_;
-  uint64_t firstComb_;
   VCIndex nStartUnsat_;
   int8_t nIncl_;
   int8_t sortType_;
