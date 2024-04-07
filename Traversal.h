@@ -35,13 +35,7 @@ struct Traversal {
   std::deque<Point> dfs_;
   mutable std::atomic_flag syncDfs_ = ATOMIC_FLAG_INIT;
 
-
-  void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars) {
-    seenMove_.Add(std::make_pair(front.hash_, revVars.hash_));
-  }
-  void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat)
-  {
-    FoundMove(front, revVars);
+  void OnSeenAssignment(const BitVector& assignment, const int64_t nUnsat) {
     if( !seenAssignment_.Add(assignment.hash_) ) {
       return; // added earlier, perhaps concurrently by another thread - don't put it to DFS here thus
     }
@@ -64,6 +58,16 @@ struct Traversal {
         dfs_.push_back(std::move(p));
       }
     }
+  }
+
+  void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars) {
+    seenMove_.Add(std::make_pair(front.hash_, revVars.hash_));
+  }
+
+  void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat)
+  {
+    FoundMove(front, revVars);
+    OnSeenAssignment(assignment, nUnsat);
   }
 
   bool IsSeenMove(const VCTrackingSet& front, const VCTrackingSet& revVars) const {
@@ -91,6 +95,19 @@ struct Traversal {
       return false;
     }
     backup = std::move(dfs_.back().assignment_);
+    dfs_.pop_back();
+    return true;
+  }
+
+  bool PopIfNotWorse(BitVector& ans, const VCIndex maxUnsat) {
+    SpinLock lock(syncDfs_);
+    if(dfs_.empty()) {
+      return false;
+    }
+    if(dfs_.back().nUnsat_ > maxUnsat) {
+      return false;
+    }
+    ans = std::move(dfs_.back().assignment_);
     dfs_.pop_back();
     return true;
   }

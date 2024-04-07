@@ -92,6 +92,8 @@ int main(int argc, char* argv[]) {
 
   std::cout << "Choosing the best initial variable assignment..." << std::endl;
   std::atomic<int64_t> bestInit = formula.nClauses_ + 1;
+  BitVector bestAsg;
+  VCTrackingSet startFront;
 
   std::atomic<uint64_t> nSequentialGD = 0, nWalk = 0, totCombs = 0;
   std::mutex muBestUpdate;
@@ -119,6 +121,8 @@ int main(int argc, char* argv[]) {
       std::unique_lock<std::mutex> lock(muBestUpdate);
       if(initUnsatClauses.Size() < bestInit) {
         bestInit = initUnsatClauses.Size();
+        startFront = initUnsatClauses;
+        bestAsg = initAsg;
       }
     }
 
@@ -156,6 +160,8 @@ int main(int argc, char* argv[]) {
           std::unique_lock<std::mutex> lock(muBestUpdate);
           if(altNUnsat < bestInit) {
             bestInit = altNUnsat;
+            startFront = locFront;
+            bestAsg = locAsg;
           }
         }
       }
