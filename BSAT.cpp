@@ -251,17 +251,14 @@ int main(int argc, char* argv[]) {
             int i=0;
             for(; i<int(curExec.varFront_.size()); i++) {
               curComb ^= 1ULL << i;
-              const VCIndex iVar = curExec.varFront_[i].item_;
-              stepRevs.Add(iVar);
-              curExec.next_.Flip(iVar);
+              const VCIndex aVar = curExec.varFront_[i].item_;
+              stepRevs.Flip(aVar);
+              curExec.next_.Flip(aVar);
               curExec.satTr_.FlipVar<false>(
-                iVar * (curExec.next_[iVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
+                aVar * (curExec.next_[aVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
               if( (curComb & (1ULL << i)) != 0 ) {
                 break;
               }
-            }
-            if(i >= int(curExec.varFront_.size()) || curComb >= limitComb) {
-              break;
             }
           }
           totCombs.fetch_add( nCombs );
@@ -415,7 +412,7 @@ int main(int argc, char* argv[]) {
         }
         assert(curExec.satTr_.UnsatCount() == bestUnsat);
         assert(curExec.unsatClauses_.Size() == bestUnsat);
-        assert(curExec.front_ == curExec.unsatClauses_ - oldUnsatCs);
+        // This doesn't have to hold: assert(curExec.front_ == curExec.unsatClauses_ - oldUnsatCs);
 
         if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
           std::unique_lock<std::mutex> lock(muGlobal);
@@ -436,21 +433,17 @@ int main(int argc, char* argv[]) {
         }
 
         bestUnsat = formula.nClauses_ + 1;
-        bestRevVars.Clear();
+        //bestRevVars.Clear();
         stepRevs.Clear();
         oldFront = curExec.front_;
         
         int64_t nCombs = 0;
         bool moved;
         while( nCombs < maxCombs ) {
-          if(curExec.front_.Size() == 0 || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)))
-          {
-            curExec.RandomizeFront();
-          }
           moved = false;
           const int8_t sortType = int8_t(curExec.rng_() % knSortTypes) + kMinSortType;
           curExec.satTr_.GradientDescend(
-            trav, allowDuplicateFront, &curExec.front_, moved, curExec.next_, sortType,
+            trav, allowDuplicateFront, &curExec.unsatClauses_, moved, curExec.next_, sortType,
             curExec.satTr_.NextUnsatCap(nCombs, curExec.unsatClauses_, nGlobalUnsat),
             nCombs, maxCombs, curExec.unsatClauses_, oldFront, curExec.front_, stepRevs,
             nGlobalUnsat
@@ -464,6 +457,9 @@ int main(int argc, char* argv[]) {
             if(curExec.unsatClauses_.Size() < bestUnsat) {
               bestUnsat = curExec.unsatClauses_.Size();
               bestRevVars = stepRevs;
+              if(bestUnsat == 0) {
+                break;
+              }
             }
           }
         }
@@ -478,6 +474,7 @@ int main(int argc, char* argv[]) {
           }
           assert(curExec.satTr_.UnsatCount() == bestUnsat);
           assert(curExec.unsatClauses_.Size() == bestUnsat);
+          // This doesn't have to hold: assert(curExec.front_ == curExec.unsatClauses_ - oldUnsatCs);
 
           if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
             std::unique_lock<std::mutex> lock(muGlobal);
