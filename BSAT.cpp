@@ -522,7 +522,7 @@ int main(int argc, char* argv[]) {
       if(trav.PopIfNotWorse(curExec.next_, nGlobalUnsat)) {
         curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, &curExec.front_);
       } else {
-        nMaybeSat.fetch_sub(0);
+        nMaybeSat.fetch_sub(1);
         curExec.next_ = formula.ans_;
         curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, nullptr);
         curExec.front_.Clear();
@@ -530,10 +530,15 @@ int main(int argc, char* argv[]) {
       curExec.nStartUnsat_ = nGlobalUnsat;
       #pragma omp barrier
       if(iExec == 0) {
+        std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
+          << ", Known assignments: " << trav.seenAssignment_.Size()
+          << ", nCombinations: " << totCombs << ", nSequentialGD: " << nSequentialGD
+          << ", Current wave: " << nMaybeSat << " different assignments.";
+        
         auto tmEnd = std::chrono::steady_clock::now();
         double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmStart).count() / 1e9;
         double clausesPerSec = (prevNUnsat - nGlobalUnsat) / nSec;
-        std::cout << "\tUnsatisfied clauses: " << nGlobalUnsat << " - elapsed " << nSec << " seconds, ";
+        std::cout << "\n\tUnsatisfied clauses: " << nGlobalUnsat << " - elapsed " << nSec << " seconds, ";
         if(clausesPerSec >= 1 || clausesPerSec == 0) {
           std::cout << clausesPerSec << " clauses per second.";
         } else {
@@ -545,11 +550,6 @@ int main(int argc, char* argv[]) {
         tmStart = tmEnd;
         prevNUnsat = nGlobalUnsat;
         nMaybeSat = maxThreads;
-
-        std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
-          << ", Known assignments: " << trav.seenAssignment_.Size()
-          << ", nCombinations: " << totCombs << ", nSequentialGD: " << nSequentialGD
-          << ", Current wave: " << maxThreads-nMaybeSat << " different assignments." << std::endl;
       }
       #pragma omp barrier
     }
