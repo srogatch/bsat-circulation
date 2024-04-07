@@ -368,7 +368,7 @@ struct Formula {
   }
 
   // For a set of clauses, return the set of variables that dissatisfy the clauses
-  std::vector<MultiItem<VCIndex>> ClauseFrontToVars(const VCTrackingSet& clauseFront, const BitVector& assignment) {
+  std::vector<MultiItem<VCIndex>> ClauseFrontToVars(const VCTrackingSet& clauseFront, const BitVector& assignment) const {
     TrackingSet<MultiItem<VCIndex>> varFront;
     std::vector<VCIndex> vClauseFront = clauseFront.ToVector();
     //#pragma omp parallel for schedule(guided, kRamPageBytes/sizeof(VCIndex))
@@ -395,12 +395,11 @@ struct Formula {
   }
 
   // For a set of variables, return the set of clauses that are dissatisfied by the variables
-  std::vector<int64_t> VarFrontToClauses(const VCTrackingSet& varFront, const BitVector& assignment) {
+  VCTrackingSet VarFrontToClauses(const std::vector<MultiItem<VCIndex>>& vVarFront, const BitVector& assignment) const {
     VCTrackingSet clauseFront;
-    std::vector<int64_t> vVarFront = varFront.ToVector();
     //#pragma omp parallel for schedule(guided, kRamPageBytes/sizeof(VCIndex))
     for(int64_t i=0; i<int64_t(vVarFront.size()); i++) {
-      const VCIndex aVar = vVarFront[i];
+      const VCIndex aVar = vVarFront[i].item_;
       assert(1 <= aVar && aVar <= nVars_);
       const VCIndex iVar = assignment[aVar] ? aVar : -aVar;
       const int8_t sgnTo = -Signum(iVar);
@@ -413,8 +412,6 @@ struct Formula {
         clauseFront.Add(dissatClause);
       }
     }
-    std::vector<int64_t> vClauseFront = clauseFront.ToVector();
-    // We don't serve shuffling here!
-    return vVarFront;
+    return clauseFront;
   }
 };

@@ -3,6 +3,7 @@
 #include "Utils.h"
 #include "SatTracker.h"
 #include "Traversal.h"
+#include "Exec.h"
 
 #include <iostream>
 #include <algorithm>
@@ -115,6 +116,7 @@ int main(int argc, char* argv[]) {
       break;
     }
     VCTrackingSet initUnsatClauses = initSatTr.Populate(initAsg, nullptr);
+    trav.OnSeenAssignment(initAsg, initUnsatClauses.Size());
     {
       std::unique_lock<std::mutex> lock(muBestUpdate);
       if(initUnsatClauses.Size() < bestInit) {
@@ -161,6 +163,22 @@ int main(int argc, char* argv[]) {
       }
     }
   }
+
+  formula.ans_ = trav.dfs_.back().assignment_;
+  std::vector<Exec> execs(maxThreads, formula);
+  #pragma omp parallel for num_threads(maxThreads)
+  for(uint32_t iExec=0; iExec<maxThreads; iExec++) {
+    Exec& curExec = execs[iExec];
+    if(!trav.PopIfNotWorse(curExec.next_, bestInit)) {
+      curExec.next_ = formula.ans_;
+    }
+    const bool isVeryTop = curExec.next_ == formula.ans_;
+    curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, isVeryTop ? nullptr : &curExec.front_);
+    if(isVeryTop) {
+      curExec.RandomizeFront();
+    }
+  }
+
   DefaultSatTracker satTr(formula);
   formula.ans_ = bestAsg;
   VCTrackingSet front = startFront;
@@ -221,18 +239,7 @@ int main(int argc, char* argv[]) {
       std::cout.flush();
       const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(baseVarFront.size(), 5);
       const VCIndex rangeNIncl = endNIncl - startNIncl + 1;
-      struct Exec {
-        std::vector<MultiItem<VCIndex>> varFront_;
-        DefaultSatTracker satTr_;
-        BitVector next_;
-        VCTrackingSet unsatClauses_ = true;
-        VCTrackingSet front_;
-        //VCTrackingSet improvingRevs_;
-        uint64_t firstComb_;
-        int8_t nIncl_;
-        int8_t sortType_;
-      };
-      std::vector<Exec> execs(maxThreads);
+      
       #pragma omp parallel for schedule(static, 1) num_threads(maxThreads)
       for(uint32_t iExec=0; iExec<maxThreads; iExec++) {
         Exec& curExec = execs[iExec];
