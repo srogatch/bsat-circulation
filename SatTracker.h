@@ -309,7 +309,7 @@ template<typename TCounter> struct SatTracker {
     const VCTrackingSet* considerClauses,
     bool& moved, BitVector& next, const int sortType,
     const VCIndex unsatCap, int64_t& nCombs, const int64_t maxCombs,
-    VCTrackingSet& unsatClauses, const VCTrackingSet& startFront,
+    const VCTrackingSet& oldUnsatCs, VCTrackingSet& unsatClauses, const VCTrackingSet& startFront,
     VCTrackingSet& front, VCTrackingSet& origRevVars, const VCIndex nStartUnsat)
   {
     std::vector<MultiItem<VCIndex>> subsetVars, *pvVars = nullptr;
@@ -334,7 +334,7 @@ template<typename TCounter> struct SatTracker {
       const int64_t iVar = aVar * (next[aVar] ? 1 : -1);
       curRevVars.Add(aVar);
       revVars.Flip(aVar);
-      if(trav.IsSeenMove(startFront, revVars) || trav.IsSeenMove(front, curRevVars)) {
+      if(trav.IsSeenMove(oldUnsatCs, startFront, revVars) || trav.IsSeenMove(unsatClauses, front, curRevVars)) {
         goto sgd_unflip_0;
       }
       next.Flip(aVar);
@@ -396,90 +396,90 @@ sgd_unflip_0:
     return minUnsat;
   }
 
-  int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
-    std::vector<MultiItem<VCIndex>>& varFront, const int sortType,
-    BitVector& next, Traversal& trav, VCTrackingSet& unsatClauses,
-    VCTrackingSet& front, VCTrackingSet& origRevVars, int64_t minUnsat,
-    int64_t& nCombs, bool& moved, const VCIndex nStartUnsat)
-  {
-    SortMultiItems(varFront, sortType);
-    const VCTrackingSet startFront = front;
-    front.Clear();
-    VCTrackingSet revVars;
-    for(int64_t i=0; i<int64_t(varFront.size()); i+=varsAtOnce) {
-      std::vector<int64_t> selVars(varsAtOnce, 0);
-      const int64_t nVars = std::min<int64_t>(varsAtOnce, int64_t(varFront.size()) - i);
-      VCTrackingSet curRevVars;
-      for(int64_t j=0; j<nVars; j++) {
-        int64_t aVar, iVar;
-        aVar = varFront[i+j].item_;
-        assert(1 <= aVar && aVar <= pFormula_->nVars_);
-        iVar = aVar * (next[aVar] ? 1 : -1);
-        selVars[j] = iVar;
-        curRevVars.Flip(aVar);
-      }
-      for(int64_t j=0; j<nVars; j++) {
-        const int64_t iVar = selVars[j];
-        const int64_t aVar = llabs(iVar);
-        revVars.Flip(aVar);
-      }
-      if( trav.IsSeenMove(startFront, revVars) ) {
-        goto pgd_unflip_0;
-      }
-      for(int64_t j=0; j<nVars; j++) {
-        const int64_t iVar = selVars[j];
-        const int64_t aVar = llabs(iVar);
-        next.Flip(aVar);
-      }
-      if(trav.IsSeenAssignment(next)) {
-        goto pgd_unflip_1;
-      }
-      nCombs++;
-      for(int64_t j=0; j<nVars; j++) {
-        const int64_t iVar = selVars[j];
-        FlipVar<false>(-iVar, &unsatClauses, &front);
-      }
-      if(front.Size() != 0 && trav.IsSeenFront(front)) {
-        goto pgd_unflip_2;
-      }
-      {
-        const int64_t newNUnsat = UnsatCount();
-        trav.FoundMove(startFront, revVars, next, newNUnsat);
-        if(newNUnsat < minUnsat + (preferMove ? 1 : 0)
-          && (unsatClauses.Size() < nStartUnsat || !trav.IsSeenFront(unsatClauses)) ) {
-          moved = true;
-          minUnsat = newNUnsat;
-          for(int64_t j=0; j<nVars; j++) {
-            const int64_t iVar = selVars[j];
-            const int64_t aVar = llabs(iVar);
-            origRevVars.Flip(aVar);
-          }
-          if(minUnsat == 0) {
-            break;
-          }
-          continue;
-        }
-      }
-pgd_unflip_2:
-      for(int64_t j=0; j<nVars; j++) {
-        const int64_t iVar = selVars[j];
-        FlipVar<false>(iVar, &unsatClauses, &front);
-      }
-pgd_unflip_1:
-      for(int64_t j=0; j<nVars; j++) {
-        const int64_t iVar = selVars[j];
-        const int64_t aVar = llabs(iVar);
-        next.Flip(aVar);
-      }
-pgd_unflip_0:
-      for(int64_t j=0; j<nVars; j++) {
-        const int64_t iVar = selVars[j];
-        const int64_t aVar = llabs(iVar);
-        revVars.Flip(aVar);
-      }
-    }
-    return minUnsat;
-  }
+//   int64_t ParallelGD(const bool preferMove, const int64_t varsAtOnce,
+//     std::vector<MultiItem<VCIndex>>& varFront, const int sortType,
+//     BitVector& next, Traversal& trav, VCTrackingSet& unsatClauses,
+//     VCTrackingSet& front, VCTrackingSet& origRevVars, int64_t minUnsat,
+//     int64_t& nCombs, bool& moved, const VCIndex nStartUnsat)
+//   {
+//     SortMultiItems(varFront, sortType);
+//     const VCTrackingSet startFront = front;
+//     front.Clear();
+//     VCTrackingSet revVars;
+//     for(int64_t i=0; i<int64_t(varFront.size()); i+=varsAtOnce) {
+//       std::vector<int64_t> selVars(varsAtOnce, 0);
+//       const int64_t nVars = std::min<int64_t>(varsAtOnce, int64_t(varFront.size()) - i);
+//       VCTrackingSet curRevVars;
+//       for(int64_t j=0; j<nVars; j++) {
+//         int64_t aVar, iVar;
+//         aVar = varFront[i+j].item_;
+//         assert(1 <= aVar && aVar <= pFormula_->nVars_);
+//         iVar = aVar * (next[aVar] ? 1 : -1);
+//         selVars[j] = iVar;
+//         curRevVars.Flip(aVar);
+//       }
+//       for(int64_t j=0; j<nVars; j++) {
+//         const int64_t iVar = selVars[j];
+//         const int64_t aVar = llabs(iVar);
+//         revVars.Flip(aVar);
+//       }
+//       if( trav.IsSeenMove(startFront, revVars) ) {
+//         goto pgd_unflip_0;
+//       }
+//       for(int64_t j=0; j<nVars; j++) {
+//         const int64_t iVar = selVars[j];
+//         const int64_t aVar = llabs(iVar);
+//         next.Flip(aVar);
+//       }
+//       if(trav.IsSeenAssignment(next)) {
+//         goto pgd_unflip_1;
+//       }
+//       nCombs++;
+//       for(int64_t j=0; j<nVars; j++) {
+//         const int64_t iVar = selVars[j];
+//         FlipVar<false>(-iVar, &unsatClauses, &front);
+//       }
+//       if(front.Size() != 0 && trav.IsSeenFront(front)) {
+//         goto pgd_unflip_2;
+//       }
+//       {
+//         const int64_t newNUnsat = UnsatCount();
+//         trav.FoundMove(startFront, revVars, next, newNUnsat);
+//         if(newNUnsat < minUnsat + (preferMove ? 1 : 0)
+//           && (unsatClauses.Size() < nStartUnsat || !trav.IsSeenFront(unsatClauses)) ) {
+//           moved = true;
+//           minUnsat = newNUnsat;
+//           for(int64_t j=0; j<nVars; j++) {
+//             const int64_t iVar = selVars[j];
+//             const int64_t aVar = llabs(iVar);
+//             origRevVars.Flip(aVar);
+//           }
+//           if(minUnsat == 0) {
+//             break;
+//           }
+//           continue;
+//         }
+//       }
+// pgd_unflip_2:
+//       for(int64_t j=0; j<nVars; j++) {
+//         const int64_t iVar = selVars[j];
+//         FlipVar<false>(iVar, &unsatClauses, &front);
+//       }
+// pgd_unflip_1:
+//       for(int64_t j=0; j<nVars; j++) {
+//         const int64_t iVar = selVars[j];
+//         const int64_t aVar = llabs(iVar);
+//         next.Flip(aVar);
+//       }
+// pgd_unflip_0:
+//       for(int64_t j=0; j<nVars; j++) {
+//         const int64_t iVar = selVars[j];
+//         const int64_t aVar = llabs(iVar);
+//         revVars.Flip(aVar);
+//       }
+//     }
+//     return minUnsat;
+//   }
 
   int64_t NextUnsatCap([[maybe_unused]] const int64_t nCombs, const VCTrackingSet& unsatClauses, const int64_t nStartUnsat) const {
     return std::max<int64_t>(nStartUnsat - 1, 

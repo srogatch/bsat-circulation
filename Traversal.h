@@ -70,9 +70,13 @@ struct Traversal {
     OnSeenAssignment(assignment, nUnsat);
   }
 
-  bool IsSeenMove(const VCTrackingSet& front, const VCTrackingSet& revVars) const {
-    assert(front.Size() > 0);
-    return seenMove_.Contains(std::make_pair(front.hash_, revVars.hash_));
+  bool IsSeenMove(const VCTrackingSet& unsatClauses, const VCTrackingSet& front, const VCTrackingSet& revVars) const {
+    if(front.Size() > 0) {
+      if(seenMove_.Contains(std::make_pair(front.hash_, revVars.hash_))) {
+        return true;
+      }
+    }
+    return seenMove_.Contains(std::make_pair(unsatClauses.hash_, revVars.hash_));
   }
 
   // This is not (yet) thread-safe

@@ -146,7 +146,7 @@ int main(int argc, char* argv[]) {
           trav, false, &locFront, moved, locAsg, sortType,
           //locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
           locBest,
-          nCombs, maxCombs, locUnsatClauses, startFront, locFront, revVars,
+          nCombs, maxCombs, initUnsatClauses, locUnsatClauses, startFront, locFront, revVars,
           locBest
         );
         nSequentialGD.fetch_add(1);
@@ -203,6 +203,7 @@ int main(int argc, char* argv[]) {
       while(nGlobalUnsat >= curExec.nStartUnsat_) {
         if(curExec.front_.Size() == 0 || trav.IsSeenFront(curExec.front_)) {
           curExec.RandomizeFront();
+          std::cout << "%";
         }
 
         VCIndex bestUnsat = formula.nClauses_+1;
@@ -239,7 +240,7 @@ int main(int argc, char* argv[]) {
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
             if( (curNUnsat == 0)
               || ( (allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
-                && !trav.IsSeenMove(oldFront, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
+                && !trav.IsSeenMove(oldUnsatCs, oldFront, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
             {
               nCombs++;
               trav.FoundMove(oldFront, stepRevs, curExec.next_, curNUnsat);
@@ -323,7 +324,7 @@ int main(int argc, char* argv[]) {
             bool bFlipBack = true;
             if( (curNUnsat == 0)
               || ( (allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
-                && !trav.IsSeenMove(oldFront, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
+                && !trav.IsSeenMove(oldUnsatCs, oldFront, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
             {
               nCombs++;
               trav.FoundMove(oldFront, stepRevs, curExec.next_, curNUnsat);
@@ -452,16 +453,23 @@ int main(int argc, char* argv[]) {
         //bestRevVars.Clear();
         stepRevs.Clear();
         oldFront = curExec.front_;
+        oldUnsatCs = curExec.unsatClauses_;
         
         int64_t nCombs = 0;
         bool moved;
         while( nCombs < maxCombs ) {
+          if( curExec.front_.Size() == 0
+            || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)) )
+          {
+            curExec.RandomizeFront();
+            std::cout << "%";
+          }
           moved = false;
           const int8_t sortType = int8_t(curExec.rng_() % knSortTypes) + kMinSortType;
           curExec.satTr_.GradientDescend(
-            trav, allowDuplicateFront, &curExec.unsatClauses_, moved, curExec.next_, sortType,
+            trav, allowDuplicateFront, &curExec.front_, moved, curExec.next_, sortType,
             curExec.satTr_.NextUnsatCap(nCombs, curExec.unsatClauses_, nGlobalUnsat),
-            nCombs, maxCombs, curExec.unsatClauses_, oldFront, curExec.front_, stepRevs,
+            nCombs, maxCombs, oldUnsatCs, curExec.unsatClauses_, oldFront, curExec.front_, stepRevs,
             nGlobalUnsat
           );
           nSequentialGD.fetch_add(1);
@@ -469,11 +477,11 @@ int main(int argc, char* argv[]) {
             // The data structures are corrupted already (not rolled back)
             break;
           }
-          if( curExec.unsatClauses_.Size() < nGlobalUnsat || !trav.IsSeenFront(curExec.unsatClauses_) ) {
+          if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront || !trav.IsSeenFront(curExec.unsatClauses_) ) {
             if(curExec.unsatClauses_.Size() < bestUnsat) {
               bestUnsat = curExec.unsatClauses_.Size();
               bestRevVars = stepRevs;
-              if(bestUnsat == 0) {
+              if(bestUnsat < nGlobalUnsat) {
                 break;
               }
             }
@@ -502,7 +510,13 @@ int main(int argc, char* argv[]) {
             // break;
           }
         } else {
-          assert(stepRevs.Size() == 0);
+          // This doesn't hold - there can be a descent into a seen seet of unsat clauses
+          // assert(stepRevs.Size() == 0);
+          if(trav.StepBack(curExec.next_)) {
+            curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, &curExec.front_);
+            assert(curExec.satTr_.UnsatCount() == curExec.unsatClauses_.Size());
+            std::cout << "@";
+          }
         }
       }
       // TODO: can we eliminate some barriers e.g. this one or in the beginning of the loop?
