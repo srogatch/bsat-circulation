@@ -425,11 +425,11 @@ int main(int argc, char* argv[]) {
         for(int64_t i=0; i<int64_t(vToFlip.size()); i++) {
           const int64_t revV = vToFlip[i];
           curExec.next_.Flip(revV);
-          curExec.satTr_.FlipVar<false>(revV * (curExec.next_[revV] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
+          curExec.satTr_.FlipVar<false>(revV * (curExec.next_[revV] ? 1 : -1), &curExec.unsatClauses_, nullptr);
         }
         assert(curExec.satTr_.UnsatCount() == bestUnsat);
         assert(curExec.unsatClauses_.Size() == bestUnsat);
-        // This doesn't have to hold: assert(curExec.front_ == curExec.unsatClauses_ - oldUnsatCs);
+        curExec.front_ = curExec.unsatClauses_ - oldUnsatCs;
 
         if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
           std::unique_lock<std::mutex> lock(muGlobal);
@@ -438,8 +438,7 @@ int main(int argc, char* argv[]) {
             // Save the best partial assignment
             formula.ans_ = curExec.next_;
           }
-          // Perhaps Gradient Descent will greatly improve over a successful combination
-          // break;
+          break;
         }
 
         if( curExec.front_.Size() == 0
@@ -447,6 +446,7 @@ int main(int argc, char* argv[]) {
         {
           // curExec.front_ = curExec.unsatClauses_; // full front
           curExec.RandomizeFront(); // random front
+          std::cout << "%";
         }
 
         bestUnsat = formula.nClauses_ + 1;
@@ -494,11 +494,11 @@ int main(int argc, char* argv[]) {
           for(int64_t i=0; i<int64_t(vToFlip.size()); i++) {
             const int64_t revV = vToFlip[i];
             curExec.next_.Flip(revV);
-            curExec.satTr_.FlipVar<false>(revV * (curExec.next_[revV] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_);
+            curExec.satTr_.FlipVar<false>(revV * (curExec.next_[revV] ? 1 : -1), &curExec.unsatClauses_, nullptr);
           }
           assert(curExec.satTr_.UnsatCount() == bestUnsat);
           assert(curExec.unsatClauses_.Size() == bestUnsat);
-          // This doesn't have to hold: assert(curExec.front_ == curExec.unsatClauses_ - oldUnsatCs);
+          curExec.front_ = curExec.unsatClauses_ - oldUnsatCs;
 
           if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
             std::unique_lock<std::mutex> lock(muGlobal);
@@ -542,8 +542,9 @@ int main(int argc, char* argv[]) {
       } else {
         nMaybeSat.fetch_sub(1);
         curExec.next_ = formula.ans_;
+        const VCTrackingSet oldUnsatCs = curExec.unsatClauses_;
         curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, nullptr);
-        curExec.front_.Clear();
+        curExec.front_ = curExec.unsatClauses_ - oldUnsatCs;
       }
       curExec.nStartUnsat_ = nGlobalUnsat;
       #pragma omp barrier
