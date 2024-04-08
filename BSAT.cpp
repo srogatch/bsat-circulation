@@ -291,6 +291,10 @@ int main(int argc, char* argv[]) {
             curComb &= curComb-1;
             i++;
           }
+          if(i == 0) {
+            incl[0] = 0;
+            i++;
+          }
           for(; i<curExec.nIncl_; i++) {
             incl[i] = incl[i-1] + 1;
             assert(0 <= incl[i] && incl[i] < VCIndex(curExec.varFront_.size()));
