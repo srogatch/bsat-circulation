@@ -202,8 +202,7 @@ int main(int argc, char* argv[]) {
       bool allowDuplicateFront = false;
       while(nGlobalUnsat >= curExec.nStartUnsat_) {
         if(curExec.front_.Size() == 0 || trav.IsSeenFront(curExec.front_)) {
-          curExec.RandomizeFront();
-          std::cout << "%";
+          curExec.RandomizeFront(trav, true);
         }
 
         VCIndex bestUnsat = formula.nClauses_+1;
@@ -399,7 +398,6 @@ int main(int argc, char* argv[]) {
           if(trav.StepBack(curExec.next_)) {
             curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, &curExec.front_);
             assert(curExec.satTr_.UnsatCount() == curExec.unsatClauses_.Size());
-            std::cout << "@";
             continue;
           }
 
@@ -416,7 +414,6 @@ int main(int argc, char* argv[]) {
           break;
         }
 
-        std::cout << ">";
         nWalk++;
         
         VCTrackingSet toFlip = (stepRevs - bestRevVars) + (bestRevVars - stepRevs);
@@ -443,9 +440,7 @@ int main(int argc, char* argv[]) {
         if( curExec.front_.Size() == 0
           || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)) )
         {
-          // curExec.front_ = curExec.unsatClauses_; // full front
-          curExec.RandomizeFront(); // random front
-          std::cout << "%";
+          curExec.RandomizeFront(trav, true);
         }
 
         bestUnsat = formula.nClauses_ + 1;
@@ -460,8 +455,7 @@ int main(int argc, char* argv[]) {
           if( curExec.front_.Size() == 0
             || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)) )
           {
-            curExec.RandomizeFront();
-            std::cout << "%";
+            curExec.RandomizeFront(trav, false);
           }
           moved = false;
           const int8_t sortType = int8_t(curExec.rng_() % knSortTypes) + kMinSortType;
@@ -511,11 +505,13 @@ int main(int argc, char* argv[]) {
         } else {
           // This doesn't hold - there can be a descent into a seen seet of unsat clauses
           // assert(stepRevs.Size() == 0);
-          if(trav.StepBack(curExec.next_)) {
-            curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, &curExec.front_);
-            assert(curExec.satTr_.UnsatCount() == curExec.unsatClauses_.Size());
-            std::cout << "@";
-          }
+          // if(trav.StepBack(curExec.next_)) {
+          //   curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, &curExec.front_);
+          //   assert(curExec.satTr_.UnsatCount() == curExec.unsatClauses_.Size());
+          //   std::cout << "@";
+          // }
+          trav.OnFrontExhausted(curExec.front_);
+          curExec.front_.Clear();
         }
       }
       // TODO: can we eliminate some barriers e.g. this one or in the beginning of the loop?
