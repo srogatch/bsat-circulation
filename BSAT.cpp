@@ -540,6 +540,7 @@ int main(int argc, char* argv[]) {
         const VCTrackingSet oldUnsatCs = curExec.unsatClauses_;
         curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, nullptr);
         curExec.front_ = curExec.unsatClauses_ - oldUnsatCs;
+        // curExec.RandomizeFront(trav, true); // slower on 1996 problem
       }
       curExec.nStartUnsat_ = nGlobalUnsat;
       #pragma omp barrier
