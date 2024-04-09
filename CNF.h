@@ -40,13 +40,13 @@ struct Formula {
 
   // Returns |false| iff the formula is unsatisfiable.
   bool Load(const std::string& filePath) {
+    constexpr const uint32_t cBufSize = 8 * 1024 * 1024;
+    std::unique_ptr<char[]> buffer(new char[cBufSize]);
     std::ifstream ifs(filePath);
     if(!ifs) {
       std::cerr << "Cannot open the file to load the formula from: " << filePath << std::endl;
       throw std::runtime_error("Cannot open input file.");
     }
-    constexpr const uint32_t cBufSize = 8 * 1024 * 1024;
-    std::unique_ptr<char[]> buffer(new char[cBufSize]);
     ifs.rdbuf()->pubsetbuf(buffer.get(), cBufSize);
 
     BlockingQueue<std::string> bqParsing;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <fstream>
+#include <unistd.h>
 #include <omp.h>
 #include <cstdint>
 #include <random>
@@ -134,6 +136,22 @@ void ParallelShuffle(T* data, const size_t count) {
       syncs[sync1].clear(std::memory_order_release);
     }
   }
+}
+
+int GetFileDescriptor(std::filebuf& filebuf)
+{
+  class my_filebuf : public std::filebuf
+  {
+  public:
+    int handle() { return _M_file.fd(); }
+  };
+
+  return static_cast<my_filebuf&>(filebuf).handle();
+}
+
+void HardFlush(std::ofstream& ofs) {
+  ofs.flush();
+  fsync(GetFileDescriptor(*ofs.rdbuf()));
 }
 
 namespace std {

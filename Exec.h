@@ -19,13 +19,17 @@ struct Exec {
   Exec() : rng_(GetSeededRandom()) { }
 
   void RandomizeFront() {
-    std::vector<MultiItem<VCIndex>> baseVarFront = pFormula_->ClauseFrontToVars(unsatClauses_, next_);
-    const VCIndex nUseVars = DivUp(baseVarFront.size(), 2);
-    for(VCIndex i=0; i<nUseVars; i++) {
-      const VCIndex fellow = rng_() % (nUseVars-i) + i;
-      std::swap(baseVarFront[i], baseVarFront[fellow]);
+    if(unsatClauses_.Size() <= 1) {
+      front_ = unsatClauses_;
+      return;
     }
-    baseVarFront.resize(nUseVars);
-    front_ = pFormula_->VarFrontToClauses(baseVarFront, next_);
+    std::vector<VCIndex> vUnsatCs = unsatClauses_.ToVector();
+    front_.Clear();
+    const VCIndex nUseClauses = rng_() % (vUnsatCs.size()-1) + 1;
+    for(VCIndex i=0; i<nUseClauses; i++) {
+      const VCIndex fellow = rng_() % (nUseClauses-i) + i;
+      std::swap(vUnsatCs[i], vUnsatCs[fellow]);
+      front_.Add(vUnsatCs[i]);
+    }
   }
 };

@@ -273,7 +273,6 @@ int main(int argc, char* argv[]) {
           curExec.sortType_ = curExec.rng_() % knSortTypes + kMinSortType;
           curExec.nIncl_ = curExec.rng_() % rangeNIncl + startNIncl;
           SortMultiItems(curExec.varFront_, curExec.sortType_);
-          VCTrackingSet stepRevs;
           std::vector<VCIndex> incl(curExec.nIncl_, 0);
           uint64_t curComb;
           if(VCIndex(curExec.varFront_.size()) >= 64 + curExec.nIncl_) {
@@ -389,13 +388,13 @@ int main(int argc, char* argv[]) {
         trav.OnFrontExhausted(oldUnsatCs);
 
         if(bestUnsat >= formula.nClauses_) {
-          std::cout << "#";
+          // std::cout << "#";
 
-          if(oldFront != oldUnsatCs) {
-            // Retry with full front
-            curExec.front_ = curExec.unsatClauses_ = oldUnsatCs;
-            continue;
-          }
+          // if(oldFront != oldUnsatCs) {
+          //   // Retry with full front
+          //   curExec.front_ = curExec.unsatClauses_ = oldUnsatCs;
+          //   continue;
+          // }
 
           if(trav.StepBack(curExec.next_)) {
             curExec.unsatClauses_ = curExec.satTr_.Populate(curExec.next_, &curExec.front_);
@@ -574,17 +573,40 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  std::cout << "\n\tWalks: " << nWalk << ", Seen moves: " << trav.seenMove_.Size() << ", Stack: " << trav.dfs_.size()
+    << ", Known assignments: " << trav.seenAssignment_.Size()
+    << ", nCombinations: " << totCombs << ", nSequentialGD: " << nSequentialGD
+    << ", Current wave: " << nMaybeSat << " different assignments.";
+  
+  auto tmEnd = std::chrono::steady_clock::now();
+  double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmStart).count() / 1e9;
+  double clausesPerSec = (prevNUnsat - nGlobalUnsat) / nSec;
+  std::cout << "\n\tUnsatisfied clauses: " << nGlobalUnsat << " - elapsed " << nSec << " seconds, ";
+  if(clausesPerSec >= 1 || clausesPerSec == 0) {
+    std::cout << clausesPerSec << " clauses per second.";
+  } else {
+    std::cout << 1.0 / clausesPerSec << " seconds per clause.";
+  }
+  std::cout << " Time since very start: "
+    << std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmVeryStart).count() / (60 * 1e9)
+    << " minutes." << std::endl;
+  tmStart = tmEnd;
+  prevNUnsat = nGlobalUnsat;
+
   if(nGlobalUnsat == 0) {
     std::cout << "SATISFIED" << std::endl;
     assert(formula.SolWorks());
   }
 
-  {
+  do {
+    constexpr const uint32_t cBufSize = 8 * 1024 * 1024;
+    std::unique_ptr<char[]> buffer(new char[cBufSize]);
     std::ofstream ofs(argv[2]);
+    ofs.rdbuf()->pubsetbuf(buffer.get(), cBufSize);
     if(provenUnsat) {
       ofs << "s UNSATISFIABLE" << std::endl;
       // TODO: output the proof: proof.out, https://satcompetition.github.io/2024/output.html
-      return 0;
+      break;
     }
 
     if(maybeSat) {
@@ -609,6 +631,10 @@ int main(int argc, char* argv[]) {
       }
     }
     ofs << "0" << std::endl;
-  }
+    HardFlush(ofs);
+  } while(false);
+
+  // Avoid the program spending a lot of time releasing the memory
+  quick_exit(0);
   return 0;
 }
