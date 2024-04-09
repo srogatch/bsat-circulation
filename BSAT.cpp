@@ -88,7 +88,8 @@ int main(int argc, char* argv[]) {
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
   const uint64_t maxThreads = omp_get_max_threads();
   // TODO: shall it depend on the formula size? nVars_ or nClauses_
-  const int64_t maxCombs = 1ULL << 11;
+  const int64_t maxCombs = 1ULL << 9;
+  const int64_t cBonusCombs = maxCombs >> 3;
   Traversal trav;
 
   std::cout << "Choosing the best initial variable assignment..." << std::endl;
@@ -158,6 +159,7 @@ int main(int argc, char* argv[]) {
           std::unique_lock<std::mutex> lock(muGlobal);
           if(altNUnsat < nGlobalUnsat) {
             nGlobalUnsat = altNUnsat;
+            nCombs -= cBonusCombs;
           }
         }
       }
@@ -331,10 +333,11 @@ int main(int argc, char* argv[]) {
                 if(curNUnsat < bestUnsat) {
                   bestUnsat = curNUnsat;
                   bestRevVars = stepRevs;
-                }
-                if(curNUnsat < curExec.nStartUnsat_) {
-                  // Maybe we'll find an even better assignment with small modifications based on the current assignment
-                  bFlipBack = false;
+                  if(curNUnsat < curExec.nStartUnsat_) {
+                    // Maybe we'll find an even better assignment with small modifications based on the current assignment
+                    nCombs -= cBonusCombs;
+                    bFlipBack = false;
+                  }
                 }
               }
             }
@@ -474,8 +477,8 @@ int main(int argc, char* argv[]) {
             if(curExec.unsatClauses_.Size() < bestUnsat) {
               bestUnsat = curExec.unsatClauses_.Size();
               bestRevVars = stepRevs;
-              if(bestUnsat < nGlobalUnsat) {
-                break;
+              if(bestUnsat < curExec.nStartUnsat_) {
+                nCombs -= cBonusCombs;
               }
             }
           }

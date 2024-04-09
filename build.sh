@@ -12,7 +12,7 @@ mkdir -p bin
 # Anything below g++-12 may have a bug with unsigned __int128 arithmetic in STL std::map
 set -e
 clang++-17 BSAT.cpp -DNDEBUG -O3 -funroll-loops -ffast-math -march=native \
-  -std=c++20 -fopenmp -Wl,--no-as-needed -ldl -ljemalloc -ltbb -o bin/Rogasat &
+  -std=c++20 -fopenmp -Wl,--no-as-needed -ldl -ljemalloc -ltbb -o bin/rogasat &
 # Save the PID of the background process
 clang_pid=$!
 if $found_seq; then  
