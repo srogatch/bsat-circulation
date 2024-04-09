@@ -9,10 +9,15 @@ done
 
 # sudo apt-get install libjemalloc-dev libtbb-dev libomp-17-dev
 mkdir -p bin
+rm bin/Rogasat
+rm bin/BSAT-Release
+rm bin/BSAT-Profiling
+rm bin/BSAT-Sanitize
+rm bin/BSAT-Debug
 # Anything below g++-12 may have a bug with unsigned __int128 arithmetic in STL std::map
 set -e
 clang++-17 BSAT.cpp -DNDEBUG -O3 -funroll-loops -ffast-math -march=native \
-  -std=c++20 -fopenmp -Wl,--no-as-needed -ldl -ljemalloc -ltbb -o bin/rogasat &
+  -std=c++20 -fopenmp -Wl,--no-as-needed -ldl -ljemalloc -ltbb -o "bin/Rogasat" &
 # Save the PID of the background process
 clang_pid=$!
 if $found_seq; then  

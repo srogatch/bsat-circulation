@@ -250,6 +250,13 @@ int main(int argc, char* argv[]) {
                 if(curNUnsat < bestUnsat) {
                   bestUnsat = curNUnsat;
                   bestRevVars = stepRevs;
+                  if(curNUnsat < nGlobalUnsat) {
+                    std::unique_lock<std::mutex> lock(muGlobal);
+                    if(curNUnsat < nGlobalUnsat) {
+                      nGlobalUnsat = curNUnsat;
+                      formula.ans_ = curExec.next_;
+                    }
+                  }
                 }
               }
             }
@@ -333,10 +340,15 @@ int main(int argc, char* argv[]) {
                 if(curNUnsat < bestUnsat) {
                   bestUnsat = curNUnsat;
                   bestRevVars = stepRevs;
-                  if(curNUnsat < curExec.nStartUnsat_) {
-                    // Maybe we'll find an even better assignment with small modifications based on the current assignment
-                    nCombs -= cBonusCombs;
-                    bFlipBack = false;
+                  if(curNUnsat < nGlobalUnsat) {
+                    std::unique_lock<std::mutex> lock(muGlobal);
+                    if(curNUnsat < nGlobalUnsat) {
+                      nGlobalUnsat = curNUnsat;
+                      formula.ans_ = curExec.next_;
+                      // Maybe we'll find an even better assignment with small modifications based on the current assignment
+                      nCombs -= cBonusCombs;
+                      bFlipBack = false;
+                    }
                   }
                 }
               }
@@ -430,16 +442,6 @@ int main(int argc, char* argv[]) {
         assert(curExec.unsatClauses_.Size() == bestUnsat);
         curExec.front_ = curExec.unsatClauses_ - oldUnsatCs;
 
-        if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
-          std::unique_lock<std::mutex> lock(muGlobal);
-          if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
-            nGlobalUnsat = curExec.unsatClauses_.Size();
-            // Save the best partial assignment
-            formula.ans_ = curExec.next_;
-          }
-          break;
-        }
-
         if( curExec.front_.Size() == 0
           || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)) )
         {
@@ -477,8 +479,13 @@ int main(int argc, char* argv[]) {
             if(curExec.unsatClauses_.Size() < bestUnsat) {
               bestUnsat = curExec.unsatClauses_.Size();
               bestRevVars = stepRevs;
-              if(bestUnsat < curExec.nStartUnsat_) {
-                nCombs -= cBonusCombs;
+              if(bestUnsat < nGlobalUnsat) {
+                std::unique_lock<std::mutex> lock(muGlobal);
+                if(bestUnsat < nGlobalUnsat) {
+                  nGlobalUnsat = bestUnsat;
+                  formula.ans_ = curExec.next_;
+                  nCombs -= cBonusCombs;
+                }
               }
             }
           }
@@ -495,16 +502,6 @@ int main(int argc, char* argv[]) {
           assert(curExec.satTr_.UnsatCount() == bestUnsat);
           assert(curExec.unsatClauses_.Size() == bestUnsat);
           curExec.front_ = curExec.unsatClauses_ - oldUnsatCs;
-
-          if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
-            std::unique_lock<std::mutex> lock(muGlobal);
-            if(curExec.unsatClauses_.Size() < nGlobalUnsat) {
-              nGlobalUnsat = curExec.unsatClauses_.Size();
-              formula.ans_ = curExec.next_;
-            }
-            // Perhaps Gradient Descent will greatly improve over a successful combination
-            // break;
-          }
         } else {
           // This doesn't hold - there can be a descent into a seen seet of unsat clauses
           // assert(stepRevs.Size() == 0);
