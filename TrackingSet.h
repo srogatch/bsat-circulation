@@ -264,6 +264,10 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
     return size_.load(std::memory_order_relaxed);
   }
 
+  int64_t MaxCombs() const {
+    return std::max<int64_t>(Size() * 2, cSyncContention * nSysCpus);
+  }
+
   bool operator==(const TrackingSet& fellow) const {
     if(hash_ != fellow.hash_) {
       return false;

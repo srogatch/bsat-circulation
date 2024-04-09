@@ -88,8 +88,8 @@ int main(int argc, char* argv[]) {
   BitVector::CalcHashSeries( std::max(formula.nVars_, formula.nClauses_) );
   const uint64_t maxThreads = omp_get_max_threads();
   // TODO: shall it depend on the formula size? nVars_ or nClauses_
-  const int64_t maxCombs = 1ULL << 9;
-  const int64_t cBonusCombs = maxCombs >> 3;
+  // const int64_t maxCombs = 1ULL << 9;
+  // const int64_t cBonusCombs = maxCombs >> 3;
   Traversal trav;
 
   std::cout << "Choosing the best initial variable assignment..." << std::endl;
@@ -135,7 +135,7 @@ int main(int argc, char* argv[]) {
       VCTrackingSet revVars;
       const VCTrackingSet startFront = locFront;
       int64_t nCombs = 0;
-      while(nCombs < maxCombs) {
+      while(nCombs < locUnsatClauses.MaxCombs()) {
         const int8_t sortType = i % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
         if(locFront.Size() == 0 || trav.IsSeenFront(locFront)) {
           std::cout << "%";
@@ -147,7 +147,7 @@ int main(int argc, char* argv[]) {
           trav, false, &locFront, moved, locAsg, sortType,
           //locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
           locBest,
-          nCombs, maxCombs, initUnsatClauses, locUnsatClauses, startFront, locFront, revVars,
+          nCombs, locUnsatClauses.MaxCombs(), initUnsatClauses, locUnsatClauses, startFront, locFront, revVars,
           locBest
         );
         nSequentialGD.fetch_add(1);
@@ -159,7 +159,7 @@ int main(int argc, char* argv[]) {
           std::unique_lock<std::mutex> lock(muGlobal);
           if(altNUnsat < nGlobalUnsat) {
             nGlobalUnsat = altNUnsat;
-            nCombs -= cBonusCombs;
+            nCombs -= locUnsatClauses.Size();
           }
         }
       }
@@ -209,12 +209,15 @@ int main(int argc, char* argv[]) {
 
         VCIndex bestUnsat = formula.nClauses_+1;
         VCTrackingSet bestRevVars;
+        VCTrackingSet stepRevs;
+        VCTrackingSet oldFront = curExec.front_, oldUnsatCs = curExec.unsatClauses_;
+
         // TODO: shall we get only vars for the front here, or for all the unsatisfied clauses?
         curExec.varFront_ = formula.ClauseFrontToVars(curExec.front_, curExec.next_);
         const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(curExec.varFront_.size(), 5);
         const VCIndex rangeNIncl = endNIncl - startNIncl + 1;
         bool allCombs;
-        if(curExec.varFront_.size() < std::log2(maxCombs+1)) {
+        if(curExec.varFront_.size() < std::log2(curExec.unsatClauses_.MaxCombs()+1)) {
           // Consider all combinations without different methods of sorting
           allCombs = true;
         } else {
@@ -222,8 +225,6 @@ int main(int argc, char* argv[]) {
           allCombs = false;
         }
 
-        VCTrackingSet stepRevs;
-        VCTrackingSet oldFront = curExec.front_, oldUnsatCs = curExec.unsatClauses_;
         if(allCombs) {
           uint64_t curComb = 0;
           for(int i=0; i<int(curExec.varFront_.size()); i++) {
@@ -317,7 +318,7 @@ int main(int argc, char* argv[]) {
           int64_t nCombs = 0;
           for(;;) {
             //assert(execSatTr[iExec].Verify(execNext[iExec])); // TODO: very heavy
-            if(nCombs >= maxCombs) {
+            if(nCombs >= oldUnsatCs.MaxCombs()) {
               for(i=0; i<curExec.nIncl_; i++) {
                 const VCIndex aVar = curExec.varFront_[incl[i]].item_;
                 assert(0 < aVar && aVar <= formula.nVars_);
@@ -346,7 +347,7 @@ int main(int argc, char* argv[]) {
                       nGlobalUnsat = curNUnsat;
                       formula.ans_ = curExec.next_;
                       // Maybe we'll find an even better assignment with small modifications based on the current assignment
-                      nCombs -= cBonusCombs;
+                      nCombs -= curNUnsat;
                       bFlipBack = false;
                     }
                   }
@@ -442,6 +443,10 @@ int main(int argc, char* argv[]) {
         assert(curExec.unsatClauses_.Size() == bestUnsat);
         curExec.front_ = curExec.unsatClauses_ - oldUnsatCs;
 
+        if(nGlobalUnsat < curExec.nStartUnsat_) {
+          break;
+        }
+
         if( curExec.front_.Size() == 0
           || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)) )
         {
@@ -456,7 +461,7 @@ int main(int argc, char* argv[]) {
         
         int64_t nCombs = 0;
         bool moved;
-        while( nCombs < maxCombs ) {
+        while( nCombs < oldUnsatCs.MaxCombs() ) {
           if( curExec.front_.Size() == 0
             || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)) )
           {
@@ -467,7 +472,7 @@ int main(int argc, char* argv[]) {
           curExec.satTr_.GradientDescend(
             trav, allowDuplicateFront, &curExec.front_, moved, curExec.next_, sortType,
             curExec.satTr_.NextUnsatCap(nCombs, curExec.unsatClauses_, nGlobalUnsat),
-            nCombs, maxCombs, oldUnsatCs, curExec.unsatClauses_, oldFront, curExec.front_, stepRevs,
+            nCombs, oldUnsatCs.MaxCombs(), oldUnsatCs, curExec.unsatClauses_, oldFront, curExec.front_, stepRevs,
             nGlobalUnsat
           );
           nSequentialGD.fetch_add(1);
@@ -484,7 +489,7 @@ int main(int argc, char* argv[]) {
                 if(bestUnsat < nGlobalUnsat) {
                   nGlobalUnsat = bestUnsat;
                   formula.ans_ = curExec.next_;
-                  nCombs -= cBonusCombs;
+                  nCombs -= curExec.unsatClauses_.Size();
                 }
               }
             }
