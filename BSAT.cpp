@@ -137,7 +137,7 @@ int main(int argc, char* argv[]) {
       int64_t nCombs = 0;
       while(nCombs < locSatTr.MaxCombs()) {
         const int8_t sortType = i % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
-        if(locFront.Size() == 0 || trav.IsSeenFront(locFront)) {
+        if(locFront.Size() == 0 || trav.IsSeenFront(locFront, locUnsatClauses)) {
           std::cout << "%";
           locFront = locUnsatClauses;
         }
@@ -203,7 +203,7 @@ int main(int argc, char* argv[]) {
     while(nGlobalUnsat > 0) {
       bool allowDuplicateFront = false;
       while(nGlobalUnsat >= curExec.nStartUnsat_) {
-        if(curExec.front_.Size() == 0 || trav.IsSeenFront(curExec.front_)) {
+        if(curExec.front_.Size() == 0 || trav.IsSeenFront(curExec.front_, curExec.unsatClauses_)) {
           curExec.RandomizeFront(trav, true);
         }
 
@@ -214,7 +214,7 @@ int main(int argc, char* argv[]) {
 
         // TODO: shall we get only vars for the front here, or for all the unsatisfied clauses?
         curExec.varFront_ = formula.ClauseFrontToVars(curExec.front_, curExec.next_);
-        const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(curExec.varFront_.size(), 5);
+        const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(curExec.varFront_.size(), 11);
         const VCIndex rangeNIncl = endNIncl - startNIncl + 1;
         bool allCombs;
         if(curExec.varFront_.size() < std::log2(curExec.satTr_.MaxCombs()+1)) {
@@ -241,12 +241,12 @@ int main(int argc, char* argv[]) {
           while(curComb < limitComb) {
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
             if( (curNUnsat == 0)
-              || ( (allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
+              || ( (allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_, curExec.unsatClauses_))
                 && !trav.IsSeenMove(oldUnsatCs, oldFront, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
             {
               nCombs++;
               trav.FoundMove(oldFront, stepRevs, curExec.next_, curNUnsat);
-              if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront || !trav.IsSeenFront(curExec.unsatClauses_) )
+              if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront || !trav.IsSeenFront(curExec.unsatClauses_, curExec.unsatClauses_) )
               {
                 if(curNUnsat < bestUnsat) {
                   bestUnsat = curNUnsat;
@@ -331,12 +331,12 @@ int main(int argc, char* argv[]) {
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
             bool bFlipBack = true;
             if( (curNUnsat == 0)
-              || ( (allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_))
+              || ( (allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_, curExec.unsatClauses_))
                 && !trav.IsSeenMove(oldUnsatCs, oldFront, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
             {
               nCombs++;
               trav.FoundMove(oldFront, stepRevs, curExec.next_, curNUnsat);
-              if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront || !trav.IsSeenFront(curExec.unsatClauses_) )
+              if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront || !trav.IsSeenFront(curExec.unsatClauses_, curExec.unsatClauses_) )
               {
                 if(curNUnsat < bestUnsat) {
                   bestUnsat = curNUnsat;
@@ -448,7 +448,7 @@ int main(int argc, char* argv[]) {
         }
 
         if( curExec.front_.Size() == 0
-          || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)) )
+          || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_, curExec.unsatClauses_)) )
         {
           curExec.RandomizeFront(trav, true);
         }
@@ -461,14 +461,14 @@ int main(int argc, char* argv[]) {
         
         int64_t nCombs = 0;
         bool moved;
-        const int8_t sortType = int8_t(curExec.rng_() % knSortTypes) + kMinSortType;
         while( nCombs < curExec.satTr_.MaxCombs() ) {
           if( curExec.front_.Size() == 0
-            || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)) )
+            || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_, curExec.unsatClauses_)) )
           {
             curExec.RandomizeFront(trav, false);
           }
           moved = false;
+          const int8_t sortType = int8_t(curExec.rng_() % knSortTypes) + kMinSortType;
           curExec.satTr_.GradientDescend(
             trav, allowDuplicateFront, &curExec.front_, moved, curExec.next_, sortType,
             curExec.satTr_.NextUnsatCap(nCombs, curExec.unsatClauses_, nGlobalUnsat),
@@ -480,7 +480,7 @@ int main(int argc, char* argv[]) {
             // The data structures are corrupted already (not rolled back)
             break;
           }
-          if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront || !trav.IsSeenFront(curExec.unsatClauses_) ) {
+          if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront || !trav.IsSeenFront(curExec.unsatClauses_, curExec.unsatClauses_) ) {
             if(curExec.unsatClauses_.Size() < bestUnsat) {
               bestUnsat = curExec.unsatClauses_.Size();
               bestRevVars = stepRevs;

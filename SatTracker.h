@@ -342,7 +342,7 @@ template<typename TCounter> struct SatTracker {
         goto sgd_unflip_1;
       }
       FlipVar<false>(-iVar, &unsatClauses, &front);
-      if( !allowDuplicateFront && front.Size() != 0 && trav.IsSeenFront(front) ) {
+      if( !allowDuplicateFront && front.Size() != 0 && trav.IsSeenFront(front, unsatClauses) ) {
         goto sgd_unflip_2;
       }
 
@@ -351,7 +351,7 @@ template<typename TCounter> struct SatTracker {
         const VCIndex newUnsat = UnsatCount();
         trav.FoundMove(front, curRevVars);
         trav.FoundMove(startFront, revVars, next, newUnsat);
-        if( newUnsat < minUnsat && (unsatClauses.Size() < nStartUnsat || allowDuplicateFront || !trav.IsSeenFront(unsatClauses)) ) {
+        if( newUnsat < minUnsat && (unsatClauses.Size() < nStartUnsat || allowDuplicateFront || !trav.IsSeenFront(unsatClauses, unsatClauses)) ) {
           minUnsat = newUnsat;
           bestRevVars = revVars;
           if(newUnsat == 0) {
@@ -492,7 +492,7 @@ sgd_unflip_0:
   }
 
   int64_t MaxCombs() const {
-    return std::max<int64_t>(UnsatCount(), VCTrackingSet::cSyncContention * nSysCpus);
+    return std::max<int64_t>(4 * UnsatCount(), VCTrackingSet::cSyncContention * nSysCpus);
   }
 };
 

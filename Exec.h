@@ -31,7 +31,7 @@ struct Exec {
             front_.Add(vUnsatCs[j]);
           }
         }
-        if(!trav.IsSeenFront(front_)) {
+        if(!trav.IsSeenFront(front_, front_)) {
           return;
         }
       }
@@ -45,7 +45,7 @@ struct Exec {
           std::swap(vUnsatCs[i], vUnsatCs[fellow]);
           front_.Add(vUnsatCs[i]);
         }
-        if(!trav.IsSeenFront(front_)) {
+        if(!trav.IsSeenFront(front_, front_)) {
           return;
         }
       }
