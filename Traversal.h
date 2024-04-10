@@ -45,6 +45,9 @@ struct Traversal {
         return;
       }
     }
+    if( !seenAssignment_.Add(assignment.hash_) ) {
+      return; // added earlier, perhaps concurrently by another thread - don't put it to DFS here thus
+    }
     {
       Point p(assignment, nUnsat);
       BitVector toRelease; // release outside of the lock

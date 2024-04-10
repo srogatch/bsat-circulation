@@ -318,6 +318,7 @@ int main(int argc, char* argv[]) {
                       // Maybe we'll find an even better assignment with small modifications based on the current assignment
                       nCombs -= std::min<VCIndex>(curNUnsat, 1<<9);
                       bFlipBack = false;
+                      curExec.nIncl_ = 1;
                       std::cout << "C";
                       std::flush(std::cout);
                     }
@@ -386,9 +387,9 @@ int main(int argc, char* argv[]) {
         assert(curExec.unsatClauses_.Size() == bestUnsat);
         curExec.front_ = curExec.unsatClauses_ - oldUnsatCs;
 
-        if(nGlobalUnsat < curExec.nStartUnsat_) {
-          break;
-        }
+        // if(nGlobalUnsat < curExec.nStartUnsat_) {
+        //   break;
+        // }
 
         if( curExec.front_.Size() == 0
           || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_, curExec.unsatClauses_)) )
