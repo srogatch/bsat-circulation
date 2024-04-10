@@ -61,7 +61,7 @@ struct Traversal {
   }
 
   void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars) {
-    seenMove_.Add(std::make_pair(front.hash_, revVars.hash_));
+    // seenMove_.Add(std::make_pair(front.hash_, revVars.hash_));
   }
 
   void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars, const BitVector& assignment, const int64_t nUnsat)
@@ -71,12 +71,13 @@ struct Traversal {
   }
 
   bool IsSeenMove(const VCTrackingSet& unsatClauses, const VCTrackingSet& front, const VCTrackingSet& revVars) const {
-    if(front.Size() > 0) {
-      if(seenMove_.Contains(std::make_pair(front.hash_, revVars.hash_))) {
-        return true;
-      }
-    }
-    return seenMove_.Contains(std::make_pair(unsatClauses.hash_, revVars.hash_));
+    return false;
+    // if(front.Size() > 0) {
+    //   if(seenMove_.Contains(std::make_pair(front.hash_, revVars.hash_))) {
+    //     return true;
+    //   }
+    // }
+    // return seenMove_.Contains(std::make_pair(unsatClauses.hash_, revVars.hash_));
   }
 
   // This is not (yet) thread-safe
