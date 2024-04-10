@@ -256,6 +256,8 @@ int main(int argc, char* argv[]) {
                     if(curNUnsat < nGlobalUnsat) {
                       nGlobalUnsat = curNUnsat;
                       formula.ans_ = curExec.next_;
+                      std::cout << "B";
+                      std::flush(std::cout);
                     }
                   }
                 }
@@ -316,6 +318,8 @@ int main(int argc, char* argv[]) {
                       // Maybe we'll find an even better assignment with small modifications based on the current assignment
                       nCombs -= std::min<VCIndex>(curNUnsat, 1<<9);
                       bFlipBack = false;
+                      std::cout << "C";
+                      std::flush(std::cout);
                     }
                   }
                 }
@@ -429,6 +433,8 @@ int main(int argc, char* argv[]) {
                   nGlobalUnsat = bestUnsat;
                   formula.ans_ = curExec.next_;
                   nCombs -= std::min<VCIndex>(curExec.unsatClauses_.Size(), 1<<9);
+                  std::cout << "S";
+                  std::flush(std::cout);
                 }
               }
             }
