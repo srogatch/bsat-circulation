@@ -82,7 +82,7 @@ struct Traversal {
 
   // This is not (yet) thread-safe
   bool IsSeenFront(const VCTrackingSet& front, const VCTrackingSet& unsatClauses) const {
-    return seenFront_.Contains(front.hash_) || seenFront_.Contains(unsatClauses.hash_);
+    return seenFront_.Contains(front.hash_) || (&front != &unsatClauses && seenFront_.Contains(unsatClauses.hash_));
   }
 
   bool IsSeenAssignment(const BitVector& assignment) const {

@@ -279,64 +279,31 @@ int main(int argc, char* argv[]) {
           }
           totCombs.fetch_add( nCombs );
         } else { // !allCombs
-          curExec.sortType_ = curExec.rng_() % knSortTypes + kMinSortType;
           curExec.nIncl_ = curExec.rng_() % rangeNIncl + startNIncl;
-          SortMultiItems(curExec.varFront_, curExec.sortType_);
-          std::vector<VCIndex> incl(curExec.nIncl_, 0);
-          uint64_t curComb;
-          if(VCIndex(curExec.varFront_.size()) >= 64 + curExec.nIncl_) {
-            curComb = curExec.rng_();
-          } else if(VCIndex(curExec.varFront_.size()) <= curExec.nIncl_) {
-            curComb = 0;
-          } else {
-            curComb = curExec.rng_() % (1ULL<<(VCIndex(curExec.varFront_.size()) - curExec.nIncl_));
-          }
-          while(__builtin_popcountll(curComb) > curExec.nIncl_) {
-            curComb &= curComb-1;
-          }
-          VCIndex i=0;
-          while(curComb != 0) {
-            incl[i] = __builtin_ctzll(curComb);
-            curComb &= curComb-1;
-            i++;
-          }
-          if(i == 0) {
-            incl[0] = 0;
-            i++;
-          }
-          for(; i<curExec.nIncl_; i++) {
-            incl[i] = incl[i-1] + 1;
-            assert(0 <= incl[i] && incl[i] < VCIndex(curExec.varFront_.size()));
-          }
-          for(i=0; i<curExec.nIncl_; i++) {
-            const VCIndex aVar = curExec.varFront_[incl[i]].item_;
-            assert(0 < aVar && aVar <= formula.nVars_);
-            stepRevs.Flip(aVar);
-            curExec.next_.Flip(aVar);
-            curExec.satTr_.FlipVar<false>( aVar * (curExec.next_[aVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_ );
-          }
           int64_t nCombs = 0;
-          for(;;) {
-            //assert(execSatTr[iExec].Verify(execNext[iExec])); // TODO: very heavy
-            if(nCombs >= curExec.satTr_.MaxCombs()) {
-              for(i=0; i<curExec.nIncl_; i++) {
-                const VCIndex aVar = curExec.varFront_[incl[i]].item_;
-                assert(0 < aVar && aVar <= formula.nVars_);
-                stepRevs.Flip(aVar);
-                curExec.next_.Flip(aVar);
-                curExec.satTr_.FlipVar<false>( aVar * (curExec.next_[aVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_ );
-              }
-              break;
+          VCIndex nFixed = 0;
+          while( nCombs < curExec.satTr_.MaxCombs() && nFixed < VCIndex(curExec.varFront_.size()) ) {
+            const VCIndex enI = std::min(curExec.nIncl_, VCIndex(curExec.varFront_.size())-nFixed);
+            for(VCIndex i=0; i<enI; i++) {
+              const VCIndex offs = nFixed + i;
+              const VCIndex pos = curExec.rng_() % (VCIndex(curExec.varFront_.size()) - offs) + offs;
+              std::swap(curExec.varFront_[offs], curExec.varFront_[pos]);
+
+              const VCIndex aVar = curExec.varFront_[offs].item_;
+              assert(0 < aVar && aVar <= formula.nVars_);
+              stepRevs.Flip(aVar);
+              curExec.next_.Flip(aVar);
+              curExec.satTr_.FlipVar<false>( aVar * (curExec.next_[aVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_ );
             }
+            nCombs++;
             const VCIndex curNUnsat = curExec.unsatClauses_.Size();
             bool bFlipBack = true;
             if( (curNUnsat == 0)
               || ( (allowDuplicateFront || curExec.front_.Size() == 0 || !trav.IsSeenFront(curExec.front_, curExec.unsatClauses_))
                 && !trav.IsSeenMove(oldUnsatCs, oldFront, stepRevs) && !trav.IsSeenAssignment(curExec.next_) ) )
             {
-              nCombs++;
               trav.FoundMove(oldFront, stepRevs, curExec.next_, curNUnsat);
-              if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront || !trav.IsSeenFront(curExec.unsatClauses_, curExec.unsatClauses_) )
+              if( curExec.unsatClauses_.Size() < nGlobalUnsat || allowDuplicateFront )
               {
                 if(curNUnsat < bestUnsat) {
                   bestUnsat = curNUnsat;
@@ -354,46 +321,18 @@ int main(int argc, char* argv[]) {
                 }
               }
             }
-            VCIndex i=curExec.nIncl_-1;
-            for(; i>=0; i--) {
-              if(bFlipBack) {
-                const VCIndex aVar = curExec.varFront_[incl[i]].item_;
+            if(bFlipBack) {
+              for(VCIndex i=0; i<enI; i++) {
+                const VCIndex offs = nFixed + i;
+                const VCIndex aVar = curExec.varFront_[offs].item_;
+                assert(0 < aVar && aVar <= formula.nVars_);
                 stepRevs.Flip(aVar);
                 curExec.next_.Flip(aVar);
-                curExec.satTr_.FlipVar<false>(
-                  aVar * (curExec.next_[aVar] ? 1 : -1),
-                  &curExec.unsatClauses_, &curExec.front_
-                );
-              }
-              if(incl[i] + curExec.nIncl_ - i < VCIndex(curExec.varFront_.size())) {
-                break;
+                curExec.satTr_.FlipVar<false>( aVar * (curExec.next_[aVar] ? 1 : -1), &curExec.unsatClauses_, &curExec.front_ );
               }
             }
-            if(i < 0) {
-              break;
-            }
-
-            incl[i]++;
-            {
-              const VCIndex aVar = curExec.varFront_[incl[i]].item_;
-              stepRevs.Flip(aVar);
-              curExec.next_.Flip(aVar);
-              curExec.satTr_.FlipVar<false>(
-                aVar * (curExec.next_[aVar] ? 1 : -1),
-                &curExec.unsatClauses_, &curExec.front_
-              );
-            }
-            i++;
-            for(; i<curExec.nIncl_; i++) {
-              incl[i] = incl[i-1]+1;
-              assert(incl[i] < VCIndex(curExec.varFront_.size()));
-              const VCIndex aVar = curExec.varFront_[incl[i]].item_;
-              stepRevs.Flip(aVar);
-              curExec.next_.Flip(aVar);
-              curExec.satTr_.FlipVar<false>(
-                aVar * (curExec.next_[aVar] ? 1 : -1),
-                &curExec.unsatClauses_, &curExec.front_
-              );
+            else {
+              nFixed += enI;
             }
           }
           totCombs.fetch_add(nCombs);

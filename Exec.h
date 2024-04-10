@@ -14,8 +14,7 @@ struct Exec {
   VCTrackingSet front_;
   const Formula* pFormula_;
   VCIndex nStartUnsat_;
-  int8_t nIncl_;
-  int8_t sortType_;
+  VCIndex nIncl_;
 
   Exec() : rng_(GetSeededRandom()) { }
 
