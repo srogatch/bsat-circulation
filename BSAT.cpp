@@ -135,7 +135,7 @@ int main(int argc, char* argv[]) {
       VCTrackingSet revVars;
       const VCTrackingSet startFront = locFront;
       int64_t nCombs = 0;
-      while(nCombs < locUnsatClauses.MaxCombs()) {
+      while(nCombs < locSatTr.MaxCombs()) {
         const int8_t sortType = i % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
         if(locFront.Size() == 0 || trav.IsSeenFront(locFront)) {
           std::cout << "%";
@@ -147,7 +147,7 @@ int main(int argc, char* argv[]) {
           trav, false, &locFront, moved, locAsg, sortType,
           //locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
           locBest,
-          nCombs, locUnsatClauses.MaxCombs(), initUnsatClauses, locUnsatClauses, startFront, locFront, revVars,
+          nCombs, locSatTr.MaxCombs(), initUnsatClauses, locUnsatClauses, startFront, locFront, revVars,
           locBest
         );
         nSequentialGD.fetch_add(1);
@@ -159,7 +159,7 @@ int main(int argc, char* argv[]) {
           std::unique_lock<std::mutex> lock(muGlobal);
           if(altNUnsat < nGlobalUnsat) {
             nGlobalUnsat = altNUnsat;
-            nCombs -= std::min<VCIndex>(locUnsatClauses.Size(), 1<<10);
+            nCombs -= std::min<VCIndex>(locUnsatClauses.Size(), 1<<9);
           }
         }
       }
@@ -217,7 +217,7 @@ int main(int argc, char* argv[]) {
         const VCIndex startNIncl = 2, endNIncl=std::min<VCIndex>(curExec.varFront_.size(), 5);
         const VCIndex rangeNIncl = endNIncl - startNIncl + 1;
         bool allCombs;
-        if(curExec.varFront_.size() < std::log2(curExec.unsatClauses_.MaxCombs()+1)) {
+        if(curExec.varFront_.size() < std::log2(curExec.satTr_.MaxCombs()+1)) {
           // Consider all combinations without different methods of sorting
           allCombs = true;
         } else {
@@ -318,7 +318,7 @@ int main(int argc, char* argv[]) {
           int64_t nCombs = 0;
           for(;;) {
             //assert(execSatTr[iExec].Verify(execNext[iExec])); // TODO: very heavy
-            if(nCombs >= oldUnsatCs.MaxCombs()) {
+            if(nCombs >= curExec.satTr_.MaxCombs()) {
               for(i=0; i<curExec.nIncl_; i++) {
                 const VCIndex aVar = curExec.varFront_[incl[i]].item_;
                 assert(0 < aVar && aVar <= formula.nVars_);
@@ -347,7 +347,7 @@ int main(int argc, char* argv[]) {
                       nGlobalUnsat = curNUnsat;
                       formula.ans_ = curExec.next_;
                       // Maybe we'll find an even better assignment with small modifications based on the current assignment
-                      nCombs -= std::min<VCIndex>(curNUnsat, 1<<10);
+                      nCombs -= std::min<VCIndex>(curNUnsat, 1<<9);
                       bFlipBack = false;
                     }
                   }
@@ -461,18 +461,18 @@ int main(int argc, char* argv[]) {
         
         int64_t nCombs = 0;
         bool moved;
-        while( nCombs < oldUnsatCs.MaxCombs() ) {
+        const int8_t sortType = int8_t(curExec.rng_() % knSortTypes) + kMinSortType;
+        while( nCombs < curExec.satTr_.MaxCombs() ) {
           if( curExec.front_.Size() == 0
             || (!allowDuplicateFront && curExec.unsatClauses_.Size() >= curExec.nStartUnsat_ && trav.IsSeenFront(curExec.front_)) )
           {
             curExec.RandomizeFront(trav, false);
           }
           moved = false;
-          const int8_t sortType = int8_t(curExec.rng_() % knSortTypes) + kMinSortType;
           curExec.satTr_.GradientDescend(
             trav, allowDuplicateFront, &curExec.front_, moved, curExec.next_, sortType,
             curExec.satTr_.NextUnsatCap(nCombs, curExec.unsatClauses_, nGlobalUnsat),
-            nCombs, oldUnsatCs.MaxCombs(), oldUnsatCs, curExec.unsatClauses_, oldFront, curExec.front_, stepRevs,
+            nCombs, curExec.satTr_.MaxCombs(), oldUnsatCs, curExec.unsatClauses_, oldFront, curExec.front_, stepRevs,
             nGlobalUnsat
           );
           nSequentialGD.fetch_add(1);
@@ -489,7 +489,7 @@ int main(int argc, char* argv[]) {
                 if(bestUnsat < nGlobalUnsat) {
                   nGlobalUnsat = bestUnsat;
                   formula.ans_ = curExec.next_;
-                  nCombs -= std::min<VCIndex>(curExec.unsatClauses_.Size(), 1<<10);
+                  nCombs -= std::min<VCIndex>(curExec.unsatClauses_.Size(), 1<<9);
                 }
               }
             }

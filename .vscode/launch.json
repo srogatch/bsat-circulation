@@ -11,7 +11,7 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/bin/BSAT-Debug",
-      "args": ["ewddr2-10-by-5-8.cnf", "ewddr2-10-by-5-8.sol"],
+      "args": ["bc-resembling.txt", "bc2024.sol"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}/bin",
       "environment": [],

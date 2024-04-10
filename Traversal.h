@@ -36,9 +36,9 @@ struct Traversal {
   mutable std::atomic_flag syncDfs_ = ATOMIC_FLAG_INIT;
 
   void OnSeenAssignment(const BitVector& assignment, const int64_t nUnsat) {
-    if( !seenAssignment_.Add(assignment.hash_) ) {
-      return; // added earlier, perhaps concurrently by another thread - don't put it to DFS here thus
-    }
+    // if( !seenAssignment_.Add(assignment.hash_) ) {
+    //   return; // added earlier, perhaps concurrently by another thread - don't put it to DFS here thus
+    // }
     { // DFS
       SpinLock lock(syncDfs_);
       if(!dfs_.empty() && nUnsat > dfs_.back().nUnsat_) {
@@ -86,7 +86,8 @@ struct Traversal {
   }
 
   bool IsSeenAssignment(const BitVector& assignment) const {
-    return seenAssignment_.Contains(assignment.hash_);
+    //return seenAssignment_.Contains(assignment.hash_);
+    return false;
   }
 
   // This is not (yet) thread-safe

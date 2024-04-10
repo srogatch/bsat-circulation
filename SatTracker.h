@@ -490,6 +490,10 @@ sgd_unflip_0:
       //- std::sqrt(nCombs) // *std::log2(nCombs+1)
     );
   }
+
+  int64_t MaxCombs() const {
+    return std::max<int64_t>(UnsatCount(), VCTrackingSet::cSyncContention * nSysCpus);
+  }
 };
 
 using DefaultSatTracker = SatTracker<uint16_t>;
