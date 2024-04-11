@@ -1,10 +1,13 @@
 #pragma once
 
 #include "GpuUtils.cuh"
+#include "../CNF.h"
 
 using GpuPerSignHead = VciGpu[2];
 
 class GpuLinkage {
+  friend class HostLinkage;
+
   // -(nClauses_)..(nClauses_+1): the edge items are stubs for convenient arc counting
   GpuPerSignHead *headsClause2Var_;
   // -(nVars_)..(nVars_+1): the edge items are stubs for convenient arc counting
@@ -13,7 +16,7 @@ class GpuLinkage {
   VciGpu *targetsVar2Clause_;
   VciGpu nVars_, nClauses_;
 
-  __device__ int8_t SignToHead(const int8_t sign) const {
+  static __host__ __device__ int8_t SignToHead(const int8_t sign) {
     return (sign + 1) >> 1;
   }
 
@@ -52,4 +55,20 @@ public:
   __device__ VciGpu VarGetTarget(const VciGpu fromVar, const int8_t sign, const VciGpu ordinal) const {
     return GetTarget(fromVar, sign, ordinal, nVars_, headsVar2Clause_, targetsVar2Clause_);
   }
+};
+
+struct HostLinkage {
+    // -(nClauses_)..(nClauses_+1): the edge items are stubs for convenient arc counting
+  CudaArray<GpuPerSignHead> headsClause2Var_;
+  // -(nVars_)..(nVars_+1): the edge items are stubs for convenient arc counting
+  CudaArray<GpuPerSignHead> headsVar2Clause_;
+  CudaArray<VciGpu> targetsClause2Var_;
+  CudaArray<VciGpu> targetsVar2Clause_;
+  VciGpu nVars_, nClauses_;
+
+  const Formula *pFormula_;
+  const CudaAttributes* pCa_;
+
+  explicit HostLinkage(const Formula& formula, const CudaAttributes& ca);
+  bool Marshal(GpuLinkage& gl);
 };
