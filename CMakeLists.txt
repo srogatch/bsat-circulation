@@ -56,5 +56,6 @@ endif()
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
 add_executable(RogasatGPU
-  BSAT-GPU.cu Common.cpp)
+  gpu/BSAT-GPU.cu gpu/Common.cpp)
+target_include_directories(RogasatGPU PRIVATE gpu)
 target_link_libraries(RogasatGPU PRIVATE CUDA::cudart)
