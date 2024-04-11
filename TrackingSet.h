@@ -123,7 +123,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
 
   void UpdateHash(const TItem& item) {
     const uint128 h = THasher()(item);
-    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[0].fetch_xor(h & (-1LL));
+    reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[0].fetch_xor(h & uint64_t(-1LL));
     reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[1].fetch_xor(h >> 64);
   }
 

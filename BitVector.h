@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <cstring>
 #include <atomic>
-#include <immintrin.h>
 #include <atomic>
 
 struct BitVector {
@@ -132,7 +131,7 @@ template<> struct hash<BitVector> {
 
 template<> struct hash<uint128> {
   inline std::size_t operator()(const uint128 x) const {
-    return (x >> 64) * 1949 ^ (x & (-1LL));
+    return (x >> 64) * 1949 ^ (x & uint64_t(-1LL));
   }
 };
 

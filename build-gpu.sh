@@ -1,6 +1,6 @@
 set -x
-mkdir bin
-cd bin
+mkdir build
+cd build
 
 set -e
 export CC=clang-17

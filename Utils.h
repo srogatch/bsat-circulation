@@ -7,7 +7,6 @@
 #include <random>
 #include <thread>
 #include <algorithm>
-#include <immintrin.h>
 
 constexpr const uint32_t kCacheLineSize = 64;
 constexpr const uint32_t kRamPageBytes = 4096;
@@ -77,7 +76,7 @@ struct SpinLock {
 
   SpinLock(std::atomic_flag& sync) : pSync_(&sync) {
     while(pSync_->test_and_set(std::memory_order_acq_rel)) {
-      _mm_pause();
+      __builtin_ia32_pause ();
     }
   }
 
@@ -89,8 +88,9 @@ struct SpinLock {
 };
 
 inline std::mt19937_64 GetSeededRandom() {
-  unsigned long long seed;
-  while(!_rdrand64_step(&seed));
+  std::random_device rd;
+  unsigned long long seed = (uint64_t(rd()) << 32) | rd();
+  // while(!_rdrand64_step(&seed));
   std::mt19937_64 rng(seed);
   return rng;
 }
@@ -138,7 +138,7 @@ void ParallelShuffle(T* data, const size_t count) {
   }
 }
 
-int GetFileDescriptor(std::filebuf& filebuf)
+inline int GetFileDescriptor(std::filebuf& filebuf)
 {
   class my_filebuf : public std::filebuf
   {
@@ -149,7 +149,7 @@ int GetFileDescriptor(std::filebuf& filebuf)
   return static_cast<my_filebuf&>(filebuf).handle();
 }
 
-void HardFlush(std::ofstream& ofs) {
+inline void HardFlush(std::ofstream& ofs) {
   ofs.flush();
   fsync(GetFileDescriptor(*ofs.rdbuf()));
 }
