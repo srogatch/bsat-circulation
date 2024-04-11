@@ -159,7 +159,7 @@ int main(int argc, char* argv[]) {
           std::unique_lock<std::mutex> lock(muGlobal);
           if(altNUnsat < nGlobalUnsat) {
             nGlobalUnsat = altNUnsat;
-            nCombs -= std::min<VCIndex>(locUnsatClauses.Size(), 1<<9);
+            nCombs -= std::min<VCIndex>(locUnsatClauses.Size(), 1<<11);
           }
         }
       }
@@ -316,9 +316,9 @@ int main(int argc, char* argv[]) {
                       nGlobalUnsat = curNUnsat;
                       formula.ans_ = curExec.next_;
                       // Maybe we'll find an even better assignment with small modifications based on the current assignment
-                      nCombs -= std::min<VCIndex>(curNUnsat, 1<<9);
+                      nCombs -= std::min<VCIndex>(curNUnsat, 1<<11);
                       bFlipBack = false;
-                      curExec.nIncl_ = 1;
+                      curExec.nIncl_ = 2;
                       std::cout << "C";
                       std::flush(std::cout);
                     }
@@ -433,7 +433,7 @@ int main(int argc, char* argv[]) {
                 if(bestUnsat < nGlobalUnsat) {
                   nGlobalUnsat = bestUnsat;
                   formula.ans_ = curExec.next_;
-                  nCombs -= std::min<VCIndex>(curExec.unsatClauses_.Size(), 1<<9);
+                  nCombs -= std::min<VCIndex>(curExec.unsatClauses_.Size(), 1<<11);
                   std::cout << "S";
                   std::flush(std::cout);
                 }

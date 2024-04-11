@@ -51,14 +51,19 @@ struct Traversal {
     {
       Point p(assignment, nUnsat);
       BitVector toRelease; // release outside of the lock
-      SpinLock lock(syncDfs_);
-      if(dfs_.empty() || nUnsat <= dfs_.back().nUnsat_) {
-        if(dfs_.size() * assignment.nQwords_ * sizeof(uint64_t) >= cMaxDfsRamBytes) {
-          // don't release here - we are holding the lock
-          toRelease = std::move(dfs_.front().assignment_);
-          dfs_.pop_front();
+      {
+        SpinLock lock(syncDfs_);
+        if(dfs_.empty() || nUnsat <= dfs_.back().nUnsat_) {
+          if(dfs_.size() * assignment.nQwords_ * sizeof(uint64_t) >= cMaxDfsRamBytes) {
+            // don't release here - we are holding the lock
+            toRelease = std::move(dfs_.front().assignment_);
+            dfs_.pop_front();
+          }
+          dfs_.push_back(std::move(p));
         }
-        dfs_.push_back(std::move(p));
+      }
+      if(toRelease.hash_ != 0) {
+        seenAssignment_.Remove(toRelease.hash_);
       }
     }
   }
@@ -89,8 +94,8 @@ struct Traversal {
   }
 
   bool IsSeenAssignment(const BitVector& assignment) const {
-    //return seenAssignment_.Contains(assignment.hash_);
-    return false;
+    return seenAssignment_.Contains(assignment.hash_);
+    //return false;
   }
 
   // This is not (yet) thread-safe
