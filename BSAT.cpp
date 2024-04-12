@@ -40,7 +40,7 @@ uint64_t Comb(const int64_t n, const int64_t k) {
   return mc;
 }
 
-void signalHandler(int signum) {
+static void signalHandler(int signum) {
   std::cout << "Interrupt signal (" << signum << ") received.\n";
   // TODO: save the maximally satisfying assignment here
 

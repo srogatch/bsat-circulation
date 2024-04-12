@@ -13,8 +13,8 @@ struct BitVector {
   static constexpr const uint32_t cParChunkSize = kRamPageBytes/sizeof(uint64_t);
   static std::unique_ptr<uint128[]> hashSeries_;
   std::unique_ptr<uint64_t[]> bits_;
-  int64_t nQwords_ = 0;
-  int64_t nBits_ = 0;
+  VCIndex nQwords_ = 0;
+  VCIndex nBits_ = 0;
   uint128 hash_ = 0;
 
   static void CalcHashSeries(const int64_t nVars) {
