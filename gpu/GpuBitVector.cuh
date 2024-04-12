@@ -2,7 +2,7 @@
 
 #include "GpuUtils.cuh"
 
-template<bool taHashing, bool taAtomic> struct GpuBitVector {
+struct GpuBitVector {
   __uint128_t hash_ = 0;
   uint32_t *bits_ = nullptr;
   VciGpu nBits_ = 0;
@@ -11,7 +11,7 @@ template<bool taHashing, bool taAtomic> struct GpuBitVector {
     return DivUp(nBits_, 32);
   }
 
-  __host__ __device__ GpuBitVector() = default;
+  GpuBitVector() = default;
 
   __device__ void Rehash() {
     hash_ = 0;
@@ -23,12 +23,12 @@ template<bool taHashing, bool taAtomic> struct GpuBitVector {
   }
 
   // Note the return logic is different from CPU BitVector
-  int8_t operator[](const VciGpu index) const {
+  __host__ __device__ int8_t operator[](const VciGpu index) const {
     return (bits_[index/32] & (1u<<(index&31))) ? 1 : -1;
   }
 
-  void Flip(const VciGpu index)  {
-    hash_ ^= gpHashSeries[i];
+  __device__ void Flip(const VciGpu index)  {
+    hash_ ^= gpHashSeries[index];
     bits_[index/32] ^= (1u<<(index&31));
   }
 };

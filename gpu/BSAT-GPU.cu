@@ -1,6 +1,7 @@
 #include "Common.h"
 
 #include "GpuLinkage.cuh"
+#include "Rainbow.cuh"
 
 constexpr const uint32_t kThreadsPerBlock = 128;
 
@@ -30,7 +31,7 @@ void GpuCalcHashSeries(const VciGpu maxItem, const std::vector<CudaAttributes>& 
 struct Hasher {
   __uint128_t hash_;
 
-  Hasher(const VciGpu item) {
+  __host__ __device__ Hasher(const VciGpu item) {
     hash_ = item * kHashBase + 37;
   }
 };
@@ -40,7 +41,7 @@ template<typename TItem> struct GpuTrackingVector {
   TItem* items_ = nullptr;
   VciGpu count_ = 0, capacity_ = 0;
 
-  __host__ __device__ GpuTrackingVector() = default;
+  GpuTrackingVector() = default;
 
   __host__ __device__ GpuTrackingVector(const GpuTrackingVector& src) {
     hash_ = src.hash_;
@@ -52,7 +53,6 @@ template<typename TItem> struct GpuTrackingVector {
     for(VciGpu i=0; i<count_; i++) {
       items_[i] = src.items_[i];
     }
-    return *this;
   }
 
   __host__ __device__ GpuTrackingVector& operator=(const GpuTrackingVector& src) {
@@ -62,7 +62,7 @@ template<typename TItem> struct GpuTrackingVector {
       if(capacity_ < src.count_) {
         free(items_);
         capacity_ = src.count_;
-        items_ = malloc(capacity_ * sizeof(TItem));
+        items_ = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
       }
       // TODO: vectorize
       for(VciGpu i=0; i<count_; i++) {
@@ -79,7 +79,13 @@ template<typename TItem> struct GpuTrackingVector {
     }
     VciGpu maxCap = max(capacity_, newCap);
     capacity_ = maxCap + (maxCap>>1) + 16;
-    items_ = realloc(items_, capacity_ * sizeof(TItem));
+    TItem* newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
+    // TODO: vectorize
+    for(VciGpu i=0; i<count_; i++) {
+      newItems[i] = items_[i];
+    }
+    free(items_);
+    items_ = newItems;
     return true;
   }
 
@@ -106,13 +112,25 @@ template<typename TItem> struct GpuTrackingVector {
         if(items_[i] == item) {
           return false;
         }
-      }  
+      }
     }
     hash_ ^= Hasher(item).hash_;
     Reserve(count_+1);
     items_[count_] = item;
     count_++;
     return true;
+  }
+
+  // Returns true if the item had existed in the collection
+  __host__ __device__ bool Remove(const TItem& item) {
+    for(VciGpu i=count_-1; i>=0; i--) {
+      if(items_[i] == item) {
+        hash_ ^= Hasher(item).hash_;
+        items_[i] = items_[count_-1];
+        return true;
+      }
+    }
+    return false;
   }
 
   __host__ __device__ ~GpuTrackingVector() {
@@ -132,20 +150,36 @@ struct GpuExec {
   Xoshiro256ss rng_; // seed it on the host
 };
 
-__global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* nGlobalUnsat, const GpuLinkage linkage, GpuExec *execs) {
+__device__ void UpdateUnsatCs(const GpuLinkage& linkage, const VciGpu aVar, const GpuBitVector& next,
+  GpuTrackingVector<VciGpu>& unsatClauses)
+{
+  const int8_t signSat = next[aVar];
+  const VciGpu nSatArcs = linkage.VarArcCount(aVar, signSat);
+  for(VciGpu i=0; i<nSatArcs; i++) {
+    const VciGpu iClause = linkage.VarGetTarget(aVar, signSat, i);
+    const VciGpu aClause = abs(iClause);
+    unsatClauses.Remove(aClause);
+  }
+  const VciGpu nUnsatArcs = linkage.VarArcCount(aVar, -signSat);
+  for(VciGpu i=0; i<nUnsatArcs; i++) {
+    const VciGpu iClause = linkage.VarGetTarget(aVar, -signSat, i);
+    const VciGpu aClause = abs(iClause);
+    unsatClauses.Add<true>(aClause);
+  }
+}
+
+__global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, const GpuLinkage linkage, GpuExec *execs,
+  GpuRainbow& rainbow)
+{
   constexpr const uint32_t cCombsPerStep = 1u<<11;
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
   const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
   GpuExec& curExec = execs[iThread];
 
-  GpuBitVector<true, false> next;
+  GpuBitVector next;
   GpuTrackingVector<VciGpu> unsatClauses;
   GpuTrackingVector<VciGpu> front;
   while(unsatClauses.count_ >= nStartUnsat) {
-    // TODO: move it to the appropriate place - don't interrupt an improvement flow
-    if(*nGlobalUnsat < nStartUnsat) {
-      break;
-    }
     // Get the variables that affect the unsatisfied clauses
     GpuTrackingVector<VciGpu> varFront;
     uint32_t totListLen = 0;
@@ -157,7 +191,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* nGlobalUnsat, const
         totListLen += varListLen;
         for(VciGpu j=0; j<varListLen; j++) {
           const VciGpu iVar = linkage.ClauseGetTarget(aClause, sign, j);
-          const VciGpu aVar = llabs(iVar);
+          const VciGpu aVar = abs(iVar);
           if( next[aVar] != Signum(iVar) ) {
             varFront.Add<false>(aVar);
             next.Flip(aVar);
@@ -179,6 +213,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* nGlobalUnsat, const
 
     //// Combine
     GpuTrackingVector<VciGpu> stepRevs;
+    VciGpu bestUnsat = linkage.GetClauseCount() + 1;
+    GpuTrackingVector<VciGpu> bestRevVars;
     // Make sure the overhead of preparing the combinations doesn't outnumber the effort spent in combinations
     uint32_t endComb = max(cCombsPerStep, varFront.count_ + combClauses.count_ + totListLen);
     if(varFront.count_ <= 31) {
@@ -190,9 +226,38 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* nGlobalUnsat, const
       const VciGpu aVar = varFront.items_[0];
       stepRevs.Add<false>(aVar);
       next.Flip(aVar);
+      UpdateUnsatCs(linkage, aVar, next, unsatClauses);
     }
+    // The first index participating in combinations - upon success, can be shifted
+    VciGpu combFirst = 0;
     while(curComb <= endComb) {
-      
+      if(rainbow.Add(next.hash_)) {
+        if(unsatClauses.count_ < bestUnsat) {
+          bestUnsat = unsatClauses.count_;
+          bestRevVars = stepRevs;
+          if(bestUnsat < nStartUnsat) {
+            const VciGpu oldMin = atomicMin(pnGlobalUnsat, bestUnsat);
+            if(oldMin > bestUnsat) {
+              combFirst = combFirst +__log2f(curComb-1) + 1;
+              curComb = 0;
+            }
+          }
+        }
+      }
+      for(uint8_t i=0; ; i++) {
+        curComb ^= 1ULL << i;
+        const VCIndex aVar = varFront.items_[i+combFirst];
+        stepRevs.Flip(aVar);
+        next.Flip(aVar);
+        UpdateUnsatCs(linkage, aVar, next, unsatClauses);
+        if( (curComb & (1ULL << i)) != 0 ) {
+          break;
+        }
+      }
+    }
+    // Check the combinations results
+    if(bestUnsat > linkage.GetClauseCount()) {
+
     }
   }
 }
@@ -228,10 +293,16 @@ int main(int argc, char* argv[]) {
   int nGpus = 0;
   gpuErrchk(cudaGetDeviceCount(&nGpus));
   std::vector<CudaAttributes> cas(nGpus);
+  std::vector<HostLinkage> linkages(nGpus);
+  std::vector<HostRainbow> seenAsgs(nGpus);
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);
+    // TODO: compute linkages on the CPU once
+    linkages[i].Init(formula, cas[i]);
+    seenAsgs[i] = HostRainbow(cas[i].freeBytes_, cas[i]);
   }
   GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas);
+
 
   return 0;
 }

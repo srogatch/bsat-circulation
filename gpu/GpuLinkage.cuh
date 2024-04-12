@@ -55,6 +55,8 @@ public:
   __device__ VciGpu VarGetTarget(const VciGpu fromVar, const int8_t sign, const VciGpu ordinal) const {
     return GetTarget(fromVar, sign, ordinal, nVars_, headsVar2Clause_, targetsVar2Clause_);
   }
+  __device__ VciGpu GetVarCount() const { return nVars_; }
+  __device__ VciGpu GetClauseCount() const { return nClauses_; }
 };
 
 struct HostLinkage {
@@ -69,6 +71,8 @@ struct HostLinkage {
   const Formula *pFormula_;
   const CudaAttributes* pCa_;
 
-  explicit HostLinkage(const Formula& formula, const CudaAttributes& ca);
+  HostLinkage() = default;
+
+  void Init(const Formula& formula, const CudaAttributes& ca);
   bool Marshal(GpuLinkage& gl);
 };

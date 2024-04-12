@@ -1,6 +1,8 @@
 #include "GpuLinkage.cuh"
 
-HostLinkage::HostLinkage(const Formula& formula, const CudaAttributes& ca) : pFormula_(&formula), pCa_(&ca) {
+void HostLinkage::Init(const Formula& formula, const CudaAttributes& ca) {
+  pFormula_ = &formula;
+  pCa_ = &ca;
   nVars_ = pFormula_->nVars_;
   nClauses_ = pFormula_->nClauses_;
   headsClause2Var_ = CudaArray<GpuPerSignHead>(nClauses_*2 + 2, CudaArrayType::Device);
