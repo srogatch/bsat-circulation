@@ -56,7 +56,7 @@ template<typename TItem> struct GpuTrackingVector {
   // Returns whether the item existed in the collection
   __host__ __device__ bool Flip(const TItem item) {
     hash_ ^= Hasher(item).hash_;
-    for(VciGpu i=0; i<count_; i++) {
+    for(VciGpu i=count_-1; i>=0; i--) {
       if(items_[i] == item) {
         items_[i] = items_[count_-1];
         count_--;
@@ -95,7 +95,7 @@ __global__ void StepKernel(const GpuLinkage linkage, GpuExec *execs, const uint6
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
   const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
   GpuExec& curExec = execs[iThread];
-  
+
 }
 
 int main(int argc, char* argv[]) {
