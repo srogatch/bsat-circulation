@@ -186,3 +186,26 @@ struct Logger {
   ~Logger();
 };
 
+constexpr uint64_t rol64(const uint64_t x, const int k)
+{
+	return (x << k) | (x >> (64 - k));
+}
+
+struct Xoshiro256ss {
+	ulonglong4 s_;
+
+  __host__ __device__ uint64_t Next() {
+    uint64_t const result = rol64(s_.y * 5, 7) * 9;
+    uint64_t const t = s_.y << 17;
+
+    s_.z ^= s_.x;
+    s_.w ^= s_.y;
+    s_.y ^= s_.z;
+    s_.x ^= s_.w;
+
+    s_.z ^= t;
+    s_.w = rol64(s_.w, 45);
+
+    return result;
+  }
+};

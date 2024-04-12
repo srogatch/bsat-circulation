@@ -42,6 +42,36 @@ template<typename TItem> struct GpuTrackingVector {
 
   __host__ __device__ GpuTrackingVector() = default;
 
+  __host__ __device__ GpuTrackingVector(const GpuTrackingVector& src) {
+    hash_ = src.hash_;
+    count_ = src.count_;
+    free(items_);
+    capacity_ = src.count_;
+    items_ = malloc(capacity_ * sizeof(TItem));
+    // TODO: vectorize
+    for(VciGpu i=0; i<count_; i++) {
+      items_[i] = src.items_[i];
+    }
+    return *this;
+  }
+
+  __host__ __device__ GpuTrackingVector& operator=(const GpuTrackingVector& src) {
+    if(this != &src) {
+      hash_ = src.hash_;
+      count_ = src.count_;
+      if(capacity_ < src.count_) {
+        free(items_);
+        capacity_ = src.count_;
+        items_ = malloc(capacity_ * sizeof(TItem));
+      }
+      // TODO: vectorize
+      for(VciGpu i=0; i<count_; i++) {
+        items_[i] = src.items_[i];
+      }
+    }
+    return *this;
+  }
+
   // Returns whether the vector was resized
   __host__ __device__ bool Reserve(const VciGpu newCap) {
     if(newCap <= capacity_) {
@@ -69,12 +99,20 @@ template<typename TItem> struct GpuTrackingVector {
     return false;
   }
 
-  // Add without checking whether such item already exists
-  __host__ __device__ void Add(const TItem item) {
+  // Returns whether a new item was added, or a duplicate existed
+  template<bool checkDup> __host__ __device__ bool Add(const TItem item) {
+    if constexpr(checkDup) {
+      for(VciGpu i=count_-1; i>=0; i--) {
+        if(items_[i] == item) {
+          return false;
+        }
+      }  
+    }
     hash_ ^= Hasher(item).hash_;
     Reserve(count_+1);
     items_[count_] = item;
     count_++;
+    return true;
   }
 
   __host__ __device__ ~GpuTrackingVector() {
@@ -83,19 +121,80 @@ template<typename TItem> struct GpuTrackingVector {
     items_ = nullptr;
     #endif // NDEBUG
   }
+
+  __host__ __device__ void Clear() {
+    hash_ = 0;
+    count_ = 0;
+  }
 };
 
 struct GpuExec {
-  GpuBitVector<true, false> next_;
-  GpuTrackingVector<VciGpu> unsatClauses_;
-  GpuTrackingVector<VciGpu> front_;
+  Xoshiro256ss rng_; // seed it on the host
 };
 
-__global__ void StepKernel(const GpuLinkage linkage, GpuExec *execs, const uint64_t maxCombs) {
+__global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* nGlobalUnsat, const GpuLinkage linkage, GpuExec *execs) {
+  constexpr const uint32_t cCombsPerStep = 1u<<11;
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
   const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
   GpuExec& curExec = execs[iThread];
 
+  GpuBitVector<true, false> next;
+  GpuTrackingVector<VciGpu> unsatClauses;
+  GpuTrackingVector<VciGpu> front;
+  while(unsatClauses.count_ >= nStartUnsat) {
+    // TODO: move it to the appropriate place - don't interrupt an improvement flow
+    if(*nGlobalUnsat < nStartUnsat) {
+      break;
+    }
+    // Get the variables that affect the unsatisfied clauses
+    GpuTrackingVector<VciGpu> varFront;
+    uint32_t totListLen = 0;
+    const GpuTrackingVector<VciGpu>& combClauses = unsatClauses; // front ?
+    for(VciGpu i=0; i<combClauses.count_; i++) {
+      for(int8_t sign=-1; sign<=1; sign+=2) {
+        const VciGpu aClause = combClauses.items_[i];
+        const VciGpu varListLen = linkage.ClauseArcCount(aClause, sign);
+        totListLen += varListLen;
+        for(VciGpu j=0; j<varListLen; j++) {
+          const VciGpu iVar = linkage.ClauseGetTarget(aClause, sign, j);
+          const VciGpu aVar = llabs(iVar);
+          if( next[aVar] != Signum(iVar) ) {
+            varFront.Add<false>(aVar);
+            next.Flip(aVar);
+          }
+        }
+      }
+    }
+    // Flip back the marked vars
+    for(VciGpu i=0; i<varFront.count_; i++) {
+      next.Flip(varFront.items_[i]);
+    }
+    // Shuffle the front
+    for(VciGpu i=0; i<varFront.count_; i++) {
+      const VciGpu pos = i + curExec.rng_.Next() % (varFront.count_ - i);
+      const VciGpu t = varFront.items_[i];
+      varFront.items_[i] = varFront.items_[pos];
+      varFront.items_[pos] = t;
+    }
+
+    //// Combine
+    GpuTrackingVector<VciGpu> stepRevs;
+    // Make sure the overhead of preparing the combinations doesn't outnumber the effort spent in combinations
+    uint32_t endComb = max(cCombsPerStep, varFront.count_ + combClauses.count_ + totListLen);
+    if(varFront.count_ <= 31) {
+      endComb = min(endComb, (1u<<varFront.count_)-1);
+    }
+    // Initial assignment
+    uint32_t curComb = 1;
+    {
+      const VciGpu aVar = varFront.items_[0];
+      stepRevs.Add<false>(aVar);
+      next.Flip(aVar);
+    }
+    while(curComb <= endComb) {
+      
+    }
+  }
 }
 
 int main(int argc, char* argv[]) {
@@ -133,7 +232,6 @@ int main(int argc, char* argv[]) {
     cas[i].Init(i);
   }
   GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas);
-
 
   return 0;
 }

@@ -15,12 +15,20 @@ template<bool taHashing, bool taAtomic> struct GpuBitVector {
 
   __device__ void Rehash() {
     hash_ = 0;
-    for(int64_t i=0; i<nBits_; i++) {
+    for(VciGpu i=0; i<nBits_; i++) {
       if((*this)[i]) {
         hash_ ^= gpHashSeries[i];
       }
     }
   }
 
-  
+  // Note the return logic is different from CPU BitVector
+  int8_t operator[](const VciGpu index) const {
+    return (bits_[index/32] & (1u<<(index&31))) ? 1 : -1;
+  }
+
+  void Flip(const VciGpu index)  {
+    hash_ ^= gpHashSeries[i];
+    bits_[index/32] ^= (1u<<(index&31));
+  }
 };
