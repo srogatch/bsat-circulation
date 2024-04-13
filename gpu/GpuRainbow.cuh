@@ -19,11 +19,18 @@ struct GpuRainbow {
     return bitfield_[index/32] & (1u<<(index&31));
   }
 
-  // Returns true if item has been adder / false if item had already existed
+  // Returns true if item has been added / false if item had already existed
   __device__ bool Add(const __uint128_t hash) {
     const uint64_t index = ToIndex(hash);
     const uint32_t oldVal = atomicOr(bitfield_ + index/32, 1u<<(index&31));
     return !(oldVal & (1u<<(index&31)));
+  }
+
+  // Returns true if item existed (and has been removed), else false if the item wasn't in the table.
+  __device__ bool Remove(const __uint128_t hash) {
+    const uint64_t index = ToIndex(hash);
+    const uint32_t oldVal = atomicAnd(bitfield_ + index/32, ~(1u<<(index&31)));
+    return (oldVal & (1u<<(index&31)));
   }
 };
 
@@ -39,7 +46,7 @@ struct HostRainbow {
   HostRainbow() = default;
 
   // This doesn't synchronize the stream
-  explicit HostRainbow(const size_t maxVram, const CudaAttributes& ca) {
+  void Init(const size_t maxVram, const CudaAttributes& ca) {
     nUseBits_ = uint8_t(std::log2(maxVram)) + 3;
     // TODO: shall we randomize it?
     firstUseBit_ = 0;

@@ -149,7 +149,7 @@ __device__ void UpdateUnsatCs(const GpuLinkage& linkage, const VciGpu aVar, cons
 }
 
 __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, const GpuLinkage linkage, GpuExec *execs,
-  GpuRainbow& rainbow)
+  GpuTraversal* trav)
 {
   constexpr const uint32_t cCombsPerStep = 1u<<11;
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
@@ -211,17 +211,20 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
     // The first index participating in combinations - upon success, can be shifted
     VciGpu combFirst = 0;
     while(curComb <= endComb) {
-      if(rainbow.Add(next.hash_)) {
+      if(!trav->IsSeenAsg(next)) {
         if(unsatClauses.count_ < bestUnsat) {
           bestUnsat = unsatClauses.count_;
           bestRevVars = stepRevs;
           if(bestUnsat < nStartUnsat) {
             const VciGpu oldMin = atomicMin(pnGlobalUnsat, bestUnsat);
             if(oldMin > bestUnsat) {
-              combFirst = combFirst +__log2f(curComb-1) + 1;
+              combFirst = combFirst + __log2f(curComb-1) + 1;
               curComb = 0;
             }
           }
+        }
+        if(unsatClauses.count_ <= *pnGlobalUnsat) {
+          trav->RecordAsg(next, bestUnsat);
         }
       }
       for(uint8_t i=0; ; i++) {
@@ -277,9 +280,9 @@ int main(int argc, char* argv[]) {
   std::vector<HostRainbow> seenAsgs(nGpus);
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);
-    // TODO: compute linkages on the CPU once
+    // TODO: compute linkages on the CPU once, rather than building it again and again for every GPU
     linkages[i].Init(formula, cas[i]);
-    seenAsgs[i] = HostRainbow(cas[i].freeBytes_, cas[i]);
+    seenAsgs[i].Init(cas[i].freeBytes_, cas[i]);
   }
   GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas);
 
