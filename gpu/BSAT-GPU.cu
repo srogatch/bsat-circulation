@@ -9,6 +9,12 @@ constexpr const uint32_t kThreadsPerBlock = 128;
 #include "GpuTraversal.cuh"
 #include "GpuTrackingVector.cuh"
 
+struct SystemShared {
+  GpuTraversal trav_;
+  VciGpu nGlobalUnsat_;
+  VciGpu nUnsatExecs_;
+};
+
 struct GpuExec {
   Xoshiro256ss rng_; // seed it on the host
   GpuBitVector next_;
@@ -16,15 +22,15 @@ struct GpuExec {
   // GpuTrackingVector<VciGpu> front_;
 };
 
-__global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, const GpuLinkage linkage, GpuExec *execs,
-  GpuTraversal* trav, GpuRainbow seenAsg, const GpuBitVector maxPartial, VciGpu* pnUnsatExecs)
+__global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, const GpuLinkage linkage, GpuExec *execs,
+  GpuRainbow seenAsg)
 {
   constexpr const uint32_t cCombsPerStep = 1u<<11;
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
   const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
   GpuExec& curExec = execs[iThread];
 
-  while(curExec.unsatClauses_.count_ >= nStartUnsat && *pnGlobalUnsat >= nStartUnsat) {
+  while(curExec.unsatClauses_.count_ >= nStartUnsat && sysShar->nGlobalUnsat_ >= nStartUnsat) {
     // Get the variables that affect the unsatisfied clauses
     GpuTrackingVector<VciGpu> varFront;
     uint32_t totListLen = 0;
@@ -77,12 +83,12 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
     // The first index participating in combinations - upon success, can be shifted
     VciGpu combFirst = 0;
     while(curComb <= endComb) {
-      if(!trav->IsSeenAsg(curExec.next_, seenAsg)) {
+      if(!sysShar->trav_.IsSeenAsg(curExec.next_, seenAsg)) {
         if(curExec.unsatClauses_.count_ < bestUnsat) {
           bestUnsat = curExec.unsatClauses_.count_;
           bestRevVars = stepRevs;
           if(bestUnsat < nStartUnsat) {
-            const VciGpu oldMin = atomicMin_system(pnGlobalUnsat, bestUnsat);
+            const VciGpu oldMin = atomicMin_system(&sysShar->nGlobalUnsat_, bestUnsat);
             if(oldMin > bestUnsat) {
               combFirst = combFirst + __log2f(curComb-1) + 1;
               curComb = 0;
@@ -93,8 +99,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
             }
           }
         }
-        if(curExec.unsatClauses_.count_ <= *pnGlobalUnsat) {
-          trav->RecordAsg(curExec.next_, bestUnsat, seenAsg);
+        if(curExec.unsatClauses_.count_ <= sysShar->nGlobalUnsat_) {
+          sysShar->trav_.RecordAsg(curExec.next_, bestUnsat, seenAsg);
         }
       }
       for(uint8_t i=0; ; i++) {
@@ -110,11 +116,11 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
     }
     // Check the combinations results
     if(bestUnsat > linkage.GetClauseCount()) {
-      if(trav->StepBack(curExec.next_, curExec.unsatClauses_, linkage, linkage.GetClauseCount())) {
+      if(sysShar->trav_.StepBack(curExec.next_, curExec.unsatClauses_, linkage, linkage.GetClauseCount())) {
         continue;
       }
       // Increment the unsatisfied executors counter
-      atomicAdd_system(pnUnsatExecs, 1);
+      atomicAdd_system(&sysShar->nUnsatExecs_, 1);
       // The current executor considers it unsatisfiable, but let's wait for the rest of executors
       break;
     }
@@ -143,9 +149,11 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
       UpdateUnsatCs(linkage, aVar, curExec.next_, curExec.unsatClauses_);
     }
 
-    if(*pnGlobalUnsat < nStartUnsat) {
+    if(sysShar->nGlobalUnsat_ < nStartUnsat) {
       break; // some other executor found an improvement
     }
+
+    // TODO: Sequential Gradient Descent
   }
 }
 
@@ -188,20 +196,22 @@ int main(int argc, char* argv[]) {
   int nGpus = 0;
   gpuErrchk(cudaGetDeviceCount(&nGpus));
   std::vector<CudaAttributes> cas(nGpus);
-  std::vector<HostLinkage> linkages;
   std::vector<HostRainbow> seenAsgs(nGpus); // must be one per device
 
   // Pinned should be better than managed here, because managed memory transfers at page granularity,
   // while Pinned - at PCIe bus granularity, which is much smaller.
-  CudaArray<GpuTraversal> trav(1, CudaArrayType::Pinned);
+  CudaArray<SystemShared> sysShar(1, CudaArrayType::Pinned);
   HostDeque<GpuPartSol> dfsAsg;
   dfsAsg.Init( maxRamBytes / 2 / (DivUp(formula.nVars_, 32)*4 + sizeof(GpuPartSol)) );
-  trav.Get()->dfsAsg_ = dfsAsg.Marshal();
+  sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);
     seenAsgs[i].Init(cas[i].freeBytes_, cas[i]);
   }
   GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas);
+  std::vector<HostLinkage> linkages;
   HostLinkage::Init(formula, cas, linkages);
+
+
   return 0;
 }
