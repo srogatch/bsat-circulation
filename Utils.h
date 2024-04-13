@@ -13,7 +13,7 @@
 #include <windows.h>
 #include <iostream>
 
-unsigned long long GetTotalSystemMemory() {
+static unsigned long long GetTotalSystemMemory() {
     MEMORYSTATUSEX status;
     status.dwLength = sizeof(status);
     GlobalMemoryStatusEx(&status);
@@ -24,7 +24,7 @@ unsigned long long GetTotalSystemMemory() {
 
 #include <unistd.h>
 
-unsigned long long GetTotalSystemMemory()
+static unsigned long long GetTotalSystemMemory()
 {
     unsigned long long pages = sysconf(_SC_PHYS_PAGES);
     unsigned long long page_size = sysconf(_SC_PAGE_SIZE);

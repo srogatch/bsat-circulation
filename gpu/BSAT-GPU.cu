@@ -1,130 +1,13 @@
 #include "Common.h"
 
+constexpr const uint32_t kThreadsPerBlock = 128;
+
 #include "GpuLinkage.cuh"
 #include "GpuConstants.cuh"
 // This must be included after gpHashSeries is defined
 #include "GpuBitVector.cuh"
 #include "GpuTraversal.cuh"
-
-constexpr const uint32_t kThreadsPerBlock = 128;
-
-struct Hasher {
-  __uint128_t hash_;
-
-  __host__ __device__ Hasher(const VciGpu item) {
-    hash_ = item * kHashBase + 37;
-  }
-};
-
-template<typename TItem> struct GpuTrackingVector {
-  __uint128_t hash_ = 0;
-  TItem* items_ = nullptr;
-  VciGpu count_ = 0, capacity_ = 0;
-
-  GpuTrackingVector() = default;
-
-  __host__ __device__ GpuTrackingVector(const GpuTrackingVector& src) {
-    hash_ = src.hash_;
-    count_ = src.count_;
-    free(items_);
-    capacity_ = src.count_;
-    items_ = malloc(capacity_ * sizeof(TItem));
-    // TODO: vectorize
-    for(VciGpu i=0; i<count_; i++) {
-      items_[i] = src.items_[i];
-    }
-  }
-
-  __host__ __device__ GpuTrackingVector& operator=(const GpuTrackingVector& src) {
-    if(this != &src) {
-      hash_ = src.hash_;
-      count_ = src.count_;
-      if(capacity_ < src.count_) {
-        free(items_);
-        capacity_ = src.count_;
-        items_ = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
-      }
-      // TODO: vectorize
-      for(VciGpu i=0; i<count_; i++) {
-        items_[i] = src.items_[i];
-      }
-    }
-    return *this;
-  }
-
-  // Returns whether the vector was resized
-  __host__ __device__ bool Reserve(const VciGpu newCap) {
-    if(newCap <= capacity_) {
-      return false;
-    }
-    VciGpu maxCap = max(capacity_, newCap);
-    capacity_ = maxCap + (maxCap>>1) + 16;
-    TItem* newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
-    // TODO: vectorize
-    for(VciGpu i=0; i<count_; i++) {
-      newItems[i] = items_[i];
-    }
-    free(items_);
-    items_ = newItems;
-    return true;
-  }
-
-  // Returns whether the item existed in the collection
-  __host__ __device__ bool Flip(const TItem item) {
-    hash_ ^= Hasher(item).hash_;
-    for(VciGpu i=count_-1; i>=0; i--) {
-      if(items_[i] == item) {
-        items_[i] = items_[count_-1];
-        count_--;
-        return true;
-      }
-    }
-    Reserve(count_+1);
-    items_[count_] = item;
-    count_++;
-    return false;
-  }
-
-  // Returns whether a new item was added, or a duplicate existed
-  template<bool checkDup> __host__ __device__ bool Add(const TItem item) {
-    if constexpr(checkDup) {
-      for(VciGpu i=count_-1; i>=0; i--) {
-        if(items_[i] == item) {
-          return false;
-        }
-      }
-    }
-    hash_ ^= Hasher(item).hash_;
-    Reserve(count_+1);
-    items_[count_] = item;
-    count_++;
-    return true;
-  }
-
-  // Returns true if the item had existed in the collection
-  __host__ __device__ bool Remove(const TItem& item) {
-    for(VciGpu i=count_-1; i>=0; i--) {
-      if(items_[i] == item) {
-        hash_ ^= Hasher(item).hash_;
-        items_[i] = items_[count_-1];
-        return true;
-      }
-    }
-    return false;
-  }
-
-  __host__ __device__ ~GpuTrackingVector() {
-    free(items_);
-    #ifndef NDEBUG
-    items_ = nullptr;
-    #endif // NDEBUG
-  }
-
-  __host__ __device__ void Clear() {
-    hash_ = 0;
-    count_ = 0;
-  }
-};
+#include "GpuTrackingVector.cuh"
 
 struct GpuExec {
   Xoshiro256ss rng_; // seed it on the host
@@ -132,24 +15,6 @@ struct GpuExec {
   GpuTrackingVector<VciGpu> unsatClauses_;
   // GpuTrackingVector<VciGpu> front_;
 };
-
-__device__ void UpdateUnsatCs(const GpuLinkage& linkage, const VciGpu aVar, const GpuBitVector& next,
-  GpuTrackingVector<VciGpu>& unsatClauses)
-{
-  const int8_t signSat = next[aVar];
-  const VciGpu nSatArcs = linkage.VarArcCount(aVar, signSat);
-  for(VciGpu i=0; i<nSatArcs; i++) {
-    const VciGpu iClause = linkage.VarGetTarget(aVar, signSat, i);
-    const VciGpu aClause = abs(iClause);
-    unsatClauses.Remove(aClause);
-  }
-  const VciGpu nUnsatArcs = linkage.VarArcCount(aVar, -signSat);
-  for(VciGpu i=0; i<nUnsatArcs; i++) {
-    const VciGpu iClause = linkage.VarGetTarget(aVar, -signSat, i);
-    const VciGpu aClause = abs(iClause);
-    unsatClauses.Add<true>(aClause);
-  }
-}
 
 __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, const GpuLinkage linkage, GpuExec *execs,
   GpuTraversal* trav, GpuRainbow seenAsg, const GpuBitVector maxPartial, VciGpu* pnUnsatExecs)
