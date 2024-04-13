@@ -152,7 +152,7 @@ __device__ void UpdateUnsatCs(const GpuLinkage& linkage, const VciGpu aVar, cons
 }
 
 __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, const GpuLinkage linkage, GpuExec *execs,
-  GpuTraversal* trav, const GpuBitVector maxPartial, VciGpu* pnUnsatExecs)
+  GpuTraversal* trav, GpuRainbow seenAsg, const GpuBitVector maxPartial, VciGpu* pnUnsatExecs)
 {
   constexpr const uint32_t cCombsPerStep = 1u<<11;
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
@@ -212,7 +212,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
     // The first index participating in combinations - upon success, can be shifted
     VciGpu combFirst = 0;
     while(curComb <= endComb) {
-      if(!trav->IsSeenAsg(curExec.next_)) {
+      if(!trav->IsSeenAsg(curExec.next_, seenAsg)) {
         if(curExec.unsatClauses_.count_ < bestUnsat) {
           bestUnsat = curExec.unsatClauses_.count_;
           bestRevVars = stepRevs;
@@ -229,7 +229,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
           }
         }
         if(curExec.unsatClauses_.count_ <= *pnGlobalUnsat) {
-          trav->RecordAsg(curExec.next_, bestUnsat);
+          trav->RecordAsg(curExec.next_, bestUnsat, seenAsg);
         }
       }
       for(uint8_t i=0; ; i++) {
@@ -245,7 +245,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
     }
     // Check the combinations results
     if(bestUnsat > linkage.GetClauseCount()) {
-      if(trav.StepBack(curExec.next_, curExec.unsatClauses_, linkage, linkage.GetClauseCount())) {
+      if(trav->StepBack(curExec.next_, curExec.unsatClauses_, linkage, linkage.GetClauseCount())) {
         continue;
       }
       // Increment the unsatisfied executors counter
@@ -299,19 +299,19 @@ int main(int argc, char* argv[]) {
   gpuErrchk(cudaGetDeviceCount(&nGpus));
   std::vector<CudaAttributes> cas(nGpus);
   std::vector<HostLinkage> linkages(nGpus);
-  HostDeque<GpuPartSol> dfsPartial;
-  dfsPartial.Init( maxRamBytes / 2 / (DivUp(formula.nVars_, 32)*4 + sizeof(GpuPartSol)) );
-  HostRainbow hRainbow; // must be one per device
+  std::vector<HostRainbow> seenAsgs(nGpus); // must be one per device
+
   // Pinned should be better than managed here, because managed memory transfers at page granularity,
   // while Pinned - at PCIe bus granularity, which is much smaller.
   CudaArray<GpuTraversal> trav(1, CudaArrayType::Pinned);
+  HostDeque<GpuPartSol> dfsAsg;
+  dfsAsg.Init( maxRamBytes / 2 / (DivUp(formula.nVars_, 32)*4 + sizeof(GpuPartSol)) );
+  trav.Get()->dfsAsg_ = dfsAsg.Marshal();
+
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);
     // TODO: compute linkages on the CPU once, rather than building it again and again for every GPU
     linkages[i].Init(formula, cas[i]);
-    dfses[i].Init()
-    travs[i] = CudaArray<GpuTraversal>(1, CudaArrayType::Managed);
-    travs[i].Get()->
     seenAsgs[i].Init(cas[i].freeBytes_, cas[i]);
   }
   GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas);
