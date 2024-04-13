@@ -73,8 +73,10 @@ struct GpuBitVector {
     return (bits_[index/32] & (1u<<(index&31))) ? 1 : -1;
   }
 
-  __device__ void Flip(const VciGpu index)  {
-    hash_ ^= gpHashSeries[index];
+  template<bool doHash = true> __device__ void Flip(const VciGpu index) {
+    if constexpr(doHash) {
+      hash_ ^= gpHashSeries[index];
+    }
     bits_[index/32] ^= (1u<<(index&31));
   }
 };

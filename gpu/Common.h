@@ -36,6 +36,11 @@ inline void gpuAssert(cublasStatus_t code, const char *file, int line, bool abor
   }
 }
 
+template<typename T1, typename T2> constexpr T1 AlignUp(const T1 count, const T2 alignment) {
+  const T1 t = count + alignment - 1;
+  return t - t%alignment;
+}
+
 // https://gist.github.com/alexshtf/eb5128b3e3e143187794
 namespace Detail
 {

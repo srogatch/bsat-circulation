@@ -15,9 +15,13 @@ struct SystemShared {
   VciGpu nUnsatExecs_;
 };
 
+struct PerGpuInfo {
+  uint32_t nStepBlocks_;
+};
+
 struct GpuExec {
   Xoshiro256ss rng_; // seed it on the host
-  GpuBitVector nextAsg_;
+  GpuBitVector nextAsg_; // nVars+1 bits
   GpuTrackingVector<VciGpu> unsatClauses_;
   // GpuTrackingVector<VciGpu> front_;
 };
@@ -43,18 +47,11 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
         for(VciGpu j=0; j<varListLen; j++) {
           const VciGpu iVar = linkage.ClauseGetTarget(aClause, sign, j);
           const VciGpu aVar = abs(iVar);
-          if( curExec.nextAsg_[aVar] != Signum(iVar) ) {
-            varFront.Add<false>(aVar);
-            // TODO: this is incorrect - the same variable may appear with the opposite sign in another clause
-            curExec.nextAsg_.Flip(aVar);
-          }
+          varFront.Add<true>(aVar);
         }
       }
     }
-    // Flip back the marked vars
-    for(VciGpu i=0; i<varFront.count_; i++) {
-      curExec.nextAsg_.Flip(varFront.items_[i]);
-    }
+
     // Shuffle the front
     for(VciGpu i=0; i<varFront.count_; i++) {
       const VciGpu pos = i + curExec.rng_.Next() % (varFront.count_ - i);
@@ -206,12 +203,58 @@ int main(int argc, char* argv[]) {
   sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);
-    seenAsgs[i].Init(cas[i].freeBytes_, cas[i]);
   }
   GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas);
+
+  std::cout << "Choosing the initial assignment..." << std::endl;
+  
+  BitVector bestInitAsg = formula.ans_;
+  VciGpu bestInitNUnsat = formula.CountUnsat(formula.ans_);
+  std::cout << "All false: " << bestInitNUnsat << ", ";
+  std::cout.flush();
+
+  formula.ans_.SetTrue();
+  VciGpu altNUnsat = formula.CountUnsat(formula.ans_);
+  std::cout << "All true: " << altNUnsat << ", ";
+  std::cout.flush();
+  if(altNUnsat < bestInitNUnsat) {
+    bestInitNUnsat = altNUnsat;
+    bestInitAsg = formula.ans_;
+  }
+
+  formula.ans_.Randomize();
+  altNUnsat = formula.CountUnsat(formula.ans_);
+  std::cout << "Random: " << altNUnsat << std::endl;
+  if(altNUnsat < bestInitNUnsat) {
+    bestInitNUnsat = altNUnsat;
+    bestInitAsg = formula.ans_;
+  }
+
+  std::cout << "Preparing GPU data structures" << std::endl;
   std::vector<HostLinkage> linkages;
   HostLinkage::Init(formula, cas, linkages);
-
-
+  std::vector<CudaArray<GpuExec>> execs(nGpus);
+  std::vector<PerGpuInfo> pgis(nGpus);
+  // BPCT - Bytes Per CUDA Thread
+  const uint64_t hostHeapBpct
+    = sizeof(GpuExec)
+    + AlignUp(DivUp(formula.nVars_, 32) * 4, 256) // nextAsg_
+    + 512; // Thread stack
+  const uint64_t deviceHeapBpct
+    // GpuExec::unsatClauses_
+    // varFront
+    // stepRevs
+    // bestRevVars
+    = (bestInitNUnsat + (bestInitNUnsat>>1) + 16) * sizeof(VciGpu) * 4;
+  
+  for(int i=0; i<nGpus; i++) {
+    int nBlocksPerSM = 0;
+    gpuErrchk(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nBlocksPerSM, &StepKernel, kThreadsPerBlock, 0));
+    // This is the upper bound for now without the correction for the actually available VRAM
+    pgis[i].nStepBlocks_ = nBlocksPerSM * cas[i].cdp_.multiProcessorCount;
+    const uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * (hostHeapBpct + deviceHeapBpct);
+    // TODO: refresh the VRAM free bytes with a query
+    seenAsgs[i].Init(cas[i].freeBytes_, cas[i]);
+  }
   return 0;
 }
