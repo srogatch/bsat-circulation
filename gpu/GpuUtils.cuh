@@ -7,3 +7,9 @@
 #include <cstdint>
 
 using VciGpu = int32_t;
+
+template<typename T1, typename T2> __host__ __device__ void Swap(T1& a, T2& b) {
+  T1 t = a;
+  a = b;
+  b = t;
+}

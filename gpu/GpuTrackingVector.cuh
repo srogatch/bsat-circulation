@@ -120,4 +120,31 @@ template<typename TItem> struct GpuTrackingVector {
     hash_ = 0;
     count_ = 0;
   }
+
+  __host__ __device__ void Sort() {
+    // Heapify: the greatest item will move to the beginning of the array
+    for(VciGpu i=1; i<count_; i++) {
+      VciGpu pos = i;
+      while(pos > 0 && items_[(pos-1)/2] < items_[pos]) {
+        Swap(items_[pos], items_[(pos-1)/2]);
+        pos = (pos-1) / 2;
+      }
+    }
+    // Sort by popping heap
+    for(VciGpu i=count_-1; i>0; i--) {
+      Swap(items_[i], items_[0]);
+      VciGpu pos = 0;
+      while(pos*2 + 1 < i) {
+        VciGpu iChild = pos*2 + 1;
+        if(pos*2 + 2 < i && items_[iChild] < items_[pos*2 + 2]) {
+          iChild = pos*2 + 2;
+        }
+        if(items_[pos] < items_[iChild]) {
+          pos = iChild;
+        } else {
+          break;
+        }
+      }
+    }
+  }
 };

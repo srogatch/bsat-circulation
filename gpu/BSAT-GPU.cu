@@ -118,6 +118,11 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
       // The current executor considers it unsatisfiable, but let's wait for the rest of executors
       break;
     }
+
+    // Revert to the best assignment
+    stepRevs.Sort();
+    bestRevVars.Sort();
+
     if(*pnGlobalUnsat < nStartUnsat) {
       break; // some other executor found an improvement
     }
