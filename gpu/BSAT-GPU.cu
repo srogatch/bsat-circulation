@@ -123,28 +123,22 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
     stepRevs.Sort();
     bestRevVars.Sort();
     VciGpu iSR = 0, iBR = 0;
-    while(iSR < stepRevs.count_ && iBR < bestRevVars.count_) {
-      if(stepRevs.items_[iSR] == bestRevVars.items_[iBR]) {
+    while(iSR < stepRevs.count_ || iBR < bestRevVars.count_) {
+      VciGpu aVar;
+      if(iBR >= bestRevVars.count_ || stepRevs.items_[iSR] < bestRevVars.items_[iBR]) {
+        aVar = stepRevs.items_[iSR];
+        iSR++;
+      } else if(iSR >= stepRevs.count_ || bestRevVars.items_[iBR] < stepRevs.items_[iSR]) {
+        aVar = bestRevVars.items_[iBR];
+        iBR++;
+      } else {
+        assert(iSR < stepRevs.count_);
+        assert(iBR < bestRevVars.count_);
+        assert(stepRevs.items_[iSR] == bestRevVars.items_[iBR]);
         iSR++;
         iBR++;
         continue;
       }
-      VciGpu aVar;
-      if(stepRevs.items_[iSR] < bestRevVars.items_[iBR]) {
-        aVar = stepRevs.items_[iSR];
-        iSR++;
-      } else {
-        aVar = bestRevVars.items_[iBR];
-        iBR++;
-      }
-      curExec.next_.Flip(aVar);
-      UpdateUnsatCs(linkage, aVar, curExec.next_, curExec.unsatClauses_);
-    }
-    const GpuTrackingVector<VciGpu>& remFlips = (iSR < stepRevs.count_) ? stepRevs : bestRevVars;
-    VciGpu iRem = (iSR < stepRevs.count_) ? iSR : iBR;
-    while(iRem < remFlips.count_) {
-      const VciGpu aVar = remFlips.items_[iRem];
-      iRem++;
       curExec.next_.Flip(aVar);
       UpdateUnsatCs(linkage, aVar, curExec.next_, curExec.unsatClauses_);
     }
