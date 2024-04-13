@@ -73,6 +73,9 @@ struct HostLinkage {
 
   HostLinkage() = default;
 
-  void Init(const Formula& formula, const CudaAttributes& ca);
   bool Marshal(GpuLinkage& gl);
+
+
+  static void Init(
+    const Formula& formula, const std::vector<CudaAttributes>& cas, std::vector<HostLinkage>& linkages);
 };

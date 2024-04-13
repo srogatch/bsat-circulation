@@ -298,7 +298,7 @@ int main(int argc, char* argv[]) {
   int nGpus = 0;
   gpuErrchk(cudaGetDeviceCount(&nGpus));
   std::vector<CudaAttributes> cas(nGpus);
-  std::vector<HostLinkage> linkages(nGpus);
+  std::vector<HostLinkage> linkages;
   std::vector<HostRainbow> seenAsgs(nGpus); // must be one per device
 
   // Pinned should be better than managed here, because managed memory transfers at page granularity,
@@ -307,15 +307,11 @@ int main(int argc, char* argv[]) {
   HostDeque<GpuPartSol> dfsAsg;
   dfsAsg.Init( maxRamBytes / 2 / (DivUp(formula.nVars_, 32)*4 + sizeof(GpuPartSol)) );
   trav.Get()->dfsAsg_ = dfsAsg.Marshal();
-
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);
-    // TODO: compute linkages on the CPU once, rather than building it again and again for every GPU
-    linkages[i].Init(formula, cas[i]);
     seenAsgs[i].Init(cas[i].freeBytes_, cas[i]);
   }
   GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas);
-
-
+  HostLinkage::Init(formula, cas, linkages);
   return 0;
 }
