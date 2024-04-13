@@ -8,6 +8,31 @@
 #include <thread>
 #include <algorithm>
 
+#ifdef _WIN32
+
+#include <windows.h>
+#include <iostream>
+
+unsigned long long GetTotalSystemMemory() {
+    MEMORYSTATUSEX status;
+    status.dwLength = sizeof(status);
+    GlobalMemoryStatusEx(&status);
+    return status.ullTotalPhys;
+}
+
+#else
+
+#include <unistd.h>
+
+unsigned long long GetTotalSystemMemory()
+{
+    unsigned long long pages = sysconf(_SC_PHYS_PAGES);
+    unsigned long long page_size = sysconf(_SC_PAGE_SIZE);
+    return pages * page_size;
+}
+
+#endif // _WIN32
+
 constexpr const uint32_t kCacheLineSize = 64;
 constexpr const uint32_t kRamPageBytes = 4096;
 

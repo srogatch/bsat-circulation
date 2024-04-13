@@ -128,6 +128,9 @@ template<typename TItem> struct GpuTrackingVector {
 
 struct GpuExec {
   Xoshiro256ss rng_; // seed it on the host
+  GpuBitVector next_;
+  GpuTrackingVector<VciGpu> unsatClauses_;
+  // GpuTrackingVector<VciGpu> front_;
 };
 
 __device__ void UpdateUnsatCs(const GpuLinkage& linkage, const VciGpu aVar, const GpuBitVector& next,
@@ -149,21 +152,18 @@ __device__ void UpdateUnsatCs(const GpuLinkage& linkage, const VciGpu aVar, cons
 }
 
 __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, const GpuLinkage linkage, GpuExec *execs,
-  GpuTraversal* trav)
+  GpuTraversal* trav, const GpuBitVector maxPartial, VciGpu* pnUnsatExecs)
 {
   constexpr const uint32_t cCombsPerStep = 1u<<11;
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
   const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
   GpuExec& curExec = execs[iThread];
 
-  GpuBitVector next;
-  GpuTrackingVector<VciGpu> unsatClauses;
-  GpuTrackingVector<VciGpu> front;
-  while(unsatClauses.count_ >= nStartUnsat) {
+  while(curExec.unsatClauses_.count_ >= nStartUnsat && *pnGlobalUnsat >= nStartUnsat) {
     // Get the variables that affect the unsatisfied clauses
     GpuTrackingVector<VciGpu> varFront;
     uint32_t totListLen = 0;
-    const GpuTrackingVector<VciGpu>& combClauses = unsatClauses; // front ?
+    const GpuTrackingVector<VciGpu>& combClauses = curExec.unsatClauses_; // front_ ?
     for(VciGpu i=0; i<combClauses.count_; i++) {
       for(int8_t sign=-1; sign<=1; sign+=2) {
         const VciGpu aClause = combClauses.items_[i];
@@ -172,16 +172,17 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
         for(VciGpu j=0; j<varListLen; j++) {
           const VciGpu iVar = linkage.ClauseGetTarget(aClause, sign, j);
           const VciGpu aVar = abs(iVar);
-          if( next[aVar] != Signum(iVar) ) {
+          if( curExec.next_[aVar] != Signum(iVar) ) {
             varFront.Add<false>(aVar);
-            next.Flip(aVar);
+            // TODO: this is incorrect - the same variable may appear with the opposite sign in another clause
+            curExec.next_.Flip(aVar);
           }
         }
       }
     }
     // Flip back the marked vars
     for(VciGpu i=0; i<varFront.count_; i++) {
-      next.Flip(varFront.items_[i]);
+      curExec.next_.Flip(varFront.items_[i]);
     }
     // Shuffle the front
     for(VciGpu i=0; i<varFront.count_; i++) {
@@ -205,34 +206,38 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
     {
       const VciGpu aVar = varFront.items_[0];
       stepRevs.Add<false>(aVar);
-      next.Flip(aVar);
-      UpdateUnsatCs(linkage, aVar, next, unsatClauses);
+      curExec.next_.Flip(aVar);
+      UpdateUnsatCs(linkage, aVar, curExec.next_, curExec.unsatClauses_);
     }
     // The first index participating in combinations - upon success, can be shifted
     VciGpu combFirst = 0;
     while(curComb <= endComb) {
-      if(!trav->IsSeenAsg(next)) {
-        if(unsatClauses.count_ < bestUnsat) {
-          bestUnsat = unsatClauses.count_;
+      if(!trav->IsSeenAsg(curExec.next_)) {
+        if(curExec.unsatClauses_.count_ < bestUnsat) {
+          bestUnsat = curExec.unsatClauses_.count_;
           bestRevVars = stepRevs;
           if(bestUnsat < nStartUnsat) {
-            const VciGpu oldMin = atomicMin(pnGlobalUnsat, bestUnsat);
+            const VciGpu oldMin = atomicMin_system(pnGlobalUnsat, bestUnsat);
             if(oldMin > bestUnsat) {
               combFirst = combFirst + __log2f(curComb-1) + 1;
               curComb = 0;
+              const VciGpu remVF = varFront.count_ - combFirst;
+              if(remVF <= 31) {
+                endComb = min(endComb, (1u<<remVF)-1);
+              }
             }
           }
         }
-        if(unsatClauses.count_ <= *pnGlobalUnsat) {
-          trav->RecordAsg(next, bestUnsat);
+        if(curExec.unsatClauses_.count_ <= *pnGlobalUnsat) {
+          trav->RecordAsg(curExec.next_, bestUnsat);
         }
       }
       for(uint8_t i=0; ; i++) {
         curComb ^= 1ULL << i;
         const VCIndex aVar = varFront.items_[i+combFirst];
         stepRevs.Flip(aVar);
-        next.Flip(aVar);
-        UpdateUnsatCs(linkage, aVar, next, unsatClauses);
+        curExec.next_.Flip(aVar);
+        UpdateUnsatCs(linkage, aVar, curExec.next_, curExec.unsatClauses_);
         if( (curComb & (1ULL << i)) != 0 ) {
           break;
         }
@@ -240,7 +245,16 @@ __global__ void StepKernel(const VciGpu nStartUnsat, VciGpu* pnGlobalUnsat, cons
     }
     // Check the combinations results
     if(bestUnsat > linkage.GetClauseCount()) {
-
+      if(trav.StepBack(curExec.next_, curExec.unsatClauses_, linkage, linkage.GetClauseCount())) {
+        continue;
+      }
+      // Increment the unsatisfied executors counter
+      atomicAdd_system(pnUnsatExecs, 1);
+      // The current executor considers it unsatisfiable, but let's wait for the rest of executors
+      break;
+    }
+    if(*pnGlobalUnsat < nStartUnsat) {
+      break; // some other executor found an improvement
     }
   }
 }
@@ -250,8 +264,16 @@ int main(int argc, char* argv[]) {
   const auto tmVeryStart = tmStart;
 
   if(argc < 3) {
-    std::cerr << "Usage: " << argv[0] << " <input.dimacs> <output.dimacs>" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " <input.dimacs> <output.dimacs> [<RamGBs>]" << std::endl;
     return 1;
+  }
+
+  uint64_t maxRamBytes = 0;
+  if(argc >= 4) {
+    maxRamBytes = std::stoull(argv[3]) * 1024 * uint64_t(1024) * 1024;
+  }
+  if(maxRamBytes == 0) {
+    maxRamBytes = GetTotalSystemMemory() * 0.95;
   }
   
   // TODO: does it override the environment variable?
@@ -277,11 +299,19 @@ int main(int argc, char* argv[]) {
   gpuErrchk(cudaGetDeviceCount(&nGpus));
   std::vector<CudaAttributes> cas(nGpus);
   std::vector<HostLinkage> linkages(nGpus);
-  std::vector<HostRainbow> seenAsgs(nGpus);
+  HostDeque<GpuPartSol> dfsPartial;
+  dfsPartial.Init( maxRamBytes / 2 / (DivUp(formula.nVars_, 32)*4 + sizeof(GpuPartSol)) );
+  HostRainbow hRainbow; // must be one per device
+  // Pinned should be better than managed here, because managed memory transfers at page granularity,
+  // while Pinned - at PCIe bus granularity, which is much smaller.
+  CudaArray<GpuTraversal> trav(1, CudaArrayType::Pinned);
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);
     // TODO: compute linkages on the CPU once, rather than building it again and again for every GPU
     linkages[i].Init(formula, cas[i]);
+    dfses[i].Init()
+    travs[i] = CudaArray<GpuTraversal>(1, CudaArrayType::Managed);
+    travs[i].Get()->
     seenAsgs[i].Init(cas[i].freeBytes_, cas[i]);
   }
   GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas);
