@@ -17,7 +17,7 @@ struct SystemShared {
 
 struct GpuExec {
   Xoshiro256ss rng_; // seed it on the host
-  GpuBitVector next_;
+  GpuBitVector nextAsg_;
   GpuTrackingVector<VciGpu> unsatClauses_;
   // GpuTrackingVector<VciGpu> front_;
 };
@@ -43,17 +43,17 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
         for(VciGpu j=0; j<varListLen; j++) {
           const VciGpu iVar = linkage.ClauseGetTarget(aClause, sign, j);
           const VciGpu aVar = abs(iVar);
-          if( curExec.next_[aVar] != Signum(iVar) ) {
+          if( curExec.nextAsg_[aVar] != Signum(iVar) ) {
             varFront.Add<false>(aVar);
             // TODO: this is incorrect - the same variable may appear with the opposite sign in another clause
-            curExec.next_.Flip(aVar);
+            curExec.nextAsg_.Flip(aVar);
           }
         }
       }
     }
     // Flip back the marked vars
     for(VciGpu i=0; i<varFront.count_; i++) {
-      curExec.next_.Flip(varFront.items_[i]);
+      curExec.nextAsg_.Flip(varFront.items_[i]);
     }
     // Shuffle the front
     for(VciGpu i=0; i<varFront.count_; i++) {
@@ -77,13 +77,13 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
     {
       const VciGpu aVar = varFront.items_[0];
       stepRevs.Add<false>(aVar);
-      curExec.next_.Flip(aVar);
-      UpdateUnsatCs(linkage, aVar, curExec.next_, curExec.unsatClauses_);
+      curExec.nextAsg_.Flip(aVar);
+      UpdateUnsatCs(linkage, aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
     // The first index participating in combinations - upon success, can be shifted
     VciGpu combFirst = 0;
     while(curComb <= endComb) {
-      if(!sysShar->trav_.IsSeenAsg(curExec.next_, seenAsg)) {
+      if(!sysShar->trav_.IsSeenAsg(curExec.nextAsg_, seenAsg)) {
         if(curExec.unsatClauses_.count_ < bestUnsat) {
           bestUnsat = curExec.unsatClauses_.count_;
           bestRevVars = stepRevs;
@@ -100,15 +100,15 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
           }
         }
         if(curExec.unsatClauses_.count_ <= sysShar->nGlobalUnsat_) {
-          sysShar->trav_.RecordAsg(curExec.next_, bestUnsat, seenAsg);
+          sysShar->trav_.RecordAsg(curExec.nextAsg_, bestUnsat, seenAsg);
         }
       }
       for(uint8_t i=0; ; i++) {
         curComb ^= 1ULL << i;
         const VCIndex aVar = varFront.items_[i+combFirst];
         stepRevs.Flip(aVar);
-        curExec.next_.Flip(aVar);
-        UpdateUnsatCs(linkage, aVar, curExec.next_, curExec.unsatClauses_);
+        curExec.nextAsg_.Flip(aVar);
+        UpdateUnsatCs(linkage, aVar, curExec.nextAsg_, curExec.unsatClauses_);
         if( (curComb & (1ULL << i)) != 0 ) {
           break;
         }
@@ -116,7 +116,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
     }
     // Check the combinations results
     if(bestUnsat > linkage.GetClauseCount()) {
-      if(sysShar->trav_.StepBack(curExec.next_, curExec.unsatClauses_, linkage, linkage.GetClauseCount())) {
+      if(sysShar->trav_.StepBack(curExec.nextAsg_, curExec.unsatClauses_, linkage, linkage.GetClauseCount())) {
         continue;
       }
       // Increment the unsatisfied executors counter
@@ -145,8 +145,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
         iBR++;
         continue;
       }
-      curExec.next_.Flip(aVar);
-      UpdateUnsatCs(linkage, aVar, curExec.next_, curExec.unsatClauses_);
+      curExec.nextAsg_.Flip(aVar);
+      UpdateUnsatCs(linkage, aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
 
     if(sysShar->nGlobalUnsat_ < nStartUnsat) {
