@@ -15,15 +15,17 @@ struct SystemShared {
   VciGpu nUnsatExecs_;
 };
 
-struct PerGpuInfo {
-  uint32_t nStepBlocks_;
-};
-
 struct GpuExec {
   Xoshiro256ss rng_; // seed it on the host
   GpuBitVector nextAsg_; // nVars+1 bits
   GpuTrackingVector<VciGpu> unsatClauses_;
   // GpuTrackingVector<VciGpu> front_;
+};
+
+struct PerGpuInfo {
+  CudaArray<GpuExec> execs_;
+  CudaArray<__uint128_t> bvBufs_;
+  uint32_t nStepBlocks_;  
 };
 
 __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, const GpuLinkage linkage, GpuExec *execs,
@@ -195,12 +197,6 @@ int main(int argc, char* argv[]) {
   std::vector<CudaAttributes> cas(nGpus);
   std::vector<HostRainbow> seenAsgs(nGpus); // must be one per device
 
-  // Pinned should be better than managed here, because managed memory transfers at page granularity,
-  // while Pinned - at PCIe bus granularity, which is much smaller.
-  CudaArray<SystemShared> sysShar(1, CudaArrayType::Pinned);
-  HostPartSolDfs dfsAsg;
-  dfsAsg.Init( maxRamBytes / 2, formula.ans_.nBits_ );
-  sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);
   }
@@ -230,6 +226,8 @@ int main(int argc, char* argv[]) {
     bestInitAsg = formula.ans_;
   }
 
+  formula.ans_ = bestInitAsg;
+
   std::cout << "Preparing GPU data structures" << std::endl;
   std::vector<HostLinkage> linkages;
   HostLinkage::Init(formula, cas, linkages);
@@ -238,23 +236,84 @@ int main(int argc, char* argv[]) {
   // BPCT - Bytes Per CUDA Thread
   const uint64_t hostHeapBpct
     = sizeof(GpuExec)
-    + AlignUp(DivUp(formula.nVars_, 32) * 4, 256) // nextAsg_
-    + 512; // Thread stack
+    + DivUp(formula.nVars_, 128) * 16 // GpuExec::nextAsg_
+    + 128; // Thread stack
   const uint64_t deviceHeapBpct
     // GpuExec::unsatClauses_
     // varFront
     // stepRevs
     // bestRevVars
     = (bestInitNUnsat + (bestInitNUnsat>>1) + 16) * sizeof(VciGpu) * 4;
+
+  // Pinned should be better than managed here, because managed memory transfers at page granularity,
+  // while Pinned - at PCIe bus granularity, which is much smaller.
+  CudaArray<SystemShared> sysShar(1, CudaArrayType::Pinned);
+  HostPartSolDfs dfsAsg;
+  dfsAsg.Init( maxRamBytes / 2, formula.ans_.nBits_ );
+  sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
+  sysShar.Get()->nGlobalUnsat_ = bestInitNUnsat;
+  sysShar.Get()->nUnsatExecs_ = 0;
   
+  #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
+    gpuErrchk(cudaSetDevice(i));
     int nBlocksPerSM = 0;
     gpuErrchk(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nBlocksPerSM, &StepKernel, kThreadsPerBlock, 0));
     // This is the upper bound for now without the correction for the actually available VRAM
     pgis[i].nStepBlocks_ = nBlocksPerSM * cas[i].cdp_.multiProcessorCount;
-    const uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * (hostHeapBpct + deviceHeapBpct);
-    // TODO: refresh the VRAM free bytes with a query
-    seenAsgs[i].Init(cas[i].freeBytes_, cas[i]);
+    gpuErrchk(cudaMemGetInfo(&cas[i].freeBytes_, &cas[i].totalBytes_));
+    uint64_t maxRainbowBytes = cas[i].freeBytes_;
+    for(;;) {
+      uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct);
+      uint64_t rainbowBytes = 1ULL << int(std::log2(maxRainbowBytes));
+      uint64_t totVramReq = bytesBothHeaps + rainbowBytes;
+      if(totVramReq < cas[i].freeBytes_) {
+        break;
+      }
+      const double reduction = std::sqrt( double(cas[i].freeBytes_) / totVramReq );
+      maxRainbowBytes *= reduction;
+      pgis[i].nStepBlocks_ *= reduction;
+    }
+    seenAsgs[i].Init(maxRainbowBytes, cas[i]);
+    gpuErrchk(cudaMemGetInfo(&cas[i].freeBytes_, &cas[i].totalBytes_));
+    pgis[i].nStepBlocks_ = std::min<uint64_t>(
+      nBlocksPerSM * cas[i].cdp_.multiProcessorCount,
+      cas[i].freeBytes_
+        / (uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct))
+    );
+    // Enable dynamic memory allocation in the CUDA kernel
+    gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize,
+      pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct)));
+    pgis[i].bvBufs_ = CudaArray<__uint128_t>(
+      pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * DivUp(formula.nVars_, 128),
+      CudaArrayType::Device
+    );
+    pgis[i].execs_ = CudaArray<GpuExec>(
+      pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock), CudaArrayType::Device
+    );
+    std::unique_ptr<GpuExec[]> cpuExecs = std::make_unique<GpuExec[]>(pgis[i].execs_.Count());
+    std::random_device rd;
+    for(uint32_t j=0; j<pgis[i].execs_.Count(); j++) {
+      for(int k=0; k<sizeof(cpuExecs[j].rng_.s_); k+=sizeof(uint32_t)) {
+        reinterpret_cast<uint32_t*>(&cpuExecs[j].rng_.s_)[k] = rd();
+      }
+      cpuExecs[j].nextAsg_.hash_ = formula.ans_.hash_;
+      cpuExecs[j].nextAsg_.nBits_ = formula.nVars_ + 1;
+      cpuExecs[j].nextAsg_.bits_ = reinterpret_cast<uint32_t*>(
+        pgis[i].bvBufs_.Get() + DivUp(formula.nVars_, 128) * uint64_t(j));
+      gpuErrchk(cudaMemcpyAsync(cpuExecs[j].nextAsg_.bits_, formula.ans_.bits_.get(),
+        formula.ans_.nQwords_ * sizeof(uint64_t), cudaMemcpyHostToDevice, cas[i].cs_
+      ));
+    }
+    gpuErrchk(cudaMemcpyAsync(
+      pgis[i].execs_.Get(), cpuExecs.get(), pgis[i].execs_.Count() * sizeof(GpuExec),
+      cudaMemcpyHostToDevice, cas[i].cs_
+    ));
+  }
+  #pragma omp parallel for num_threads(nGpus)
+  for(int i=0; i<nGpus; i++) {
+    gpuErrchk(cudaSetDevice(i));
+    gpuErrchk(cudaStreamSynchronize(cas[i].cs_));
   }
   return 0;
 }

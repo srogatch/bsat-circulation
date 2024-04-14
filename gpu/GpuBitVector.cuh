@@ -14,7 +14,7 @@ struct GpuBitVector {
   }
 
   __host__ __device__ VciGpu VectCount() const {
-    return DivUp(DwordCount(), 4);
+    return DivUp(nBits_, 128);
   }
 
   GpuBitVector() = default;

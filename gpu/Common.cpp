@@ -11,8 +11,6 @@ void CudaAttributes::Init(const int i_gpu) {
   std::cout << "Using device #" << i_gpu << ": " << cdp_.name << std::endl;
 
   gpuErrchk(cudaMemGetInfo(&freeBytes_, &totalBytes_));
-  // Enable mergesort, that allocates device memory
-  // gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize, free_bytes>>1));
 
   gpuErrchk(cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync | cudaDeviceMapHost | cudaDeviceLmemResizeToMax));
 
