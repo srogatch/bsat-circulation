@@ -98,6 +98,8 @@ struct GpuExec {
 struct PerGpuInfo {
   CudaArray<GpuExec> execs_;
   CudaArray<__uint128_t> bvBufs_;
+  GpuLinkage gl_;
+  GpuRainbow gr_;
   uint32_t nStepBlocks_;  
 };
 
@@ -337,6 +339,7 @@ int main(int argc, char* argv[]) {
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
     gpuErrchk(cudaSetDevice(i));
+    linkages[i].Marshal(pgis[i].gl_);
     int nBlocksPerSM = 0;
     gpuErrchk(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nBlocksPerSM, &StepKernel, kThreadsPerBlock, 0));
     // This is the upper bound for now without the correction for the actually available VRAM
@@ -394,7 +397,65 @@ int main(int argc, char* argv[]) {
   for(int i=0; i<nGpus; i++) {
     gpuErrchk(cudaSetDevice(i));
     gpuErrchk(cudaStreamSynchronize(cas[i].cs_));
+    seenAsgs[i].Marshal(pgis[i].gr_);
   }
-  
+
+  std::atomic<VciGpu> bestNUnsat = bestInitNUnsat;
+  std::thread solUpdater([&] {
+    BitVector asg(formula.nVars_ + 1);
+    VciGpu nUnsat;
+    while(bestNUnsat > 0) {
+      if(!sysShar.Get()->Consume(asg, nUnsat)) {
+        std::this_thread::sleep_for(std::chrono::microseconds(10));
+        continue;
+      }
+      if(nUnsat < bestNUnsat) {
+        bestNUnsat = nUnsat;
+        formula.ans_ = asg;
+      }
+    }
+  });
+
+  VciGpu nStartUnsat = bestNUnsat;
+  auto reportStats = [&] {
+    auto tmEnd = std::chrono::steady_clock::now();
+    nStartUnsat = bestNUnsat;
+    double nSec = std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmStart).count() / 1e9;
+    double clausesPerSec = (prevNUnsat - nStartUnsat) / nSec;
+    std::cout << "\n\tUnsatisfied clauses: " << nStartUnsat << " - elapsed " << nSec << " seconds, ";
+    if(clausesPerSec >= 1 || clausesPerSec == 0) {
+      std::cout << clausesPerSec << " clauses per second.";
+    } else {
+      std::cout << 1.0 / clausesPerSec << " seconds per clause.";
+    }
+    std::cout << " Time since very start: "
+      << std::chrono::duration_cast<std::chrono::nanoseconds>(tmEnd - tmVeryStart).count() / (60 * 1e9)
+      << " minutes." << std::endl;
+    tmStart = tmEnd;
+    prevNUnsat = nStartUnsat;
+  };
+
+  while(bestNUnsat > 0) {
+    reportStats();
+    #pragma omp parallel for num_threads(nGpus)
+    for(int i=0; i<nGpus; i++) {
+      gpuErrchk(cudaSetDevice(i));
+      StepKernel<<<pgis[i].nStepBlocks_, kThreadsPerBlock, 0, cas[i].cs_>>>(
+        nStartUnsat, sysShar.Get(), pgis[i].gl_, pgis[i].execs_.Get(), pgis[i].gr_
+      );
+      gpuErrchk(cudaGetLastError());
+    }
+    #pragma omp parallel for num_threads(nGpus)
+    for(int i=0; i<nGpus; i++) {
+      gpuErrchk(cudaSetDevice(i));
+      gpuErrchk(cudaStreamSynchronize(cas[i].cs_));
+    }
+  }
+  reportStats();
+  solUpdater.join();
+
+  if(nStartUnsat == 0) {
+    std::cout << "SATISFIED" << std::endl;
+  }
   return 0;
 }
