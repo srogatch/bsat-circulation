@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GpuDeque.cuh"
+#include "PartSolDfs.cuh"
 #include "GpuRainbow.cuh"
 #include "GpuBitVector.cuh"
 #include "GpuTrackingVector.cuh"

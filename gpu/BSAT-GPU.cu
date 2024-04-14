@@ -199,7 +199,7 @@ int main(int argc, char* argv[]) {
   // while Pinned - at PCIe bus granularity, which is much smaller.
   CudaArray<SystemShared> sysShar(1, CudaArrayType::Pinned);
   HostDeque<GpuPartSol> dfsAsg;
-  dfsAsg.Init( maxRamBytes / 2 / (DivUp(formula.nVars_, 32)*4 + sizeof(GpuPartSol)) );
+  dfsAsg.Init( maxRamBytes / 2 );
   sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);
