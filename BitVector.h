@@ -11,14 +11,14 @@
 struct BitVector {
   // One standard page of RAM at once
   static constexpr const uint32_t cParChunkSize = kRamPageBytes/sizeof(uint64_t);
-  static std::unique_ptr<uint128[]> hashSeries_;
+  static std::unique_ptr<__uint128_t[]> hashSeries_;
   std::unique_ptr<uint64_t[]> bits_;
   VCIndex nQwords_ = 0;
   VCIndex nBits_ = 0;
-  uint128 hash_ = 0;
+  __uint128_t hash_ = 0;
 
   static void CalcHashSeries(const int64_t nVars) {
-    hashSeries_.reset(new uint128[nVars+1]);
+    hashSeries_.reset(new __uint128_t[nVars+1]);
     hashSeries_[0] = 1;
     for(int64_t i=1; i<=nVars; i++) {
       hashSeries_[i] = hashSeries_[i-1] * kHashBase;
@@ -129,8 +129,8 @@ template<> struct hash<BitVector> {
   }
 };
 
-template<> struct hash<uint128> {
-  inline std::size_t operator()(const uint128 x) const {
+template<> struct hash<__uint128_t> {
+  inline std::size_t operator()(const __uint128_t x) const {
     return (x >> 64) * 1949 ^ (x & uint64_t(-1LL));
   }
 };

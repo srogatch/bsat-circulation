@@ -38,12 +38,11 @@ constexpr const uint32_t kRamPageBytes = 4096;
 
 static const uint32_t nSysCpus = std::thread::hardware_concurrency();
 
-typedef unsigned __int128 uint128;
 typedef int64_t VCIndex; // vertex or clause index
 
-constexpr const uint128 kHashBase =
-    (uint128(244)  * uint128(1000*1000*1000) * uint128(1000*1000*1000) + uint128(903443422803031898ULL)) * uint128(1000*1000*1000) * uint128(1000*1000*1000)
-    + uint128(471395581046679967ULL);
+constexpr const __uint128_t kHashBase =
+    (__uint128_t(244)  * __uint128_t(1000*1000*1000) * __uint128_t(1000*1000*1000) + __uint128_t(903443422803031898ULL)) * __uint128_t(1000*1000*1000) * __uint128_t(1000*1000*1000)
+    + __uint128_t(471395581046679967ULL);
 
 template<typename T, typename U> constexpr T DivUp(const T a, const U b) {
   return (a + T(b) - 1) / T(b);
@@ -181,8 +180,8 @@ inline void HardFlush(std::ofstream& ofs) {
 
 namespace std {
 
-template<> struct hash<pair<uint128, uint128>> {
-  uint128 operator()(const pair<uint128, uint128>& v) const {
+template<> struct hash<pair<__uint128_t, __uint128_t>> {
+  __uint128_t operator()(const pair<__uint128_t, __uint128_t>& v) const {
     return v.first * 1949 + v.second * 2011;
   }
 };

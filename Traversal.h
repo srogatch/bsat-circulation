@@ -29,9 +29,9 @@ struct Point {
 
 struct Traversal {
   static constexpr const int64_t cMaxDfsRamBytes = 64ULL * 1024ULL * 1024ULL * 1024ULL;
-  TrackingSet<uint128> seenFront_;
-  TrackingSet<uint128> seenAssignment_;
-  TrackingSet<std::pair<uint128, uint128>, std::hash<std::pair<uint128, uint128>>> seenMove_;
+  TrackingSet<__uint128_t> seenFront_;
+  TrackingSet<__uint128_t> seenAssignment_;
+  TrackingSet<std::pair<__uint128_t, __uint128_t>, std::hash<std::pair<__uint128_t, __uint128_t>>> seenMove_;
   std::deque<Point> dfs_;
   mutable std::atomic_flag syncDfs_ = ATOMIC_FLAG_INIT;
 

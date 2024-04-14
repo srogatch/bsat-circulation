@@ -15,7 +15,7 @@ template<typename TItem, typename THasher> struct Bucket {
 };
 
 template<typename TItem> struct MulKHashBaseWithSalt {
-  uint128 operator()(const TItem& item) const {
+  __uint128_t operator()(const TItem& item) const {
     return item * kHashBase + 37;
   }
 };
@@ -102,7 +102,7 @@ template<typename T> inline void SortMultiItems(std::vector<MultiItem<T>>& vec, 
 }
 
 template<typename TItem> struct MulKHashBaseWithSalt<MultiItem<TItem>> {
-  uint128 operator()(const MultiItem<TItem>& multiItem) const {
+  __uint128_t operator()(const MultiItem<TItem>& multiItem) const {
     return multiItem.item_ * kHashBase + 37;
   }
 };
@@ -112,7 +112,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   static constexpr const int64_t cSyncContention = 3;
 
   std::unique_ptr<Bucket<TItem, THasher>[]> buckets_;
-  uint128 hash_ = 0;
+  __uint128_t hash_ = 0;
   std::atomic<int64_t> size_ = 0;
 
   TrackingSet(const bool empty = false) {
@@ -122,7 +122,7 @@ template<typename TItem, typename THasher=MulKHashBaseWithSalt<TItem>> struct Tr
   }
 
   void UpdateHash(const TItem& item) {
-    const uint128 h = THasher()(item);
+    const __uint128_t h = THasher()(item);
     reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[0].fetch_xor(h & uint64_t(-1LL));
     reinterpret_cast<std::atomic<uint64_t>*>(&hash_)[1].fetch_xor(h >> 64);
   }

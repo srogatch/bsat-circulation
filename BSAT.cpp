@@ -54,7 +54,7 @@ static void signalHandler(int signum) {
   _exit(signum);
 }
 
-std::unique_ptr<uint128[]> BitVector::hashSeries_ = nullptr;
+std::unique_ptr<__uint128_t[]> BitVector::hashSeries_ = nullptr;
 
 int main(int argc, char* argv[]) {
   auto tmStart = std::chrono::steady_clock::now();
