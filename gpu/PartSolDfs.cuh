@@ -46,10 +46,12 @@ struct GpuPartSolDfs {
     assert(pSer - (pVects_ + uint64_t(vectsPerPartSol_) * iLast_) == vectsPerPartSol_);
   }
 
-  __host__ __device__ bool PopBack(TItem& item) {
+  __host__ __device__ bool PopBack(GpuBitVector& ans, VciGpu& nUnsat) {
+    assert(ans.bits_ != nullptr);
     if( IsEmpty() ) {
       return false;
     }
+    
     item = std::move(items_[iLast_]);
     iLast_ = (iLast_ - 1 + capacity_) % capacity_;
     return true;
