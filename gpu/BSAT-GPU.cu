@@ -1,6 +1,7 @@
 #include "Common.h"
 
 constexpr const uint32_t kThreadsPerBlock = 128;
+constexpr const uint8_t kL2SolRoundRobin = 13; // log2( # solutions in the round-robin )
 
 #include "GpuLinkage.cuh"
 #include "GpuConstants.cuh"
@@ -11,8 +12,80 @@ constexpr const uint32_t kThreadsPerBlock = 128;
 
 struct SystemShared {
   GpuTraversal trav_;
+  __uint128_t *solRRasgs_;
+  VciGpu *solRRnsUnsat_;
   VciGpu nGlobalUnsat_;
   VciGpu nUnsatExecs_;
+  VciGpu firstSolRR_;
+  VciGpu limitSolRR_;
+  int syncRR_ = 0;
+
+  __device__ void Record(const GpuBitVector& asg, const VciGpu nUnsat) {
+    bool full;
+    VciGpu target = -1;
+    for(;;) {
+      // Lock
+      while(atomicCAS_system(&syncRR_, 0, 1) == 1) {
+        __nanosleep(256);
+      }
+      const VciGpu newLimit = (limitSolRR_ + 1) & ((VciGpu(1)<<kL2SolRoundRobin)-1);
+      full = (newLimit == firstSolRR_);
+      if(!full) {
+        target = limitSolRR_;
+        limitSolRR_ = newLimit;
+        // Lock
+        atomicExch_system(solRRnsUnsat_ + target, -1);
+      }
+      // Unlock
+      atomicExch_system(&syncRR_, 0);
+      if(!full) {
+        break;
+      }
+      __nanosleep(1024);
+    }
+    assert(!full);
+    assert( 0 <= target && target < (VciGpu(1)<<kL2SolRoundRobin) );
+    __uint128_t *pWrite = solRRasgs_ + uint64_t(target) * asg.VectCount();
+    for(VciGpu i=0; i<asg.VectCount(); i++) {
+      pWrite[i] = reinterpret_cast<__uint128_t*>(asg.bits_)[i];
+    }
+    // Unlock
+    atomicExch_system(solRRnsUnsat_+target, nUnsat);
+  }
+
+  __host__ bool Consume(BitVector& asg, VciGpu &nUnsat) volatile {
+    VciGpu iPop = -1;
+    static_assert(std::atomic<int>::is_always_lock_free, "Must be same size as int");
+    volatile std::atomic<int> *pSync = reinterpret_cast<volatile std::atomic<int>*>(&syncRR_);
+    
+    // Lock
+    int state = 0;
+    while(!pSync->compare_exchange_strong(state, 1)) {
+      assert(state == 1);
+      state = 0;
+      __builtin_ia32_pause();
+    }
+
+    const VciGpu iFirst = firstSolRR_;
+    if(iFirst != limitSolRR_) {
+      iPop = iFirst;
+      firstSolRR_ = (iFirst + 1) & ((VciGpu(1)<<kL2SolRoundRobin)-1);
+    }
+    
+    // Unlock
+    pSync->store(0);
+
+    if(iPop == -1) {
+      return false;
+    }
+
+    volatile std::atomic<VciGpu>* pCounterLock = reinterpret_cast<volatile std::atomic<VciGpu>*>(solRRnsUnsat_ + iPop);
+    while( (nUnsat = pCounterLock->load()) == -1 ) {
+      __builtin_ia32_pause();
+    }
+    memcpy(asg.bits_.get(), solRRasgs_ + uint64_t(iPop) * DivUp(asg.nBits_, 128), asg.nQwords_ * sizeof(uint64_t));
+    return true;
+  }
 };
 
 struct GpuExec {
@@ -33,7 +106,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
 {
   constexpr const uint32_t cCombsPerStep = 1u<<11;
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
-  const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
+  // const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
   GpuExec& curExec = execs[iThread];
 
   while(curExec.unsatClauses_.count_ >= nStartUnsat && sysShar->nGlobalUnsat_ >= nStartUnsat) {
@@ -68,7 +141,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
     GpuTrackingVector<VciGpu> bestRevVars;
     // Make sure the overhead of preparing the combinations doesn't outnumber the effort spent in combinations
     uint32_t endComb = max(cCombsPerStep, varFront.count_ + combClauses.count_ + totListLen);
-    if(varFront.count_ <= 31) {
+    if(varFront.count_ <= 31) [[unlikely]] {
       endComb = min(endComb, (1u<<varFront.count_)-1);
     }
     // Initial assignment
@@ -86,13 +159,14 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
         if(curExec.unsatClauses_.count_ < bestUnsat) {
           bestUnsat = curExec.unsatClauses_.count_;
           bestRevVars = stepRevs;
-          if(bestUnsat < nStartUnsat) {
+          if(bestUnsat < nStartUnsat) [[unlikely]] {
             const VciGpu oldMin = atomicMin_system(&sysShar->nGlobalUnsat_, bestUnsat);
-            if(oldMin > bestUnsat) {
+            if(oldMin > bestUnsat) [[likely]] {
+              sysShar->Record(curExec.nextAsg_, bestUnsat);
               combFirst = combFirst + __log2f(curComb-1) + 1;
               curComb = 0;
               const VciGpu remVF = varFront.count_ - combFirst;
-              if(remVF <= 31) {
+              if(remVF <= 31) [[unlikely]] {
                 endComb = min(endComb, (1u<<remVF)-1);
               }
             }
@@ -114,8 +188,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
       }
     }
     // Check the combinations results
-    if(bestUnsat > linkage.GetClauseCount()) {
-      if(sysShar->trav_.StepBack(curExec.nextAsg_, curExec.unsatClauses_, linkage, linkage.GetClauseCount())) {
+    if(bestUnsat > linkage.GetClauseCount()) [[unlikely]] {
+      if(sysShar->trav_.StepBack(curExec.nextAsg_, curExec.unsatClauses_, linkage, linkage.GetClauseCount())) [[likely]] {
         continue;
       }
       // Increment the unsatisfied executors counter
@@ -148,7 +222,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
       UpdateUnsatCs(linkage, aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
 
-    if(sysShar->nGlobalUnsat_ < nStartUnsat) {
+    if(sysShar->nGlobalUnsat_ < nStartUnsat) [[unlikely]] {
       break; // some other executor found an improvement
     }
 
@@ -233,10 +307,11 @@ int main(int argc, char* argv[]) {
   HostLinkage::Init(formula, cas, linkages);
   std::vector<CudaArray<GpuExec>> execs(nGpus);
   std::vector<PerGpuInfo> pgis(nGpus);
+  const VciGpu cVectsPerVarsBV = DivUp(formula.nVars_, 128);
   // BPCT - Bytes Per CUDA Thread
   const uint64_t hostHeapBpct
     = sizeof(GpuExec)
-    + DivUp(formula.nVars_, 128) * 16 // GpuExec::nextAsg_
+    + cVectsPerVarsBV * sizeof(__uint128_t) // GpuExec::nextAsg_
     + 128; // Thread stack
   const uint64_t deviceHeapBpct
     // GpuExec::unsatClauses_
@@ -253,6 +328,11 @@ int main(int argc, char* argv[]) {
   sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
   sysShar.Get()->nGlobalUnsat_ = bestInitNUnsat;
   sysShar.Get()->nUnsatExecs_ = 0;
+  CudaArray<__uint128_t> solRRasgs( (1u<<kL2SolRoundRobin) * uint64_t(cVectsPerVarsBV), CudaArrayType::Pinned );
+  CudaArray<VciGpu> solRRnsUnsat( 1u<<kL2SolRoundRobin, CudaArrayType::Pinned );
+  sysShar.Get()->firstSolRR_ = sysShar.Get()->limitSolRR_ = 0;
+  sysShar.Get()->solRRasgs_ = solRRasgs.Get();
+  sysShar.Get()->solRRnsUnsat_ = solRRnsUnsat.Get();
   
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
@@ -294,7 +374,7 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<GpuExec[]> cpuExecs = std::make_unique<GpuExec[]>(pgis[i].execs_.Count());
     std::random_device rd;
     for(uint32_t j=0; j<pgis[i].execs_.Count(); j++) {
-      for(int k=0; k<sizeof(cpuExecs[j].rng_.s_); k+=sizeof(uint32_t)) {
+      for(int k=0; k<int(sizeof(cpuExecs[j].rng_.s_)); k+=sizeof(uint32_t)) {
         reinterpret_cast<uint32_t*>(&cpuExecs[j].rng_.s_)[k] = rd();
       }
       cpuExecs[j].nextAsg_.hash_ = formula.ans_.hash_;
@@ -315,5 +395,6 @@ int main(int argc, char* argv[]) {
     gpuErrchk(cudaSetDevice(i));
     gpuErrchk(cudaStreamSynchronize(cas[i].cs_));
   }
+  
   return 0;
 }

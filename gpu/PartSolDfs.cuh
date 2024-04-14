@@ -15,7 +15,7 @@ struct GpuPartSolDfs {
   VciGpu vectsPerPartSol_ = 0;
   VciGpu capacity_ = 0;
   VciGpu iFirst_ = 0;
-  VciGpu iLast_ = 0;
+  VciGpu iLimit_ = 0;
   VciGpu leftHeads_ = 0;
 
   GpuPartSolDfs() = default;
@@ -45,12 +45,13 @@ struct GpuPartSolDfs {
   }
 
   __device__ VciGpu2 PushBack(const VciGpu nUnsat, __uint128_t& oldHash) {
-    VciGpu newLast = (iLast_ + 1) % capacity_;
-    if(newLast == iFirst_) {
+    const VciGpu oldLimit = iLimit_;
+    iLimit_ = (iLimit_ + 1) % capacity_;
+    if(iLimit_ == iFirst_) {
       iFirst_ = (iFirst_ + 1) % capacity_;
       // Wait for deserialization to finish
       VciGpu iBlockToPop = cWaitingSerialization;
-      while( (iBlockToPop = atomicOr_system(&deque_[newLast].x, 0)) == cWaitingSerialization ) {
+      while( (iBlockToPop = atomicOr_system(&deque_[oldLimit].x, 0)) == cWaitingSerialization ) {
         __nanosleep(256);
       }
       if(iBlockToPop >= 0) {
@@ -59,12 +60,11 @@ struct GpuPartSolDfs {
         oldHash = 0;
       }
     }
-    iLast_ = newLast;
     assert(leftHeads_ > 0);
     leftHeads_--;
     const VciGpu iBlock = heads_[leftHeads_];
-    deque_[iLast_] = {cWaitingSerialization, nUnsat};
-    return {iLast_, iBlock};
+    deque_[oldLimit] = {cWaitingSerialization, nUnsat};
+    return {oldLimit, iBlock};
   }
 
   __device__ void Deserialize(const VciGpu iDeque, GpuBitVector& ans, VciGpu& nUnsat) {
@@ -102,21 +102,22 @@ struct GpuPartSolDfs {
     if( IsEmpty() ) {
       return {-1, -1};
     }
-    const VciGpu oldLast = iLast_;
-    iLast_ = (iLast_ - 1 + capacity_) % capacity_;
+    iLimit_ = (iLimit_ - 1 + capacity_) % capacity_;
     // Wait for serialization to finish
-    while(atomicOr_system(&deque_[oldLast].x, 0) == cWaitingSerialization) {
+    while(atomicOr_system(&deque_[iLimit_].x, 0) == cWaitingSerialization) {
       __nanosleep(128);
     }
-    return {oldLast, deque_[oldLast].y};
+    return {iLimit_, deque_[iLimit_].y};
   }
 
   __host__ __device__ bool IsEmpty() const {
-    return (iLast_+1) % capacity_ == iFirst_;
+    return iFirst_ == iLimit_;
   }
 
   __host__ __device__ VciGpu TopUnsat() const {
-    return deque_[iLast_].y;
+    assert(iLimit_ != iFirst_); // not empty
+    const VciGpu iLast = (iLimit_ - 1 + capacity_) % capacity_;
+    return deque_[iLast].y;
   }
 };
 
@@ -157,7 +158,7 @@ struct HostPartSolDfs {
     ans.deque_ = deque_.Get();
     ans.vectsPerPartSol_ = vectsPerPartSol_;
     ans.leftHeads_ = ans.capacity_ = capacityPartSols_;
-    ans.iFirst_ = ans.iLast_ = 0;
+    // Take those from member inline assignments: ans.iFirst_ = ans.iLast_ = 0;
     return ans;
   }
 };
