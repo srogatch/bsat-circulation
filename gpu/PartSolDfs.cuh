@@ -48,6 +48,10 @@ struct GpuPartSolDfs {
     iLast_ = (iLast_ + 1) % capacity_;
     if(iLast_ == iFirst_) {
       iFirst_ = (iFirst_ + 1) % capacity_;
+      // Wait for deserialization to finish
+      while(atomicOr_system(&deque_[iLast_].x, 0) != -1) {
+        __nanosleep(256);
+      }
     }
     leftHeads_--;
     const VciGpu iBlock = heads_[leftHeads_];
@@ -55,9 +59,11 @@ struct GpuPartSolDfs {
     return iLast_;
   }
 
-  __host__ __device__ void Deserialize(const VciGpu iBlock, GpuBitVector& ans, VciGpu& nUnsat) {
+  __host__ __device__ void Deserialize(const VciGpu iDeque, GpuBitVector& ans, VciGpu& nUnsat) {
     assert(ans.bits_ != nullptr);
-    const __uint128_t* pDes = pVects_ + uint64_t(iBlock) * vectsPerPartSol_;
+    const VciGpu iBlock = deque_[iDeque].x;
+    nUnsat = deque_[iDeque].y;
+    __uint128_t* pDes = pVects_ + uint64_t() * vectsPerPartSol_;
     ans.hash_ = *pDes;
     pDes++;
     const VciGpu nToCopy = (ans.DwordCount() * sizeof(uint32_t)) / sizeof(__uint128_t);
@@ -73,7 +79,8 @@ struct GpuPartSolDfs {
       }
       pDes++;
     }
-    nUnsat = deque_[iBlock].y;
+    [[maybe_unused]] const VciGpu oldInDeque = atomicExch_system(&deque_[iDeque].x, -1);
+    assert(oldInDeque == iBlock);
     assert(pDes - (pVects_ + uint64_t(iBlock) * vectsPerPartSol_) == vectsPerPartSol_);
   }
 
@@ -88,6 +95,10 @@ struct GpuPartSolDfs {
     }
     const VciGpu oldLast = iLast_;
     iLast_ = (iLast_ - 1 + capacity_) % capacity_;
+    // Wait for serialization to finish
+    while(atomicOr_system(&deque_[oldLast].y, 0) == -1) {
+      __nanosleep(128);
+    }
     return deque_[oldLast];
   }
 
