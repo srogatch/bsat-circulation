@@ -198,8 +198,8 @@ int main(int argc, char* argv[]) {
   // Pinned should be better than managed here, because managed memory transfers at page granularity,
   // while Pinned - at PCIe bus granularity, which is much smaller.
   CudaArray<SystemShared> sysShar(1, CudaArrayType::Pinned);
-  HostDeque<GpuPartSol> dfsAsg;
-  dfsAsg.Init( maxRamBytes / 2 );
+  HostPartSolDfs dfsAsg;
+  dfsAsg.Init( maxRamBytes / 2, formula.ans_.nBits_ );
   sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);

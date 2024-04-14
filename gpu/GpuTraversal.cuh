@@ -40,33 +40,9 @@ __device__ void UpdateUnsatCs(const GpuLinkage& linkage, const VciGpu aVar, cons
   }
 }
 
-struct GpuPartSol {
-  GpuBitVector asg_;
-  VciGpu nUnsat_ = -1;
-
-  GpuPartSol() = default;
-
-  __host__ __device__ explicit GpuPartSol(const GpuBitVector& asg, const VciGpu nUnsat) : asg_(asg), nUnsat_(nUnsat) { }
-  
-  __host__ __device__ GpuPartSol(GpuPartSol&& src) : asg_(std::move(src.asg_)), nUnsat_(src.nUnsat_)
-  {
-    src.nUnsat_ = -1;
-  }
-
-  __host__ __device__ GpuPartSol& operator=(GpuPartSol&& src)
-  {
-    if(this != &src) {
-      asg_ = std::move(src.asg_);
-      nUnsat_ = src.nUnsat_;
-      src.nUnsat_ = -1;
-    }
-    return *this;
-  }
-};
-
 struct GpuTraversal {
   // Store it in pinned memory to save GPU memory - it's not often pushed or popped.
-  GpuDeque<GpuPartSol> dfsAsg_;
+  GpuPartSolDfs dfsAsg_;
   // TODO: change from pointer back to value - we're putting the whole GpuTraversal into pinned memory anyway
   int syncDfs_ = 0;
 
@@ -78,45 +54,58 @@ struct GpuTraversal {
     if(!rainbow.Add(asg.hash_)) {
       return;
     }
-    GpuPartSol toRelease;
+
+    __uint128_t oldHash = 0;
+    VciGpu2 token = {-1, -1};
 
     // Enter spinlock system-wide (all GPUs and CPUs)
     while(atomicCAS_system(&syncDfs_, 0, 1) == 1) {
       __nanosleep(32);
     }
-    if(dfsAsg_.IsEmpty() || nUnsat <= dfsAsg_.Back().nUnsat_) {
-      dfsAsg_.PushBack(GpuPartSol(asg, nUnsat), toRelease);
+    if(dfsAsg_.IsEmpty() || nUnsat <= dfsAsg_.TopUnsat()) {
+      token = dfsAsg_.PushBack(nUnsat, oldHash);
     }
     // Leave spinlock system-wide (all GPUs and CPUs)
     [[maybe_unused]] const int oldSync = atomicExch_system(&syncDfs_, 0);
     assert(oldSync == 1);
-    if(toRelease.nUnsat_ != -1) {
-      rainbow.Remove(toRelease.asg_.hash_);
+
+    dfsAsg_.Serialize(token, asg);
+
+    if(oldHash != 0) {
+      rainbow.Remove(oldHash);
     }
   }
 
-  __device__ bool StepBack(GpuBitVector &asg, GpuTrackingVector<VciGpu>& unsatClauses, const GpuLinkage& linkage, const VciGpu maxUnsat) {
-    GpuPartSol partSol;
+  __device__ bool StepBack(GpuBitVector &asg, GpuTrackingVector<VciGpu>& unsatClauses,
+    const GpuLinkage& linkage, const VciGpu maxUnsat)
+  {
+    VciGpu2 retrieved{-1, -1};
+    // Don't set it to zero because it will be completely overwritten
+    GpuBitVector partSol(asg.nBits_, false);
+
     // Enter spinlock system-wide (all GPUs and CPUs)
     while(atomicCAS_system(&syncDfs_, 0, 1) == 1) {
       __nanosleep(32);
     }
     if(!dfsAsg_.IsEmpty()) {
-      if(dfsAsg_.Back().nUnsat_ <= maxUnsat) {
-        [[maybe_unused]] const bool retrieved = dfsAsg_.PopBack(partSol);
-        assert(retrieved);
+      if(dfsAsg_.TopUnsat() <= maxUnsat) {
+        retrieved = dfsAsg_.PopBack();
+        assert(retrieved.x >= 0 && retrieved.y >= 0);
       }
     }
     // Leave spinlock system-wide (all GPUs and CPUs)
     [[maybe_unused]] const int oldSync = atomicExch_system(&syncDfs_, 0);
     assert(oldSync == 1);
 
-    if(partSol.nUnsat_ == -1) {
+    if(retrieved.y < 0) {
       return false;
     }
 
+    dfsAsg_.Deserialize(retrieved.x, partSol, retrieved.y);
+    dfsAsg_.ReturnHead(retrieved.x);
+
     for(VciGpu i=0, iLim=asg.DwordCount(); i<iLim; i++) {
-      uint32_t diff = asg.bits_[i] ^ partSol.asg_.bits_[i];
+      uint32_t diff = asg.bits_[i] ^ partSol.bits_[i];
       while(diff != 0) {
         const int iBit = __ffs(diff) - 1;
         diff ^= 1u<<iBit;

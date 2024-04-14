@@ -7,6 +7,8 @@
 #include "GpuBitVector.cuh"
 
 struct GpuPartSolDfs {
+  static constexpr const VciGpu cWaitingSerialization = -2;
+  static constexpr const VciGpu cAvailable = -1;
   __uint128_t *pVects_ = nullptr;
   VciGpu2 *deque_ = nullptr;
   VciGpu *heads_ = nullptr;
@@ -18,9 +20,9 @@ struct GpuPartSolDfs {
 
   GpuPartSolDfs() = default;
 
-  __host__ __device__ void Serialize(const VciGpu iDeque, const GpuBitVector& asg, const VciGpu nUnsat) {
-    const VciGpu iBlock = deque_[iDeque].x;
-    __uint128_t* pSer = pVects_ + uint64_t(iBlock) * vectsPerPartSol_;
+  __device__ void Serialize(const VciGpu2 token, const GpuBitVector& asg) {
+    assert(atomicOr(&deque_[token.x].x, 0) == cWaitingSerialization);
+    __uint128_t* pSer = pVects_ + uint64_t(token.y) * vectsPerPartSol_;
     *pSer = asg.hash_;
     pSer++;
     const VciGpu nToCopy = (asg.DwordCount() * sizeof(uint32_t)) / sizeof(__uint128_t);
@@ -37,33 +39,39 @@ struct GpuPartSolDfs {
       *pSer = curVec;
       pSer++;
     }
-    deque_[iDeque].y = nUnsat;
-    assert(pSer - (pVects_ + uint64_t(iBlock) * vectsPerPartSol_) == vectsPerPartSol_);
+    [[maybe_unused]] const VciGpu oldIBlock = atomicExch(&deque_[token.x].x, token.y);
+    assert(oldIBlock == cWaitingSerialization);
+    assert(pSer - (pVects_ + uint64_t(token.y) * vectsPerPartSol_) == vectsPerPartSol_);
   }
 
-  __host__ __device__ VciGpu PushBack() {
-    if(leftHeads_ == 0) {
-      return -1;
-    }
-    iLast_ = (iLast_ + 1) % capacity_;
-    if(iLast_ == iFirst_) {
+  __device__ VciGpu2 PushBack(const VciGpu nUnsat, __uint128_t& oldHash) {
+    VciGpu newLast = (iLast_ + 1) % capacity_;
+    if(newLast == iFirst_) {
       iFirst_ = (iFirst_ + 1) % capacity_;
       // Wait for deserialization to finish
-      while(atomicOr_system(&deque_[iLast_].x, 0) != -1) {
+      VciGpu iBlockToPop = cWaitingSerialization;
+      while( (iBlockToPop = atomicOr_system(&deque_[newLast].x, 0)) == cWaitingSerialization ) {
         __nanosleep(256);
       }
+      if(iBlockToPop >= 0) {
+        oldHash = pVects_[uint64_t(iBlockToPop) * vectsPerPartSol_];
+      } else {
+        oldHash = 0;
+      }
     }
+    iLast_ = newLast;
+    assert(leftHeads_ > 0);
     leftHeads_--;
     const VciGpu iBlock = heads_[leftHeads_];
-    deque_[iLast_] = {iBlock, -1};
-    return iLast_;
+    deque_[iLast_] = {cWaitingSerialization, nUnsat};
+    return {iLast_, iBlock};
   }
 
-  __host__ __device__ void Deserialize(const VciGpu iDeque, GpuBitVector& ans, VciGpu& nUnsat) {
+  __device__ void Deserialize(const VciGpu iDeque, GpuBitVector& ans, VciGpu& nUnsat) {
     assert(ans.bits_ != nullptr);
     const VciGpu iBlock = deque_[iDeque].x;
     nUnsat = deque_[iDeque].y;
-    __uint128_t* pDes = pVects_ + uint64_t() * vectsPerPartSol_;
+    __uint128_t* pDes = pVects_ + uint64_t(iBlock) * vectsPerPartSol_;
     ans.hash_ = *pDes;
     pDes++;
     const VciGpu nToCopy = (ans.DwordCount() * sizeof(uint32_t)) / sizeof(__uint128_t);
@@ -79,27 +87,28 @@ struct GpuPartSolDfs {
       }
       pDes++;
     }
-    [[maybe_unused]] const VciGpu oldInDeque = atomicExch_system(&deque_[iDeque].x, -1);
+    [[maybe_unused]] const VciGpu oldInDeque = atomicExch_system(&deque_[iDeque].x, cAvailable);
     assert(oldInDeque == iBlock);
     assert(pDes - (pVects_ + uint64_t(iBlock) * vectsPerPartSol_) == vectsPerPartSol_);
   }
 
-  __host__ __device__ void ReturnHead(VciGpu iBlock) {
+  __host__ __device__ void ReturnHead(const VciGpu iDeque) {
+    const VciGpu iBlock = deque_[iDeque].x;
     heads_[leftHeads_] = iBlock;
     leftHeads_++;
   }
 
-  __host__ __device__ VciGpu2 PopBack() {
+  __device__ VciGpu2 PopBack() {
     if( IsEmpty() ) {
       return {-1, -1};
     }
     const VciGpu oldLast = iLast_;
     iLast_ = (iLast_ - 1 + capacity_) % capacity_;
     // Wait for serialization to finish
-    while(atomicOr_system(&deque_[oldLast].y, 0) == -1) {
+    while(atomicOr_system(&deque_[oldLast].x, 0) == cWaitingSerialization) {
       __nanosleep(128);
     }
-    return deque_[oldLast];
+    return {oldLast, deque_[oldLast].y};
   }
 
   __host__ __device__ bool IsEmpty() const {
@@ -137,7 +146,7 @@ struct HostPartSolDfs {
     deque_ = CudaArray<VciGpu2>(capacityPartSols_, CudaArrayType::Pinned);
     for(VciGpu i=0; i<capacityPartSols_; i++) {
       heads_.Get()[i] = i;
-      deque_.Get()[i] = {-1, -1};
+      deque_.Get()[i] = {GpuPartSolDfs::cAvailable, -1};
     }
   }
 

@@ -13,7 +13,26 @@ struct GpuBitVector {
     return DivUp(nBits_, 32);
   }
 
+  __host__ __device__ VciGpu VectCount() const {
+    return DivUp(DwordCount(), 4);
+  }
+
   GpuBitVector() = default;
+
+  __host__ __device__ explicit GpuBitVector(
+    const VciGpu nBits, const bool setZer0) : nBits_(nBits), flags_(cfOwned)
+  {
+    const VciGpu nVects = VectCount();
+    bits_ = reinterpret_cast<uint32_t*>(malloc( nVects * sizeof(__uint128_t) ));
+    if(setZer0) {
+      for(VciGpu i=0; i<nVects; i++) {
+        reinterpret_cast<__uint128_t*>(bits_)[i] = 0;
+      }
+    } else {
+      // Denote unitialized
+      hash_ = __uint128_t(-1);
+    }
+  }
 
   __host__ __device__ GpuBitVector(GpuBitVector&& src)
   : hash_(src.hash_), bits_(src.bits_), nBits_(src.nBits_), flags_(src.flags_)
@@ -45,10 +64,10 @@ struct GpuBitVector {
   __host__ __device__ GpuBitVector(const GpuBitVector& src)
   : hash_(src.hash_), nBits_(src.nBits_), flags_(src.flags_ | cfOwned)
   {
-    bits_ = reinterpret_cast<uint32_t*>(malloc(DwordCount() * sizeof(uint32_t)));
-    // TODO: vectorize
-    for(VciGpu i=0; i<nBits_; i++) {
-      bits_[i] = src.bits_[i];
+    const VciGpu nVects = VectCount();
+    bits_ = reinterpret_cast<uint32_t*>(malloc( nVects * sizeof(__uint128_t) ));
+    for(VciGpu i=0; i<nVects; i++) {
+      reinterpret_cast<__uint128_t*>(bits_)[i] = reinterpret_cast<const __uint128_t*>(src.bits_)[i];
     }
   }
 
