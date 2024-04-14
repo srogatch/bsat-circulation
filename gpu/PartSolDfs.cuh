@@ -27,17 +27,21 @@ struct GpuPartSolDfs {
     for(VciGpu i=0; i<nToCopy; i++) {
       pSer[i] = reinterpret_cast<const __uint128_t*>(asg.bits_)[i];
     }
-    pSer += nToCopy;  
+    pSer += nToCopy;
+    __uint128_t curVec = 0;
     const uint8_t tail = asg.DwordCount() - nToCopy * sizeof(__uint128_t) / sizeof(uint32_t);
     for(uint8_t i=0; i<tail; i++) {
-      reinterpret_cast<uint32_t*>(pSer)[i] = asg.bits_[nToCopy * sizeof(__uint128_t) / sizeof(uint32_t) + i];
+      reinterpret_cast<uint32_t*>(&curVec)[i] = asg.bits_[nToCopy * sizeof(__uint128_t) / sizeof(uint32_t) + i];
     }
     if(tail*sizeof(uint32_t) + sizeof(VciGpu) <= sizeof(__uint128_t)) {
-      *reinterpret_cast<VciGpu*>(reinterpret_cast<uint32_t*>(pSer) + tail) = nUnsat;
+      *reinterpret_cast<VciGpu*>(reinterpret_cast<uint32_t*>(&curVec) + tail) = nUnsat;
     } else {
+      *pSer = curVec;
       pSer++;
-      *reinterpret_cast<VciGpu*>(pSer) = nUnsat;
+      curVec = 0;
+      *reinterpret_cast<VciGpu*>(&curVec) = nUnsat;
     }
+    *pSer = curVec;
     pSer++;
     assert(pSer - (pVects_ + uint64_t(vectsPerPartSol_) * iLast_) == vectsPerPartSol_);
   }
