@@ -310,18 +310,19 @@ int main(int argc, char* argv[]) {
   HostLinkage::Init(formula, cas, linkages);
   std::vector<CudaArray<GpuExec>> execs(nGpus);
   std::vector<PerGpuInfo> pgis(nGpus);
-  const VciGpu cVectsPerVarsBV = DivUp(formula.nVars_, 128);
+  const VciGpu nVectsPerVarsBV = DivUp(formula.nVars_ + 1, 128);
   // BPCT - Bytes Per CUDA Thread
   const uint64_t hostHeapBpct
     = sizeof(GpuExec)
-    + cVectsPerVarsBV * sizeof(__uint128_t) // GpuExec::nextAsg_
-    + 128; // Thread stack
+    + nVectsPerVarsBV * sizeof(__uint128_t) // GpuExec::nextAsg_
+    + 256 * 2 // Alignment
+    + 256; // Thread stack
   const uint64_t deviceHeapBpct
     // GpuExec::unsatClauses_
     // varFront
     // stepRevs
     // bestRevVars
-    = (bestInitNUnsat + (bestInitNUnsat>>1) + 16) * sizeof(VciGpu) * 4;
+    = ((bestInitNUnsat + (bestInitNUnsat>>1) + 16) * sizeof(VciGpu) + 256) * 4;
   
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
@@ -334,7 +335,7 @@ int main(int argc, char* argv[]) {
     gpuErrchk(cudaMemGetInfo(&cas[i].freeBytes_, &cas[i].totalBytes_));
     uint64_t maxRainbowBytes = cas[i].freeBytes_;
     for(;;) {
-      uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct);
+      uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + deviceHeapBpct/16);
       uint64_t rainbowBytes = 1ULL << int(std::log2(maxRainbowBytes));
       uint64_t totVramReq = bytesBothHeaps + rainbowBytes;
       if(totVramReq < cas[i].freeBytes_) {
@@ -349,14 +350,20 @@ int main(int argc, char* argv[]) {
     pgis[i].nStepBlocks_ = std::min<uint64_t>(
       nBlocksPerSM * cas[i].cdp_.multiProcessorCount,
       cas[i].freeBytes_
-        / (uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct))
+        / (uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + deviceHeapBpct/16))
     );
+    Logger() << "Rainbow Table: " << double(uint64_t(seenAsgs[i].nbfDwords_) * sizeof(uint32_t)) / (1ULL<<30)
+      << " GB, Host heap: "
+      << double(pgis[i].nStepBlocks_) *  kThreadsPerBlock * hostHeapBpct / (1ULL<<30)
+      << " GB, Device heap: "
+      << double(pgis[i].nStepBlocks_) *  kThreadsPerBlock * deviceHeapBpct / (1ULL<<30)
+      << " GB.";
+
     // Enable dynamic memory allocation in the CUDA kernel
     gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize,
       pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * deviceHeapBpct));
     pgis[i].bvBufs_ = CudaArray<__uint128_t>(
-      pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * DivUp(formula.nVars_, 128),
-      CudaArrayType::Device
+      pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * nVectsPerVarsBV, CudaArrayType::Device
     );
     pgis[i].execs_ = CudaArray<GpuExec>(
       pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock), CudaArrayType::Device
@@ -370,12 +377,12 @@ int main(int argc, char* argv[]) {
     std::random_device rd;
     for(uint32_t j=0; j<pgis[i].execs_.Count(); j++) {
       for(int k=0; k<int(sizeof(vCpuExecs[i][j].rng_.s_)); k+=sizeof(uint32_t)) {
-        reinterpret_cast<uint32_t*>(&vCpuExecs[i][j].rng_.s_)[k] = rd();
+        reinterpret_cast<uint32_t*>(&vCpuExecs[i][j].rng_.s_)[k/sizeof(uint32_t)] = rd();
       }
       vCpuExecs[i][j].nextAsg_.hash_ = formula.ans_.hash_;
       vCpuExecs[i][j].nextAsg_.nBits_ = formula.nVars_ + 1;
       vCpuExecs[i][j].nextAsg_.bits_ = reinterpret_cast<uint32_t*>(
-        pgis[i].bvBufs_.Get() + DivUp(formula.nVars_, 128) * uint64_t(j));
+        pgis[i].bvBufs_.Get() + nVectsPerVarsBV * uint64_t(j));
       gpuErrchk(cudaMemcpyAsync(vCpuExecs[i][j].nextAsg_.bits_, formula.ans_.bits_.get(),
         formula.ans_.nQwords_ * sizeof(uint64_t), cudaMemcpyHostToDevice, cas[i].cs_
       ));
@@ -402,7 +409,7 @@ int main(int argc, char* argv[]) {
   sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
   sysShar.Get()->nGlobalUnsat_ = bestInitNUnsat;
   sysShar.Get()->nUnsatExecs_ = 0;
-  CudaArray<__uint128_t> solRRasgs( (1u<<kL2SolRoundRobin) * uint64_t(cVectsPerVarsBV), CudaArrayType::Pinned );
+  CudaArray<__uint128_t> solRRasgs( (1u<<kL2SolRoundRobin) * uint64_t(nVectsPerVarsBV), CudaArrayType::Pinned );
   CudaArray<VciGpu> solRRnsUnsat( 1u<<kL2SolRoundRobin, CudaArrayType::Pinned );
   sysShar.Get()->firstSolRR_ = sysShar.Get()->limitSolRR_ = 0;
   sysShar.Get()->solRRasgs_ = solRRasgs.Get();
