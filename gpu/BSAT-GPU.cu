@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <cassert>
+
 constexpr const uint32_t kThreadsPerBlock = 128;
 constexpr const uint8_t kL2SolRoundRobin = 13; // log2( # solutions in the round-robin )
 
@@ -104,12 +106,22 @@ struct PerGpuInfo {
 };
 
 __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, const GpuLinkage linkage, GpuExec *execs,
-  GpuRainbow seenAsg)
+  const GpuRainbow seenAsg)
 {
   constexpr const uint32_t cCombsPerStep = 1u<<11;
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
   // const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
   GpuExec& curExec = execs[iThread];
+
+  if(curExec.unsatClauses_.items_ == nullptr) {
+    for(VciGpu i=1, nClauses=linkage.GetClauseCount(); i<=nClauses; i++) {
+      if(!IsSatisfied(i, linkage, curExec.nextAsg_)) {
+        curExec.unsatClauses_.Add<false>(i);
+      }
+    }
+  }
+
+  assert(curExec.unsatClauses_.count_ >= sysShar->nGlobalUnsat_);
 
   while(curExec.unsatClauses_.count_ >= nStartUnsat && sysShar->nGlobalUnsat_ >= nStartUnsat) {
     // Get the variables that affect the unsatisfied clauses
@@ -223,6 +235,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
       curExec.nextAsg_.Flip(aVar);
       UpdateUnsatCs(linkage, aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
+    assert(curExec.unsatClauses_.count_ == bestUnsat);
+    assert(curExec.unsatClauses_.count_ >= sysShar->nGlobalUnsat_);
 
     if(sysShar->nGlobalUnsat_ < nStartUnsat) [[unlikely]] {
       break; // some other executor found an improvement
@@ -369,11 +383,13 @@ int main(int argc, char* argv[]) {
       pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock), CudaArrayType::Device
     );
   }
+  int64_t totExecs = 0;
   std::vector<std::unique_ptr<GpuExec[]>> vCpuExecs(nGpus);
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
     gpuErrchk(cudaSetDevice(i));
     vCpuExecs[i] = std::make_unique<GpuExec[]>(pgis[i].execs_.Count());
+    totExecs += pgis[i].execs_.Count();
     std::random_device rd;
     for(uint32_t j=0; j<pgis[i].execs_.Count(); j++) {
       for(int k=0; k<int(sizeof(vCpuExecs[i][j].rng_.s_)); k+=sizeof(uint32_t)) {
@@ -466,12 +482,21 @@ int main(int argc, char* argv[]) {
       gpuErrchk(cudaSetDevice(i));
       gpuErrchk(cudaStreamSynchronize(cas[i].cs_));
     }
+    if(sysShar.Get()->nUnsatExecs_ == totExecs) {
+      maybeSat = false;
+      break;
+    }
+    sysShar.Get()->nUnsatExecs_ = 0;
   }
   reportStats();
   solUpdater.join();
 
   if(nStartUnsat == 0) {
     std::cout << "SATISFIED" << std::endl;
+  } else if(maybeSat) {
+    std::cout << "UNKNOWN" << std::endl;
+  } else {
+    std::cout << "UNSATISFIABLE" << std::endl;
   }
   return 0;
 }

@@ -50,7 +50,7 @@ struct GpuTraversal {
     return rainbow[asg.hash_];
   }
 
-  __device__ void RecordAsg(const GpuBitVector& asg, const VciGpu nUnsat, GpuRainbow& rainbow) {
+  __device__ void RecordAsg(const GpuBitVector& asg, const VciGpu nUnsat, const GpuRainbow& rainbow) {
     if(!rainbow.Add(asg.hash_)) {
       return;
     }

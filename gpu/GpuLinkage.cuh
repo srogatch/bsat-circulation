@@ -22,7 +22,8 @@ class GpuLinkage {
 
   __device__ VciGpu ArcCount(const VciGpu from, const int8_t sign, const VciGpu nItems, GpuPerSignHead *heads, VciGpu *targets) const {
     const int8_t hSign = SignToHead(sign);
-    return heads[from + nItems + 1][hSign] - heads[from + nItems][hSign];
+    const VciGpu *pHead = &heads[from + nItems][hSign];
+    return *(pHead+1) - *pHead;
   }
 
   __device__ VciGpu ArcCount(const VciGpu from, const VciGpu nItems, GpuPerSignHead *heads, VciGpu *targets) const {
@@ -32,7 +33,7 @@ class GpuLinkage {
   __device__ VciGpu GetTarget(
     const VciGpu from, const int8_t sign, const VciGpu ordinal, const VciGpu nItems, GpuPerSignHead *heads, VciGpu *targets) const
   {
-    return targets[ordinal + heads[from + nItems + 1][SignToHead(sign)]];
+    return targets[ordinal + heads[from + nItems][SignToHead(sign)]];
   }
 
 public:

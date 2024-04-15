@@ -20,14 +20,14 @@ struct GpuRainbow {
   }
 
   // Returns true if item has been added / false if item had already existed
-  __device__ bool Add(const __uint128_t hash) {
+  __device__ bool Add(const __uint128_t hash) const {
     const uint64_t index = ToIndex(hash);
     const uint32_t oldVal = atomicOr(bitfield_ + index/32, 1u<<(index&31));
     return !(oldVal & (1u<<(index&31)));
   }
 
   // Returns true if item existed (and has been removed), else false if the item wasn't in the table.
-  __device__ bool Remove(const __uint128_t hash) {
+  __device__ bool Remove(const __uint128_t hash) const {
     const uint64_t index = ToIndex(hash);
     const uint32_t oldVal = atomicAnd(bitfield_ + index/32, ~(1u<<(index&31)));
     return (oldVal & (1u<<(index&31)));
