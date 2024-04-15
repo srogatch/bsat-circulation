@@ -322,20 +322,6 @@ int main(int argc, char* argv[]) {
     // stepRevs
     // bestRevVars
     = (bestInitNUnsat + (bestInitNUnsat>>1) + 16) * sizeof(VciGpu) * 4;
-
-  // Pinned should be better than managed here, because managed memory transfers at page granularity,
-  // while Pinned - at PCIe bus granularity, which is much smaller.
-  CudaArray<SystemShared> sysShar(1, CudaArrayType::Pinned);
-  HostPartSolDfs dfsAsg;
-  dfsAsg.Init( maxRamBytes / 2, formula.ans_.nBits_ );
-  sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
-  sysShar.Get()->nGlobalUnsat_ = bestInitNUnsat;
-  sysShar.Get()->nUnsatExecs_ = 0;
-  CudaArray<__uint128_t> solRRasgs( (1u<<kL2SolRoundRobin) * uint64_t(cVectsPerVarsBV), CudaArrayType::Pinned );
-  CudaArray<VciGpu> solRRnsUnsat( 1u<<kL2SolRoundRobin, CudaArrayType::Pinned );
-  sysShar.Get()->firstSolRR_ = sysShar.Get()->limitSolRR_ = 0;
-  sysShar.Get()->solRRasgs_ = solRRasgs.Get();
-  sysShar.Get()->solRRnsUnsat_ = solRRnsUnsat.Get();
   
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
@@ -367,7 +353,7 @@ int main(int argc, char* argv[]) {
     );
     // Enable dynamic memory allocation in the CUDA kernel
     gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize,
-      pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct)));
+      pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * deviceHeapBpct));
     pgis[i].bvBufs_ = CudaArray<__uint128_t>(
       pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * DivUp(formula.nVars_, 128),
       CudaArrayType::Device
@@ -375,22 +361,27 @@ int main(int argc, char* argv[]) {
     pgis[i].execs_ = CudaArray<GpuExec>(
       pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock), CudaArrayType::Device
     );
-    std::unique_ptr<GpuExec[]> cpuExecs = std::make_unique<GpuExec[]>(pgis[i].execs_.Count());
+  }
+  std::vector<std::unique_ptr<GpuExec[]>> vCpuExecs(nGpus);
+  #pragma omp parallel for num_threads(nGpus)
+  for(int i=0; i<nGpus; i++) {
+    gpuErrchk(cudaSetDevice(i));
+    vCpuExecs[i] = std::make_unique<GpuExec[]>(pgis[i].execs_.Count());
     std::random_device rd;
     for(uint32_t j=0; j<pgis[i].execs_.Count(); j++) {
-      for(int k=0; k<int(sizeof(cpuExecs[j].rng_.s_)); k+=sizeof(uint32_t)) {
-        reinterpret_cast<uint32_t*>(&cpuExecs[j].rng_.s_)[k] = rd();
+      for(int k=0; k<int(sizeof(vCpuExecs[i][j].rng_.s_)); k+=sizeof(uint32_t)) {
+        reinterpret_cast<uint32_t*>(&vCpuExecs[i][j].rng_.s_)[k] = rd();
       }
-      cpuExecs[j].nextAsg_.hash_ = formula.ans_.hash_;
-      cpuExecs[j].nextAsg_.nBits_ = formula.nVars_ + 1;
-      cpuExecs[j].nextAsg_.bits_ = reinterpret_cast<uint32_t*>(
+      vCpuExecs[i][j].nextAsg_.hash_ = formula.ans_.hash_;
+      vCpuExecs[i][j].nextAsg_.nBits_ = formula.nVars_ + 1;
+      vCpuExecs[i][j].nextAsg_.bits_ = reinterpret_cast<uint32_t*>(
         pgis[i].bvBufs_.Get() + DivUp(formula.nVars_, 128) * uint64_t(j));
-      gpuErrchk(cudaMemcpyAsync(cpuExecs[j].nextAsg_.bits_, formula.ans_.bits_.get(),
+      gpuErrchk(cudaMemcpyAsync(vCpuExecs[i][j].nextAsg_.bits_, formula.ans_.bits_.get(),
         formula.ans_.nQwords_ * sizeof(uint64_t), cudaMemcpyHostToDevice, cas[i].cs_
       ));
     }
     gpuErrchk(cudaMemcpyAsync(
-      pgis[i].execs_.Get(), cpuExecs.get(), pgis[i].execs_.Count() * sizeof(GpuExec),
+      pgis[i].execs_.Get(), vCpuExecs[i].get(), pgis[i].execs_.Count() * sizeof(GpuExec),
       cudaMemcpyHostToDevice, cas[i].cs_
     ));
   }
@@ -399,7 +390,23 @@ int main(int argc, char* argv[]) {
     gpuErrchk(cudaSetDevice(i));
     gpuErrchk(cudaStreamSynchronize(cas[i].cs_));
     seenAsgs[i].Marshal(pgis[i].gr_);
+    vCpuExecs[i].reset(); // release the memory
   }
+  vCpuExecs.clear();
+
+  // Pinned should be better than managed here, because managed memory transfers at page granularity,
+  // while Pinned - at PCIe bus granularity, which is much smaller.
+  CudaArray<SystemShared> sysShar(1, CudaArrayType::Pinned);
+  HostPartSolDfs dfsAsg;
+  dfsAsg.Init( maxRamBytes / 2, formula.ans_.nBits_ );
+  sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
+  sysShar.Get()->nGlobalUnsat_ = bestInitNUnsat;
+  sysShar.Get()->nUnsatExecs_ = 0;
+  CudaArray<__uint128_t> solRRasgs( (1u<<kL2SolRoundRobin) * uint64_t(cVectsPerVarsBV), CudaArrayType::Pinned );
+  CudaArray<VciGpu> solRRnsUnsat( 1u<<kL2SolRoundRobin, CudaArrayType::Pinned );
+  sysShar.Get()->firstSolRR_ = sysShar.Get()->limitSolRR_ = 0;
+  sysShar.Get()->solRRasgs_ = solRRasgs.Get();
+  sysShar.Get()->solRRnsUnsat_ = solRRnsUnsat.Get();
 
   std::cout << "Running on GPU(s)" << std::endl;
   std::atomic<VciGpu> bestNUnsat = bestInitNUnsat;

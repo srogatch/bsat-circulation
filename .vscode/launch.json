@@ -4,8 +4,6 @@
   // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
   "version": "0.2.0",
   "configurations": [
-    
-    
     {
       "name": "(gdb) Launch",
       "type": "cppdbg",
@@ -29,6 +27,16 @@
               "ignoreFailures": true
           }
       ]
-    }
+    },
+    {
+      "name": "(cuda-gdb) Launch",
+      "type": "cuda-gdb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/RogasatGPU",
+      "args": "../bin/bc-resembling.txt ../bin/bc2024.sol",
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/build",
+      "environment": [],
+    },
   ]
 }
