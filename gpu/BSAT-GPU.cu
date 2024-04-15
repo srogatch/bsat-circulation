@@ -271,12 +271,13 @@ int main(int argc, char* argv[]) {
   int nGpus = 0;
   gpuErrchk(cudaGetDeviceCount(&nGpus));
   std::vector<CudaAttributes> cas(nGpus);
+  std::vector<CudaArray<__uint128_t>> gpuHSes;
   std::vector<HostRainbow> seenAsgs(nGpus); // must be one per device
 
   for(int i=0; i<nGpus; i++) {
     cas[i].Init(i);
   }
-  GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas);
+  GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas, gpuHSes);
 
   std::cout << "Choosing the initial assignment..." << std::endl;
   
@@ -400,6 +401,7 @@ int main(int argc, char* argv[]) {
     seenAsgs[i].Marshal(pgis[i].gr_);
   }
 
+  std::cout << "Running on GPU(s)" << std::endl;
   std::atomic<VciGpu> bestNUnsat = bestInitNUnsat;
   std::thread solUpdater([&] {
     BitVector asg(formula.nVars_ + 1);
