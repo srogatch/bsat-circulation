@@ -6,6 +6,9 @@ constexpr const uint32_t kThreadsPerBlock = 128;
 constexpr const uint8_t kL2SolRoundRobin = 13; // log2( # solutions in the round-robin )
 
 #include "GpuLinkage.cuh"
+
+__constant__ GpuLinkage gLinkage;
+
 #include "GpuConstants.cuh"
 // This must be included after gpHashSeries is defined
 #include "GpuBitVector.cuh"
@@ -105,7 +108,7 @@ struct PerGpuInfo {
   uint32_t nStepBlocks_;  
 };
 
-__global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, const GpuLinkage linkage, GpuExec *execs,
+__global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuExec *execs,
   const GpuRainbow seenAsg)
 {
   constexpr const uint32_t cCombsPerStep = 1u<<11;
@@ -114,8 +117,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
   GpuExec& curExec = execs[iThread];
 
   if(curExec.unsatClauses_.items_ == nullptr) {
-    for(VciGpu i=1, nClauses=linkage.GetClauseCount(); i<=nClauses; i++) {
-      if(!IsSatisfied(i, linkage, curExec.nextAsg_)) {
+    for(VciGpu i=1, nClauses=gLinkage.GetClauseCount(); i<=nClauses; i++) {
+      if(!IsSatisfied(i, curExec.nextAsg_)) {
         curExec.unsatClauses_.Add<false>(i);
       }
     }
@@ -131,10 +134,10 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
     for(VciGpu i=0; i<combClauses.count_; i++) {
       for(int8_t sign=-1; sign<=1; sign+=2) {
         const VciGpu aClause = combClauses.items_[i];
-        const VciGpu varListLen = linkage.ClauseArcCount(aClause, sign);
+        const VciGpu varListLen = gLinkage.ClauseArcCount(aClause, sign);
         totListLen += varListLen;
         for(VciGpu j=0; j<varListLen; j++) {
-          const VciGpu iVar = linkage.ClauseGetTarget(aClause, sign, j);
+          const VciGpu iVar = gLinkage.ClauseGetTarget(aClause, sign, j);
           const VciGpu aVar = abs(iVar);
           varFront.Add<true>(aVar);
         }
@@ -151,7 +154,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
 
     //// Combine
     GpuTrackingVector<VciGpu> stepRevs;
-    VciGpu bestUnsat = linkage.GetClauseCount() + 1;
+    VciGpu bestUnsat = gLinkage.GetClauseCount() + 1;
     GpuTrackingVector<VciGpu> bestRevVars;
     // Make sure the overhead of preparing the combinations doesn't outnumber the effort spent in combinations
     uint32_t endComb = max(cCombsPerStep, varFront.count_ + combClauses.count_ + totListLen);
@@ -164,7 +167,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
       const VciGpu aVar = varFront.items_[0];
       stepRevs.Add<false>(aVar);
       curExec.nextAsg_.Flip(aVar);
-      UpdateUnsatCs(linkage, aVar, curExec.nextAsg_, curExec.unsatClauses_);
+      UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
     // The first index participating in combinations - upon success, can be shifted
     VciGpu combFirst = 0;
@@ -195,15 +198,15 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
         const VCIndex aVar = varFront.items_[i+combFirst];
         stepRevs.Flip(aVar);
         curExec.nextAsg_.Flip(aVar);
-        UpdateUnsatCs(linkage, aVar, curExec.nextAsg_, curExec.unsatClauses_);
+        UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
         if( (curComb & (1ULL << i)) != 0 ) {
           break;
         }
       }
     }
     // Check the combinations results
-    if(bestUnsat > linkage.GetClauseCount()) [[unlikely]] {
-      if(sysShar->trav_.StepBack(curExec.nextAsg_, curExec.unsatClauses_, linkage, linkage.GetClauseCount())) [[likely]] {
+    if(bestUnsat > gLinkage.GetClauseCount()) [[unlikely]] {
+      if(sysShar->trav_.StepBack(curExec.nextAsg_, curExec.unsatClauses_, gLinkage.GetClauseCount())) [[likely]] {
         continue;
       }
       // Increment the unsatisfied executors counter
@@ -233,7 +236,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, cons
         continue;
       }
       curExec.nextAsg_.Flip(aVar);
-      UpdateUnsatCs(linkage, aVar, curExec.nextAsg_, curExec.unsatClauses_);
+      UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
     assert(curExec.unsatClauses_.count_ == bestUnsat);
     assert(curExec.unsatClauses_.count_ >= sysShar->nGlobalUnsat_);
@@ -342,6 +345,7 @@ int main(int argc, char* argv[]) {
   for(int i=0; i<nGpus; i++) {
     gpuErrchk(cudaSetDevice(i));
     linkages[i].Marshal(pgis[i].gl_);
+    gpuErrchk(cudaMemcpyToSymbolAsync(gLinkage, &pgis[i].gl_, sizeof(pgis[i].gl_), 0, cudaMemcpyHostToDevice, cas[i].cs_));
     int nBlocksPerSM = 0;
     gpuErrchk(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nBlocksPerSM, &StepKernel, kThreadsPerBlock, 0));
     // This is the upper bound for now without the correction for the actually available VRAM
@@ -473,7 +477,7 @@ int main(int argc, char* argv[]) {
     for(int i=0; i<nGpus; i++) {
       gpuErrchk(cudaSetDevice(i));
       StepKernel<<<pgis[i].nStepBlocks_, kThreadsPerBlock, 0, cas[i].cs_>>>(
-        nStartUnsat, sysShar.Get(), pgis[i].gl_, pgis[i].execs_.Get(), pgis[i].gr_
+        nStartUnsat, sysShar.Get(), pgis[i].execs_.Get(), pgis[i].gr_
       );
       gpuErrchk(cudaGetLastError());
     }

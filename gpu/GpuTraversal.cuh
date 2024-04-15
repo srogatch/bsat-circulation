@@ -5,11 +5,11 @@
 #include "GpuBitVector.cuh"
 #include "GpuTrackingVector.cuh"
 
-__device__ bool IsSatisfied(const VciGpu aClause, const GpuLinkage& linkage, const GpuBitVector& asg) {
+__device__ bool IsSatisfied(const VciGpu aClause, const GpuBitVector& asg) {
   for(int8_t sign=-1; sign<=1; sign+=2) {
-    const VciGpu nClauseArcs = linkage.ClauseArcCount(aClause, sign);
+    const VciGpu nClauseArcs = gLinkage.ClauseArcCount(aClause, sign);
     for(VciGpu j=0; j<nClauseArcs; j++) {
-      const VciGpu iVar = linkage.ClauseGetTarget(aClause, sign, j);
+      const VciGpu iVar = gLinkage.ClauseGetTarget(aClause, sign, j);
       const VciGpu aVar = abs(iVar);
       if(Signum(iVar) == asg[aVar]) {
         return true;
@@ -19,21 +19,21 @@ __device__ bool IsSatisfied(const VciGpu aClause, const GpuLinkage& linkage, con
   return false;
 }
 
-__device__ void UpdateUnsatCs(const GpuLinkage& linkage, const VciGpu aVar, const GpuBitVector& asg,
+__device__ void UpdateUnsatCs(const VciGpu aVar, const GpuBitVector& asg,
   GpuTrackingVector<VciGpu>& unsatClauses)
 {
   const int8_t signSat = asg[aVar];
-  const VciGpu nSatArcs = linkage.VarArcCount(aVar, signSat);
+  const VciGpu nSatArcs = gLinkage.VarArcCount(aVar, signSat);
   for(VciGpu i=0; i<nSatArcs; i++) {
-    const VciGpu iClause = linkage.VarGetTarget(aVar, signSat, i);
+    const VciGpu iClause = gLinkage.VarGetTarget(aVar, signSat, i);
     const VciGpu aClause = abs(iClause);
     unsatClauses.Remove(aClause);
   }
-  const VciGpu nUnsatArcs = linkage.VarArcCount(aVar, -signSat);
+  const VciGpu nUnsatArcs = gLinkage.VarArcCount(aVar, -signSat);
   for(VciGpu i=0; i<nUnsatArcs; i++) {
-    const VciGpu iClause = linkage.VarGetTarget(aVar, -signSat, i);
+    const VciGpu iClause = gLinkage.VarGetTarget(aVar, -signSat, i);
     const VciGpu aClause = abs(iClause);
-    if(IsSatisfied(aClause, linkage, asg)) {
+    if(IsSatisfied(aClause, asg)) {
       continue;
     }
     unsatClauses.Add<true>(aClause);
@@ -76,8 +76,8 @@ struct GpuTraversal {
     }
   }
 
-  __device__ bool StepBack(GpuBitVector &asg, GpuTrackingVector<VciGpu>& unsatClauses,
-    const GpuLinkage& linkage, const VciGpu maxUnsat)
+  __device__ bool StepBack(
+    GpuBitVector &asg, GpuTrackingVector<VciGpu>& unsatClauses, const VciGpu maxUnsat)
   {
     VciGpu2 retrieved{-1, -1};
     // Don't set it to zero because it will be completely overwritten
@@ -111,7 +111,7 @@ struct GpuTraversal {
         diff ^= 1u<<iBit;
         const VciGpu aVar = i*32 + iBit;
         asg.Flip(aVar);
-        UpdateUnsatCs(linkage, aVar, asg, unsatClauses);
+        UpdateUnsatCs(aVar, asg, unsatClauses);
       }
     }
     return true;
