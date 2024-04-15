@@ -46,12 +46,12 @@ struct GpuTraversal {
   // TODO: change from pointer back to value - we're putting the whole GpuTraversal into pinned memory anyway
   int syncDfs_ = 0;
 
-  static __host__ __device__ bool IsSeenAsg(const GpuBitVector& asg, const GpuRainbow& rainbow) {
-    return rainbow[asg.hash_];
+  static __host__ __device__ bool IsSeenAsg(const GpuBitVector& asg) {
+    return gSeenAsgs[asg.hash_];
   }
 
-  __device__ void RecordAsg(const GpuBitVector& asg, const VciGpu nUnsat, const GpuRainbow& rainbow) {
-    if(!rainbow.Add(asg.hash_)) {
+  __device__ void RecordAsg(const GpuBitVector& asg, const VciGpu nUnsat) {
+    if(!gSeenAsgs.Add(asg.hash_)) {
       return;
     }
 
@@ -72,7 +72,7 @@ struct GpuTraversal {
     dfsAsg_.Serialize(token, asg);
 
     if(oldHash != 0) {
-      rainbow.Remove(oldHash);
+      gSeenAsgs.Remove(oldHash);
     }
   }
 

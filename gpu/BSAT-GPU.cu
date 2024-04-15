@@ -6,8 +6,10 @@ constexpr const uint32_t kThreadsPerBlock = 128;
 constexpr const uint8_t kL2SolRoundRobin = 13; // log2( # solutions in the round-robin )
 
 #include "GpuLinkage.cuh"
-
 __constant__ GpuLinkage gLinkage;
+
+#include "GpuRainbow.cuh"
+__constant__ GpuRainbow gSeenAsgs;
 
 #include "GpuConstants.cuh"
 // This must be included after gpHashSeries is defined
@@ -108,8 +110,7 @@ struct PerGpuInfo {
   uint32_t nStepBlocks_;  
 };
 
-__global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuExec *execs,
-  const GpuRainbow seenAsg)
+__global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuExec *execs)
 {
   constexpr const uint32_t cCombsPerStep = 1u<<11;
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
@@ -172,7 +173,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     // The first index participating in combinations - upon success, can be shifted
     VciGpu combFirst = 0;
     while(curComb <= endComb) {
-      if(!sysShar->trav_.IsSeenAsg(curExec.nextAsg_, seenAsg)) {
+      if(!sysShar->trav_.IsSeenAsg(curExec.nextAsg_)) {
         if(curExec.unsatClauses_.count_ < bestUnsat) {
           bestUnsat = curExec.unsatClauses_.count_;
           bestRevVars = stepRevs;
@@ -190,7 +191,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
           }
         }
         if(curExec.unsatClauses_.count_ <= sysShar->nGlobalUnsat_) {
-          sysShar->trav_.RecordAsg(curExec.nextAsg_, bestUnsat, seenAsg);
+          sysShar->trav_.RecordAsg(curExec.nextAsg_, bestUnsat);
         }
       }
       for(uint8_t i=0; ; i++) {
@@ -411,12 +412,14 @@ int main(int argc, char* argv[]) {
       pgis[i].execs_.Get(), vCpuExecs[i].get(), pgis[i].execs_.Count() * sizeof(GpuExec),
       cudaMemcpyHostToDevice, cas[i].cs_
     ));
+    seenAsgs[i].Marshal(pgis[i].gr_);
+    gpuErrchk(cudaMemcpyToSymbolAsync(
+      gSeenAsgs, &pgis[i].gr_, sizeof(pgis[i].gr_), 0, cudaMemcpyHostToDevice, cas[i].cs_));
   }
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
     gpuErrchk(cudaSetDevice(i));
     gpuErrchk(cudaStreamSynchronize(cas[i].cs_));
-    seenAsgs[i].Marshal(pgis[i].gr_);
     vCpuExecs[i].reset(); // release the memory
   }
   vCpuExecs.clear();
@@ -477,8 +480,7 @@ int main(int argc, char* argv[]) {
     for(int i=0; i<nGpus; i++) {
       gpuErrchk(cudaSetDevice(i));
       StepKernel<<<pgis[i].nStepBlocks_, kThreadsPerBlock, 0, cas[i].cs_>>>(
-        nStartUnsat, sysShar.Get(), pgis[i].execs_.Get(), pgis[i].gr_
-      );
+        nStartUnsat, sysShar.Get(), pgis[i].execs_.Get() );
       gpuErrchk(cudaGetLastError());
     }
     #pragma omp parallel for num_threads(nGpus)
