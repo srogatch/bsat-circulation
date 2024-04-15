@@ -19,7 +19,7 @@ __device__ bool IsSatisfied(const VciGpu aClause, const GpuBitVector& asg) {
   return false;
 }
 
-__device__ void UpdateUnsatCs(const VciGpu aVar, const GpuBitVector& asg,
+template<bool delDup> __device__ void UpdateUnsatCs(const VciGpu aVar, const GpuBitVector& asg,
   GpuTrackingVector<VciGpu>& unsatClauses)
 {
   const int8_t signSat = asg[aVar];
@@ -27,7 +27,11 @@ __device__ void UpdateUnsatCs(const VciGpu aVar, const GpuBitVector& asg,
   for(VciGpu i=0; i<nSatArcs; i++) {
     const VciGpu iClause = gLinkage.VarGetTarget(aVar, signSat, i);
     const VciGpu aClause = abs(iClause);
-    unsatClauses.Remove(aClause);
+    if constexpr(delDup) {
+      unsatClauses.Remove(aClause);
+    } else {
+      unsatClauses.Add<false>(-aClause);
+    }
   }
   const VciGpu nUnsatArcs = gLinkage.VarArcCount(aVar, -signSat);
   for(VciGpu i=0; i<nUnsatArcs; i++) {
@@ -36,7 +40,7 @@ __device__ void UpdateUnsatCs(const VciGpu aVar, const GpuBitVector& asg,
     if(IsSatisfied(aClause, asg)) {
       continue;
     }
-    unsatClauses.Add<true>(aClause);
+    unsatClauses.Add<delDup>(aClause);
   }
 }
 
@@ -111,9 +115,10 @@ struct GpuTraversal {
         diff ^= 1u<<iBit;
         const VciGpu aVar = i*32 + iBit;
         asg.Flip(aVar);
-        UpdateUnsatCs(aVar, asg, unsatClauses);
+        UpdateUnsatCs<false>(aVar, asg, unsatClauses);
       }
     }
+    unsatClauses.DelDup();
     return true;
   }
 };

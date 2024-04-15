@@ -19,16 +19,25 @@ template<typename TItem> struct GpuTrackingVector {
 
   GpuTrackingVector() = default;
 
+  __host__ __device__ static void Copy(TItem* dest, TItem* src, const VciGpu nItems) {
+    const VciGpu nVects = DivUp(nItems, sizeof(__uint128_t) / sizeof(TItem));
+    for(VciGpu i=0; i<nVects; i++) {
+      reinterpret_cast<__uint128_t*>(dest)[i] = reinterpret_cast<const __uint128_t*>(src)[i];
+    }
+  }
+
+  __host__ __device__ static VciGpu AlignCap(const VciGpu count) {
+    return AlignUp(count, sizeof(__uint128_t) / sizeof(TItem));
+  }
+
   __host__ __device__ GpuTrackingVector(const GpuTrackingVector& src) {
     hash_ = src.hash_;
     count_ = src.count_;
     free(items_);
     capacity_ = src.count_;
     items_ = malloc(capacity_ * sizeof(TItem));
-    // TODO: vectorize
-    for(VciGpu i=0; i<count_; i++) {
-      items_[i] = src.items_[i];
-    }
+    assert((capacity_ * sizeof(TItem)) % sizeof(__uint128_t) == 0);
+    Copy(items_, src.items_, count_);
   }
 
   __host__ __device__ GpuTrackingVector& operator=(const GpuTrackingVector& src) {
@@ -37,29 +46,25 @@ template<typename TItem> struct GpuTrackingVector {
       count_ = src.count_;
       if(capacity_ < src.count_) {
         free(items_);
-        capacity_ = src.count_;
+        capacity_ = AlignCap(src.count_);
         items_ = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
       }
-      // TODO: vectorize
-      for(VciGpu i=0; i<count_; i++) {
-        items_[i] = src.items_[i];
-      }
+      assert((capacity_ * sizeof(TItem)) % sizeof(__uint128_t) == 0);
+      Copy(items_, src.items_, count_);
     }
     return *this;
   }
 
   // Returns whether the vector was resized
-  __host__ __device__ bool Reserve(const VciGpu newCap) {
+  __host__ __device__ bool Reserve(VciGpu newCap) {
+    newCap = AlignCap(newCap);
     if(newCap <= capacity_) {
       return false;
     }
     VciGpu maxCap = max(capacity_, newCap);
-    capacity_ = maxCap + (maxCap>>1) + 16;
+    capacity_ = AlignCap(maxCap + (maxCap>>1) + 16);
     TItem* newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
-    // TODO: vectorize
-    for(VciGpu i=0; i<count_; i++) {
-      newItems[i] = items_[i];
-    }
+    Copy(newItems, items_, count_);
     free(items_);
     items_ = newItems;
     return true;
@@ -146,5 +151,45 @@ template<typename TItem> struct GpuTrackingVector {
         }
       }
     }
+  }
+
+  __host__ __device__ void DelDup() {
+    Sort();
+    VciGpu l=0, r=count_-1;
+    while(l <= r && items_[l] < 0) {
+      const VciGpu oppL = -items_[l];
+      const VciGpu atR = items_[r];
+      if(oppL == atR || (l+1 < r && items_[r-1] == atR)) {
+        items_[r] = 0;
+        r--;
+        continue;
+      }
+      if(oppL < atR) {
+        r--;
+        continue;
+      }
+      items_[l] = 0;
+      l++;
+    }
+    VciGpu newCount = 0;
+    for(VciGpu i=0; i<count_; i++) {
+      if(items_[i] != 0) {
+        items_[newCount] = items_[i];
+        newCount++;
+      }
+    }
+    count_ = newCount;
+  }
+
+  __host__ __device__ void Shrink() {
+    const VciGpu newCap = AlignCap(count_);
+    if(newCap >= capacity_) {
+      return;
+    }
+    capacity_ = newCap;
+    TItem* newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
+    Copy(newItems, items_, count_);
+    free(items_);
+    items_ = newItems;
   }
 };

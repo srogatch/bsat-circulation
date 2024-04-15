@@ -128,6 +128,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
   assert(curExec.unsatClauses_.count_ >= sysShar->nGlobalUnsat_);
 
   while(curExec.unsatClauses_.count_ >= nStartUnsat && sysShar->nGlobalUnsat_ >= nStartUnsat) {
+    // Save memory for varFront
+    curExec.unsatClauses_.Shrink();
     // Get the variables that affect the unsatisfied clauses
     GpuTrackingVector<VciGpu> varFront;
     uint32_t totListLen = 0;
@@ -140,10 +142,14 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
         for(VciGpu j=0; j<varListLen; j++) {
           const VciGpu iVar = gLinkage.ClauseGetTarget(aClause, sign, j);
           const VciGpu aVar = abs(iVar);
-          varFront.Add<true>(aVar);
+          // Let the duplicate variables appear multiple times in the array, and thus
+          // be considered for combinations multiple times proportionally to their
+          // entry numbers.
+          varFront.Add<false>(aVar);
         }
       }
     }
+    varFront.Shrink();
 
     // Shuffle the front
     for(VciGpu i=0; i<varFront.count_; i++) {
@@ -168,7 +174,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
       const VciGpu aVar = varFront.items_[0];
       stepRevs.Add<false>(aVar);
       curExec.nextAsg_.Flip(aVar);
-      UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
+      UpdateUnsatCs<true>(aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
     // The first index participating in combinations - upon success, can be shifted
     VciGpu combFirst = 0;
@@ -199,12 +205,16 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
         const VCIndex aVar = varFront.items_[i+combFirst];
         stepRevs.Flip(aVar);
         curExec.nextAsg_.Flip(aVar);
-        UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
+        UpdateUnsatCs<true>(aVar, curExec.nextAsg_, curExec.unsatClauses_);
         if( (curComb & (1ULL << i)) != 0 ) {
           break;
         }
       }
     }
+    // Save memory for the reallocations that are coming next
+    varFront.Clear();
+    varFront.Shrink();
+
     // Check the combinations results
     if(bestUnsat > gLinkage.GetClauseCount()) [[unlikely]] {
       if(sysShar->trav_.StepBack(curExec.nextAsg_, curExec.unsatClauses_, gLinkage.GetClauseCount())) [[likely]] {
@@ -237,8 +247,9 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
         continue;
       }
       curExec.nextAsg_.Flip(aVar);
-      UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
+      UpdateUnsatCs<false>(aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
+    curExec.unsatClauses_.DelDup();
     assert(curExec.unsatClauses_.count_ == bestUnsat);
     assert(curExec.unsatClauses_.count_ >= sysShar->nGlobalUnsat_);
 
