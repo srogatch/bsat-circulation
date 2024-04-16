@@ -1,3 +1,5 @@
+#undef NDEBUG
+
 #include "Common.h"
 
 #include <cassert>
@@ -114,10 +116,14 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
 {
   constexpr const uint32_t cCombsPerStep = 1u<<11;
   const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
+  assert(blockDim.x == kThreadsPerBlock);
   // const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
   GpuExec& curExec = execs[iThread];
 
-  if(curExec.unsatClauses_.items_ == nullptr) {
+  if(curExec.unsatClauses_.capacity_ == 0) {
+    assert(curExec.unsatClauses_.items_ == nullptr);
+    assert(curExec.unsatClauses_.count_ == 0);
+    assert(curExec.unsatClauses_.hash_ == 0);
     for(VciGpu i=1, nClauses=gLinkage.GetClauseCount(); i<=nClauses; i++) {
       if(!IsSatisfied(i, curExec.nextAsg_)) {
         curExec.unsatClauses_.Add<false>(i);
@@ -365,10 +371,10 @@ int main(int argc, char* argv[]) {
     gpuErrchk(cudaMemGetInfo(&cas[i].freeBytes_, &cas[i].totalBytes_));
     uint64_t maxRainbowBytes = cas[i].freeBytes_;
     for(;;) {
-      uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + deviceHeapBpct/16);
+      uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + deviceHeapBpct/8);
       uint64_t rainbowBytes = 1ULL << int(std::log2(maxRainbowBytes));
       uint64_t totVramReq = bytesBothHeaps + rainbowBytes;
-      if(totVramReq < cas[i].freeBytes_) {
+      if(totVramReq <= cas[i].freeBytes_) {
         break;
       }
       const double reduction = std::sqrt( double(cas[i].freeBytes_) / totVramReq );
@@ -380,14 +386,14 @@ int main(int argc, char* argv[]) {
     pgis[i].nStepBlocks_ = std::min<uint64_t>(
       nBlocksPerSM * cas[i].cdp_.multiProcessorCount,
       cas[i].freeBytes_
-        / (uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + deviceHeapBpct/16))
+        / (uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + deviceHeapBpct/8))
     );
     Logger() << "Rainbow Table: " << double(uint64_t(seenAsgs[i].nbfDwords_) * sizeof(uint32_t)) / (1ULL<<30)
       << " GB, Host heap: "
       << double(pgis[i].nStepBlocks_) *  kThreadsPerBlock * hostHeapBpct / (1ULL<<30)
       << " GB, Device heap: "
       << double(pgis[i].nStepBlocks_) *  kThreadsPerBlock * deviceHeapBpct / (1ULL<<30)
-      << " GB.";
+      << " GB. nStepBlocks: " << pgis[i].nStepBlocks_;
 
     // Enable dynamic memory allocation in the CUDA kernel
     gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize,
@@ -399,13 +405,13 @@ int main(int argc, char* argv[]) {
       pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock), CudaArrayType::Device
     );
   }
-  int64_t totExecs = 0;
+  std::atomic<int64_t> totExecs = 0;
   std::vector<std::unique_ptr<GpuExec[]>> vCpuExecs(nGpus);
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
     gpuErrchk(cudaSetDevice(i));
     vCpuExecs[i] = std::make_unique<GpuExec[]>(pgis[i].execs_.Count());
-    totExecs += pgis[i].execs_.Count();
+    totExecs.fetch_add(pgis[i].execs_.Count());
     std::random_device rd;
     for(uint32_t j=0; j<pgis[i].execs_.Count(); j++) {
       for(int k=0; k<int(sizeof(vCpuExecs[i][j].rng_.s_)); k+=sizeof(uint32_t)) {
@@ -415,6 +421,7 @@ int main(int argc, char* argv[]) {
       vCpuExecs[i][j].nextAsg_.nBits_ = formula.nVars_ + 1;
       vCpuExecs[i][j].nextAsg_.bits_ = reinterpret_cast<uint32_t*>(
         pgis[i].bvBufs_.Get() + nVectsPerVarsBV * uint64_t(j));
+      assert(vCpuExecs[i][j].unsatClauses_.items_ == nullptr);
       gpuErrchk(cudaMemcpyAsync(vCpuExecs[i][j].nextAsg_.bits_, formula.ans_.bits_.get(),
         formula.ans_.nQwords_ * sizeof(uint64_t), cudaMemcpyHostToDevice, cas[i].cs_
       ));
@@ -490,6 +497,7 @@ int main(int argc, char* argv[]) {
     #pragma omp parallel for num_threads(nGpus)
     for(int i=0; i<nGpus; i++) {
       gpuErrchk(cudaSetDevice(i));
+      assert(pgis[i].nStepBlocks_ * kThreadsPerBlock == pgis[i].execs_.Count());
       StepKernel<<<pgis[i].nStepBlocks_, kThreadsPerBlock, 0, cas[i].cs_>>>(
         nStartUnsat, sysShar.Get(), pgis[i].execs_.Get() );
       gpuErrchk(cudaGetLastError());

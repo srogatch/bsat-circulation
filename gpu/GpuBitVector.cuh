@@ -24,6 +24,7 @@ struct GpuBitVector {
   {
     const VciGpu nVects = VectCount();
     bits_ = reinterpret_cast<uint32_t*>(malloc( nVects * sizeof(__uint128_t) ));
+    assert(bits_ != nullptr);
     if(setZer0) {
       for(VciGpu i=0; i<nVects; i++) {
         reinterpret_cast<__uint128_t*>(bits_)[i] = 0;
@@ -66,6 +67,7 @@ struct GpuBitVector {
   {
     const VciGpu nVects = VectCount();
     bits_ = reinterpret_cast<uint32_t*>(malloc( nVects * sizeof(__uint128_t) ));
+    assert(bits_ != nullptr);
     for(VciGpu i=0; i<nVects; i++) {
       reinterpret_cast<__uint128_t*>(bits_)[i] = reinterpret_cast<const __uint128_t*>(src.bits_)[i];
     }

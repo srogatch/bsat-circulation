@@ -19,8 +19,15 @@ template<typename TItem> struct GpuTrackingVector {
 
   GpuTrackingVector() = default;
 
-  __host__ __device__ static void Copy(TItem* dest, TItem* src, const VciGpu nItems) {
-    const VciGpu nVects = DivUp(nItems, sizeof(__uint128_t) / sizeof(TItem));
+  __host__ __device__ static void Copy(TItem* dest, const TItem* src, const VciGpu nItems) {
+    if(nItems == 0) {
+      return;
+    }
+    assert(dest != nullptr);
+    assert(src != nullptr);
+    assert( (uintptr_t(dest) & 15) == 0 );
+    assert( (uintptr_t(src) & 15) == 0 );
+    const VciGpu nVects = DivUp(nItems * sizeof(TItem), sizeof(__uint128_t));
     for(VciGpu i=0; i<nVects; i++) {
       reinterpret_cast<__uint128_t*>(dest)[i] = reinterpret_cast<const __uint128_t*>(src)[i];
     }
@@ -33,21 +40,25 @@ template<typename TItem> struct GpuTrackingVector {
   __host__ __device__ GpuTrackingVector(const GpuTrackingVector& src) {
     hash_ = src.hash_;
     count_ = src.count_;
-    free(items_);
     capacity_ = src.count_;
     items_ = malloc(capacity_ * sizeof(TItem));
+    assert(items_ != nullptr);
     assert((capacity_ * sizeof(TItem)) % sizeof(__uint128_t) == 0);
     Copy(items_, src.items_, count_);
   }
 
-  __host__ __device__ GpuTrackingVector& operator=(const GpuTrackingVector& src) {
+  __host__ __device__ GpuTrackingVector& operator=(const GpuTrackingVector& src)
+  {
     if(this != &src) {
       hash_ = src.hash_;
       count_ = src.count_;
       if(capacity_ < src.count_) {
-        free(items_);
+        if(items_ != nullptr) {
+          free(items_);
+        }
         capacity_ = AlignCap(src.count_);
         items_ = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
+        assert(items_ != nullptr);
       }
       assert((capacity_ * sizeof(TItem)) % sizeof(__uint128_t) == 0);
       Copy(items_, src.items_, count_);
@@ -56,16 +67,18 @@ template<typename TItem> struct GpuTrackingVector {
   }
 
   // Returns whether the vector was resized
-  __host__ __device__ bool Reserve(VciGpu newCap) {
-    newCap = AlignCap(newCap);
+  __host__ __device__ bool Reserve(const VciGpu newCap) {
     if(newCap <= capacity_) {
       return false;
     }
-    VciGpu maxCap = max(capacity_, newCap);
-    capacity_ = AlignCap(maxCap + (maxCap>>1) + 16);
+    VciGpu maxCap = max(capacity_ + (capacity_>>1) + 16, newCap);
+    capacity_ = AlignCap(maxCap);
     TItem* newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
+    assert(newItems != nullptr);
     Copy(newItems, items_, count_);
-    free(items_);
+    if(items_ != nullptr) {
+      free(items_);
+    }
     items_ = newItems;
     return true;
   }
@@ -115,10 +128,10 @@ template<typename TItem> struct GpuTrackingVector {
   }
 
   __host__ __device__ ~GpuTrackingVector() {
-    free(items_);
-    #ifndef NDEBUG
-    items_ = nullptr;
-    #endif // NDEBUG
+    if(items_ != nullptr) {
+      free(items_);
+      items_ = nullptr;
+    }
   }
 
   __host__ __device__ void Clear() {
@@ -160,6 +173,7 @@ template<typename TItem> struct GpuTrackingVector {
       const VciGpu oppL = -items_[l];
       const VciGpu atR = items_[r];
       if(oppL == atR || (l+1 < r && items_[r-1] == atR)) {
+        hash_ ^= Hasher(atR).hash_;
         items_[r] = 0;
         r--;
         continue;
@@ -168,6 +182,7 @@ template<typename TItem> struct GpuTrackingVector {
         r--;
         continue;
       }
+      hash_ ^= Hasher(items_[l]).hash_;
       items_[l] = 0;
       l++;
     }
@@ -188,8 +203,11 @@ template<typename TItem> struct GpuTrackingVector {
     }
     capacity_ = newCap;
     TItem* newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
+    assert(newItems != nullptr);
     Copy(newItems, items_, count_);
-    free(items_);
+    if(items_ != nullptr) {
+      free(items_);
+    }
     items_ = newItems;
   }
 };
