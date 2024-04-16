@@ -31,3 +31,11 @@ inline __host__ __device__ void VectSetZero(void* dest, const VciGpu nBytes) {
     reinterpret_cast<__uint128_t*>(dest)[i] = 0;
   }
 }
+
+struct Hasher {
+  __uint128_t hash_;
+
+  __host__ __device__ Hasher(const VciGpu item) {
+    hash_ = item * kHashBase + 37;
+  }
+};

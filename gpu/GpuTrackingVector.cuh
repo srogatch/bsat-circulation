@@ -4,14 +4,6 @@
 #include "../Utils.h"
 #include "Common.h"
 
-struct Hasher {
-  __uint128_t hash_;
-
-  __host__ __device__ Hasher(const VciGpu item) {
-    hash_ = item * kHashBase + 37;
-  }
-};
-
 template<typename TItem> struct GpuTrackingVector {
   __uint128_t hash_ = 0;
   TItem* items_ = nullptr;

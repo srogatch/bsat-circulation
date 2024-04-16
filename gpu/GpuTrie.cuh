@@ -3,6 +3,7 @@
 #include "GpuUtils.cuh"
 
 struct GpuTrie {
+  __uint128_t hash_ = 0;
   uint32_t* buffer_ = nullptr;
   uint32_t* nodeHasNum_ = nullptr;
   VciGpu nNodes_ = 0;
@@ -107,14 +108,33 @@ struct GpuTrie {
   }
 
   bool Add(const VciGpu item) {
+    assert(item != 0);
     VciGpu iNode = 0;
     for(int16_t iBit=0; (VciGpu(1)<<iBit) <= item; iBit++) {
       if(iNode >= nNodes_) {
         CheckGrow(iNode);
-        
+        SetIndex(2*iNode + ((item>>iBit) & 1), iNode+1);
+        SetIndex(2*iNode + (((item>>iBit) & 1) ^ 1), 0);
+        iNode = iNode+1;
+        nNodes_ = iNode+1;
       } else {
-        iNode = GetChild( iNode, item, iBit );
+        const VciGpu iChild = GetChild( iNode, item, iBit );
+        if(iChild == 0) {
+          SetIndex(2*iNode + ((item>>iBit) & 1), nNodes_);
+          iNode = nNodes_;
+        } else {
+          iNode = iChild;
+        }
       }
+    }
+    if(iNode >= nNodes_) {
+      CheckGrow(iNode);
+      SetIndex(2*iNode + 0, 0);
+      SetIndex(2*iNode + 1, 0);
+    }
+    if( !(nodeHasNum_[iNode / 32] & (1u<<(iNode&31))) ) {
+      hash_ ^= Hasher(item).hash_;
+      nodeHasNum_[iNode / 32] |= 1u<<(iNode&31);
     }
   }
 };
