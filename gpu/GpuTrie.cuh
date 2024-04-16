@@ -107,7 +107,7 @@ struct GpuTrie {
     return true;
   }
 
-  bool Add(const VciGpu item) {
+  VciGpu Traverse(const VciGpu item) {
     assert(item != 0);
     VciGpu iNode = 0;
     for(int16_t iBit=0; (VciGpu(1)<<iBit) <= item; iBit++) {
@@ -132,9 +132,48 @@ struct GpuTrie {
       SetIndex(2*iNode + 0, 0);
       SetIndex(2*iNode + 1, 0);
     }
+    return iNode;
+  }
+
+  // Returns true if item is added, false if already exists
+  bool Add(const VciGpu item) {
+    const VciGpu iNode = Traverse(item);
     if( !(nodeHasNum_[iNode / 32] & (1u<<(iNode&31))) ) {
       hash_ ^= Hasher(item).hash_;
       nodeHasNum_[iNode / 32] |= 1u<<(iNode&31);
+      return true;
     }
+    return false;
+  }
+
+  // Returns true if the item has been added to the trie, false if removed.
+  bool Flip(const VciGpu item) {
+    const VciGpu iNode = Traverse(item);
+    hash_ ^= Hasher(item).hash_;
+    nodeHasNum_[iNode / 32] ^= 1u<<(iNode&31);
+    return !!(nodeHasNum_[iNode / 32] & (1u<<(iNode&31)));
+  }
+
+  // Returns true if the item existed in the trie, false if it didn't exist.
+  bool Remove(const VciGpu item) {
+    assert(item != 0);
+    VciGpu iNode = 0;
+    for(int16_t iBit=0; (VciGpu(1)<<iBit) <= item; iBit++) {
+      if(iNode >= nNodes_) {
+        return false;
+      }
+      const VciGpu iChild = GetChild( iNode, item, iBit );
+      if(iChild == 0) {
+        return false;
+      }
+      iNode = iChild;
+    }
+    assert(iNode < nNodes_);
+    if( nodeHasNum_[iNode / 32] & (1u<<(iNode&31)) ) {
+      hash_ ^= Hasher(item).hash_;
+      nodeHasNum_[iNode / 32] ^= 1u<<(iNode&31);
+      return true;
+    }
+    return false;
   }
 };
