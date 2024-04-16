@@ -357,7 +357,7 @@ int main(int argc, char* argv[]) {
     // varFront
     // stepRevs
     // bestRevVars
-    = ((bestInitNUnsat + (bestInitNUnsat>>1) + 16) * sizeof(VciGpu) + 256) * 4;
+    = ((bestInitNUnsat + (bestInitNUnsat>>1) + 16) * sizeof(VciGpu) + 256) * 8;
   
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
@@ -371,7 +371,7 @@ int main(int argc, char* argv[]) {
     gpuErrchk(cudaMemGetInfo(&cas[i].freeBytes_, &cas[i].totalBytes_));
     uint64_t maxRainbowBytes = cas[i].freeBytes_;
     for(;;) {
-      uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + deviceHeapBpct/8);
+      uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + deviceHeapBpct/16);
       uint64_t rainbowBytes = 1ULL << int(std::log2(maxRainbowBytes));
       uint64_t totVramReq = bytesBothHeaps + rainbowBytes;
       if(totVramReq <= cas[i].freeBytes_) {
@@ -386,7 +386,7 @@ int main(int argc, char* argv[]) {
     pgis[i].nStepBlocks_ = std::min<uint64_t>(
       nBlocksPerSM * cas[i].cdp_.multiProcessorCount,
       cas[i].freeBytes_
-        / (uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + deviceHeapBpct/8))
+        / (uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + deviceHeapBpct/16))
     );
     Logger() << "Rainbow Table: " << double(uint64_t(seenAsgs[i].nbfDwords_) * sizeof(uint32_t)) / (1ULL<<30)
       << " GB, Host heap: "
