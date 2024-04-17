@@ -18,6 +18,7 @@ __constant__ GpuRainbow gSeenAsgs;
 #include "GpuBitVector.cuh"
 #include "GpuTraversal.cuh"
 #include "GpuTrackingVector.cuh"
+#include "GpuTrie.cuh"
 
 struct SystemShared {
   GpuTraversal trav_;
@@ -100,7 +101,7 @@ struct SystemShared {
 struct GpuExec {
   Xoshiro256ss rng_; // seed it on the host
   GpuBitVector nextAsg_; // nVars+1 bits
-  GpuTrackingVector<VciGpu> unsatClauses_;
+  GpuTrie unsatClauses_;
   // GpuTrackingVector<VciGpu> front_;
 };
 
@@ -120,13 +121,15 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
   // const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
   GpuExec& curExec = execs[iThread];
 
-  if(curExec.unsatClauses_.capacity_ == 0) {
-    assert(curExec.unsatClauses_.items_ == nullptr);
-    assert(curExec.unsatClauses_.count_ == 0);
+  if(curExec.unsatClauses_.buffer_ == nullptr) {
+    assert(curExec.unsatClauses_.bitsPerIndex_ == 0);
+    assert(curExec.unsatClauses_.nNodes_ == 0);
     assert(curExec.unsatClauses_.hash_ == 0);
+    assert(curExec.unsatClauses_.nodeHasNum_ == nullptr);
+    assert(curExec.unsatClauses_.count_ == 0);
     for(VciGpu i=1, nClauses=gLinkage.GetClauseCount(); i<=nClauses; i++) {
       if(!IsSatisfied(i, curExec.nextAsg_)) {
-        curExec.unsatClauses_.Add<false>(i);
+        curExec.unsatClauses_.Add(i);
       }
     }
   }

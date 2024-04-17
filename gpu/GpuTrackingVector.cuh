@@ -45,9 +45,7 @@ template<typename TItem> struct GpuTrackingVector {
       hash_ = src.hash_;
       count_ = src.count_;
       if(capacity_ < src.count_) {
-        if(items_ != nullptr) {
-          free(items_);
-        }
+        free(items_);
         capacity_ = AlignCap(src.count_);
         items_ = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
         assert(items_ != nullptr);
@@ -68,9 +66,7 @@ template<typename TItem> struct GpuTrackingVector {
     TItem* newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
     assert(newItems != nullptr);
     Copy(newItems, items_, count_);
-    if(items_ != nullptr) {
-      free(items_);
-    }
+    free(items_);
     items_ = newItems;
     return true;
   }
@@ -120,10 +116,8 @@ template<typename TItem> struct GpuTrackingVector {
   }
 
   __host__ __device__ ~GpuTrackingVector() {
-    if(items_ != nullptr) {
-      free(items_);
-      items_ = nullptr;
-    }
+    free(items_);
+    items_ = nullptr;
   }
 
   __host__ __device__ void Clear() {
@@ -197,9 +191,7 @@ template<typename TItem> struct GpuTrackingVector {
     TItem* newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
     assert(newItems != nullptr);
     Copy(newItems, items_, count_);
-    if(items_ != nullptr) {
-      free(items_);
-    }
+    free(items_);
     items_ = newItems;
   }
 };

@@ -7,6 +7,7 @@ struct GpuTrie {
   uint32_t* buffer_ = nullptr;
   uint32_t* nodeHasNum_ = nullptr;
   VciGpu nNodes_ = 0;
+  VciGpu count_ = 0;
   int16_t bitsPerIndex_ = 0;
 
   static constexpr const int16_t cBufElmBits = 8 * sizeof(buffer_[0]);
@@ -77,9 +78,47 @@ struct GpuTrie {
   }
 
   __host__ __device__ GpuTrie(const VciGpu capacity) {
-    bitsPerIndex_ = __ceilf(__logf( capacity+1 ));
+    bitsPerIndex_ = min( VciGpu(__ceilf(__logf( capacity ))), 7 );
     buffer_ = static_cast<uint32_t*>( malloc( CalcBufBytes(bitsPerIndex_) ) );
     nodeHasNum_ = static_cast<uint32_t*>( malloc( CalcNhnBytes(bitsPerIndex_) ) );
+  }
+
+  __host__ __device__ GpuTrie(GpuTrie&& src) {
+    bitsPerIndex_ = src.bitsPerIndex_;
+    buffer_ = src.buffer_;
+    nodeHasNum_ = src.nodeHasNum_;
+    hash_ = src.hash_;
+    count_ = src.count_;
+    nNodes_ = src.nNodes_;
+
+    src.bitsPerIndex_ = 0;
+    src.buffer_ = nullptr;
+    src.nodeHasNum_ = nullptr;
+    src.hash_ = 0;
+    src.count_ = 0;
+    src.nNodes_ = 0;
+  }
+
+  __host__ __device__ GpuTrie& operator=(GpuTrie&& src) {
+    if(&src != this) {
+      free(buffer_);
+      free(nodeHasNum_);
+
+      bitsPerIndex_ = src.bitsPerIndex_;
+      buffer_ = src.buffer_;
+      nodeHasNum_ = src.nodeHasNum_;
+      hash_ = src.hash_;
+      count_ = src.count_;
+      nNodes_ = src.nNodes_;
+
+      src.bitsPerIndex_ = 0;
+      src.buffer_ = nullptr;
+      src.nodeHasNum_ = nullptr;
+      src.hash_ = 0;
+      src.count_ = 0;
+      src.nNodes_ = 0;
+    }
+    return *this;
   }
 
   // Return true if it grew, false if not.
@@ -141,6 +180,7 @@ struct GpuTrie {
     if( !(nodeHasNum_[iNode / 32] & (1u<<(iNode&31))) ) {
       hash_ ^= Hasher(item).hash_;
       nodeHasNum_[iNode / 32] |= 1u<<(iNode&31);
+      count_++;
       return true;
     }
     return false;
@@ -151,7 +191,13 @@ struct GpuTrie {
     const VciGpu iNode = Traverse(item);
     hash_ ^= Hasher(item).hash_;
     nodeHasNum_[iNode / 32] ^= 1u<<(iNode&31);
-    return !!(nodeHasNum_[iNode / 32] & (1u<<(iNode&31)));
+    if( (nodeHasNum_[iNode / 32] & (1u<<(iNode&31))) ) {
+      count_++;
+      return true;
+    } else {
+      count_--;
+      return false;
+    }
   }
 
   // Returns true if the item existed in the trie, false if it didn't exist.
@@ -172,8 +218,78 @@ struct GpuTrie {
     if( nodeHasNum_[iNode / 32] & (1u<<(iNode&31)) ) {
       hash_ ^= Hasher(item).hash_;
       nodeHasNum_[iNode / 32] ^= 1u<<(iNode&31);
+      count_--;
       return true;
     }
     return false;
+  }
+
+  template<typename F> void Visit(const F& f) {
+    if(count_ == 0) {
+      return;
+    }
+    constexpr const int16_t cMaxBits = sizeof(VciGpu) * 8;
+    VciGpu stInds[cMaxBits];
+    int16_t iBit;
+    stInds[0] = 0;
+    for(iBit=1; iBit<cMaxBits; iBit++) {
+      const VciGpu iNode = stInds[iBit-1];
+      const VciGpu leftChild = GetChild(iNode, 0);
+      if(leftChild == 0) {
+        break;
+      }
+      stInds[iBit] = leftChild;
+    }
+    VciGpu path = 0;
+    while(iBit > 0) {
+      iBit--;
+      const VciGpu iNode = stInds[iBit];
+      if(iNode < 0) {
+        assert(path & (VciGpu(1) << iBit));
+        path ^= VciGpu(1) << iBit;
+        continue;
+      }
+      if( nodeHasNum_[iNode/32] & (1u<<(iNode&31)) ) {
+        f(path);
+      }
+      const VciGpu iChild = GetChild(iNode, 1);
+      if( iChild == 0 ) {
+        continue;
+      }
+      stInds[iBit] = -iNode;
+      path |= VciGpu(1) << iBit;
+      iBit++;
+      stInds[iBit] = iChild;
+      for(;;) {
+        iBit++;
+        const VciGpu iNode = stInds[iBit-1];
+        const VciGpu leftChild = GetChild(iNode, 0);
+        if(leftChild == 0) {
+          break;
+        }
+        stInds[iBit] = leftChild;
+      }
+    }
+  }
+
+  void Shrink() {
+    if(count_ == 0) {
+      free(buffer_);
+      buffer_ = nullptr;
+      free(nodeHasNum_);
+      nodeHasNum_ = nullptr;
+      return;
+    }
+    GpuTrie t(count_);
+    Visit([&](const VciGpu item) {
+      t.Add(item);
+    });
+    assert(t.count_ == count_);
+    *this = std::move(t);
+  }
+
+  ~GpuTrie() {
+    count_ = 0;
+    Shrink();
   }
 };
