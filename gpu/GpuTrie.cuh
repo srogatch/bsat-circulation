@@ -53,11 +53,11 @@ struct GpuTrie {
   }
 
   // bitChild is 0 for left child and 1 for right child
-  __host__ __device__ VciGpu GetChild(const VciGpu iParent, const int8_t bitChild) {
+  __host__ __device__ VciGpu GetChild(const VciGpu iParent, const int8_t bitChild) const {
     return GetIndex(iParent * 2 + bitChild);
   }
 
-  __host__ __device__ VciGpu GetChild(const VciGpu iParent, const VciGpu item, const int16_t iBit) {
+  __host__ __device__ VciGpu GetChild(const VciGpu iParent, const VciGpu item, const int16_t iBit) const {
     return GetChild(iParent, (item>>iBit) & 1);
   }
 
@@ -77,8 +77,8 @@ struct GpuTrie {
     return DivUp(VciGpu(1) << bitsPerIndex, cVectBits) * sizeof(__uint128_t);
   }
 
-  __host__ __device__ GpuTrie(const VciGpu capacity) {
-    bitsPerIndex_ = min( VciGpu(__ceilf(__logf( capacity ))), 7 );
+  __device__ GpuTrie(const VciGpu capacity) {
+    bitsPerIndex_ = min( VciGpu(ceilf(__logf( capacity ))), 7 );
     buffer_ = static_cast<uint32_t*>( malloc( CalcBufBytes(bitsPerIndex_) ) );
     nodeHasNum_ = static_cast<uint32_t*>( malloc( CalcNhnBytes(bitsPerIndex_) ) );
   }
@@ -146,7 +146,7 @@ struct GpuTrie {
     return true;
   }
 
-  VciGpu Traverse(const VciGpu item) {
+  __host__ __device__ VciGpu Traverse(const VciGpu item) {
     assert(item != 0);
     VciGpu iNode = 0;
     for(int16_t iBit=0; (VciGpu(1)<<iBit) <= item; iBit++) {
@@ -175,7 +175,7 @@ struct GpuTrie {
   }
 
   // Returns true if item is added, false if already exists
-  bool Add(const VciGpu item) {
+  __host__ __device__ bool Add(const VciGpu item) {
     const VciGpu iNode = Traverse(item);
     if( !(nodeHasNum_[iNode / 32] & (1u<<(iNode&31))) ) {
       hash_ ^= Hasher(item).hash_;
@@ -187,7 +187,7 @@ struct GpuTrie {
   }
 
   // Returns true if the item has been added to the trie, false if removed.
-  bool Flip(const VciGpu item) {
+  __host__ __device__ bool Flip(const VciGpu item) {
     const VciGpu iNode = Traverse(item);
     hash_ ^= Hasher(item).hash_;
     nodeHasNum_[iNode / 32] ^= 1u<<(iNode&31);
@@ -201,7 +201,7 @@ struct GpuTrie {
   }
 
   // Returns true if the item existed in the trie, false if it didn't exist.
-  bool Remove(const VciGpu item) {
+  __host__ __device__ bool Remove(const VciGpu item) {
     assert(item != 0);
     VciGpu iNode = 0;
     for(int16_t iBit=0; (VciGpu(1)<<iBit) <= item; iBit++) {
@@ -224,7 +224,7 @@ struct GpuTrie {
     return false;
   }
 
-  template<typename F> void Visit(const F& f) {
+  template<typename F> __host__ __device__  void Visit(const F& f) const {
     if(count_ == 0) {
       return;
     }
@@ -234,7 +234,7 @@ struct GpuTrie {
     stInds[0] = 0;
     for(iBit=1; iBit<cMaxBits; iBit++) {
       const VciGpu iNode = stInds[iBit-1];
-      const VciGpu leftChild = GetChild(iNode, 0);
+      const VciGpu leftChild = GetChild(iNode, int16_t(0));
       if(leftChild == 0) {
         break;
       }
@@ -252,7 +252,7 @@ struct GpuTrie {
       if( nodeHasNum_[iNode/32] & (1u<<(iNode&31)) ) {
         f(path);
       }
-      const VciGpu iChild = GetChild(iNode, 1);
+      const VciGpu iChild = GetChild(iNode, int16_t(1));
       if( iChild == 0 ) {
         continue;
       }
@@ -263,7 +263,7 @@ struct GpuTrie {
       for(;;) {
         iBit++;
         const VciGpu iNode = stInds[iBit-1];
-        const VciGpu leftChild = GetChild(iNode, 0);
+        const VciGpu leftChild = GetChild(iNode, int16_t(0));
         if(leftChild == 0) {
           break;
         }
@@ -272,7 +272,7 @@ struct GpuTrie {
     }
   }
 
-  void Shrink() {
+  __device__ void Shrink() {
     if(count_ == 0) {
       free(buffer_);
       buffer_ = nullptr;
@@ -288,7 +288,7 @@ struct GpuTrie {
     *this = std::move(t);
   }
 
-  ~GpuTrie() {
+  __device__ ~GpuTrie() {
     count_ = 0;
     Shrink();
   }

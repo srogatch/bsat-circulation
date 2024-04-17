@@ -142,10 +142,9 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     // Get the variables that affect the unsatisfied clauses
     GpuTrackingVector<VciGpu> varFront;
     uint32_t totListLen = 0;
-    const GpuTrackingVector<VciGpu>& combClauses = curExec.unsatClauses_; // front_ ?
-    for(VciGpu i=0; i<combClauses.count_; i++) {
+    const GpuTrie& combClauses = curExec.unsatClauses_; // front_ ?
+    combClauses.Visit([&](const VciGpu aClause) {
       for(int8_t sign=-1; sign<=1; sign+=2) {
-        const VciGpu aClause = combClauses.items_[i];
         const VciGpu varListLen = gLinkage.ClauseArcCount(aClause, sign);
         totListLen += varListLen;
         for(VciGpu j=0; j<varListLen; j++) {
@@ -157,7 +156,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
           varFront.Add<false>(aVar);
         }
       }
-    }
+    });
     varFront.Shrink();
 
     // Shuffle the front
@@ -183,7 +182,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
       const VciGpu aVar = varFront.items_[0];
       stepRevs.Add<false>(aVar);
       curExec.nextAsg_.Flip(aVar);
-      UpdateUnsatCs<true>(aVar, curExec.nextAsg_, curExec.unsatClauses_);
+      UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
     // The first index participating in combinations - upon success, can be shifted
     VciGpu combFirst = 0;
@@ -214,7 +213,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
         const VCIndex aVar = varFront.items_[i+combFirst];
         stepRevs.Flip(aVar);
         curExec.nextAsg_.Flip(aVar);
-        UpdateUnsatCs<true>(aVar, curExec.nextAsg_, curExec.unsatClauses_);
+        UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
         if( (curComb & (1ULL << i)) != 0 ) {
           break;
         }
@@ -256,9 +255,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
         continue;
       }
       curExec.nextAsg_.Flip(aVar);
-      UpdateUnsatCs<false>(aVar, curExec.nextAsg_, curExec.unsatClauses_);
+      UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
-    curExec.unsatClauses_.DelDup();
     assert(curExec.unsatClauses_.count_ == bestUnsat);
     assert(curExec.unsatClauses_.count_ >= sysShar->nGlobalUnsat_);
 
@@ -424,7 +422,7 @@ int main(int argc, char* argv[]) {
       vCpuExecs[i][j].nextAsg_.nBits_ = formula.nVars_ + 1;
       vCpuExecs[i][j].nextAsg_.bits_ = reinterpret_cast<uint32_t*>(
         pgis[i].bvBufs_.Get() + nVectsPerVarsBV * uint64_t(j));
-      assert(vCpuExecs[i][j].unsatClauses_.items_ == nullptr);
+      assert(vCpuExecs[i][j].unsatClauses_.buffer_ == nullptr);
       gpuErrchk(cudaMemcpyAsync(vCpuExecs[i][j].nextAsg_.bits_, formula.ans_.bits_.get(),
         formula.ans_.nQwords_ * sizeof(uint64_t), cudaMemcpyHostToDevice, cas[i].cs_
       ));

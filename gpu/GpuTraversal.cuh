@@ -4,6 +4,7 @@
 #include "GpuRainbow.cuh"
 #include "GpuBitVector.cuh"
 #include "GpuTrackingVector.cuh"
+#include "GpuTrie.cuh"
 
 __device__ bool IsSatisfied(const VciGpu aClause, const GpuBitVector& asg) {
   for(int8_t sign=-1; sign<=1; sign+=2) {
@@ -19,19 +20,15 @@ __device__ bool IsSatisfied(const VciGpu aClause, const GpuBitVector& asg) {
   return false;
 }
 
-template<bool delDup> __device__ void UpdateUnsatCs(const VciGpu aVar, const GpuBitVector& asg,
-  GpuTrackingVector<VciGpu>& unsatClauses)
+__device__ void UpdateUnsatCs(const VciGpu aVar, const GpuBitVector& asg,
+  GpuTrie& unsatClauses)
 {
   const int8_t signSat = asg[aVar];
   const VciGpu nSatArcs = gLinkage.VarArcCount(aVar, signSat);
   for(VciGpu i=0; i<nSatArcs; i++) {
     const VciGpu iClause = gLinkage.VarGetTarget(aVar, signSat, i);
     const VciGpu aClause = abs(iClause);
-    if constexpr(delDup) {
-      unsatClauses.Remove(aClause);
-    } else {
-      unsatClauses.Add<false>(-aClause);
-    }
+    unsatClauses.Remove(aClause);
   }
   const VciGpu nUnsatArcs = gLinkage.VarArcCount(aVar, -signSat);
   for(VciGpu i=0; i<nUnsatArcs; i++) {
@@ -40,7 +37,7 @@ template<bool delDup> __device__ void UpdateUnsatCs(const VciGpu aVar, const Gpu
     if(IsSatisfied(aClause, asg)) {
       continue;
     }
-    unsatClauses.Add<delDup>(aClause);
+    unsatClauses.Add(aClause);
   }
 }
 
@@ -81,7 +78,7 @@ struct GpuTraversal {
   }
 
   __device__ bool StepBack(
-    GpuBitVector &asg, GpuTrackingVector<VciGpu>& unsatClauses, const VciGpu maxUnsat)
+    GpuBitVector &asg, GpuTrie& unsatClauses, const VciGpu maxUnsat)
   {
     VciGpu2 retrieved{-1, -1};
     // Don't set it to zero because it will be completely overwritten
@@ -115,10 +112,9 @@ struct GpuTraversal {
         diff ^= 1u<<iBit;
         const VciGpu aVar = i*32 + iBit;
         asg.Flip(aVar);
-        UpdateUnsatCs<false>(aVar, asg, unsatClauses);
+        UpdateUnsatCs(aVar, asg, unsatClauses);
       }
     }
-    unsatClauses.DelDup();
     return true;
   }
 };
