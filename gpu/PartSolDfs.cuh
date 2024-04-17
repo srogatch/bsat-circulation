@@ -45,26 +45,26 @@ struct GpuPartSolDfs {
   }
 
   __device__ VciGpu2 PushBack(const VciGpu nUnsat, __uint128_t& oldHash) {
+    oldHash = 0;
     const VciGpu oldLimit = iLimit_;
     iLimit_ = (iLimit_ + 1) % capacity_;
     if(iLimit_ == iFirst_) {
       iFirst_ = (iFirst_ + 1) % capacity_;
       // Wait for deserialization to finish
-      VciGpu iBlockToPop = cWaitingSerialization;
-      while( (iBlockToPop = atomicOr_system(&deque_[oldLimit].x, 0)) == cWaitingSerialization ) {
+      VciGpu iBlockToPop;
+      while( (iBlockToPop = atomicOr_system(&deque_[iLimit_].x, 0)) == cWaitingSerialization ) {
         __nanosleep(256);
       }
       if(iBlockToPop >= 0) {
         oldHash = pVects_[uint64_t(iBlockToPop) * vectsPerPartSol_];
-      } else {
-        oldHash = 0;
       }
     }
     assert(leftHeads_ > 0);
     leftHeads_--;
     const VciGpu iBlock = heads_[leftHeads_];
-    deque_[oldLimit] = {cWaitingSerialization, nUnsat};
-    return {oldLimit, iBlock};
+    deque_[oldLimit].y = nUnsat;
+    atomicExch_system(&deque_[oldLimit].x, cWaitingSerialization);
+    return VciGpu2{oldLimit, iBlock};
   }
 
   __device__ void Deserialize(const VciGpu iDeque, GpuBitVector& ans, VciGpu& nUnsat) {
@@ -107,7 +107,7 @@ struct GpuPartSolDfs {
     while(atomicOr_system(&deque_[iLimit_].x, 0) == cWaitingSerialization) {
       __nanosleep(128);
     }
-    return {iLimit_, deque_[iLimit_].y};
+    return VciGpu2{iLimit_, deque_[iLimit_].y};
   }
 
   __host__ __device__ bool IsEmpty() const {

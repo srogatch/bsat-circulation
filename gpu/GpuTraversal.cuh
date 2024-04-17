@@ -95,7 +95,7 @@ struct GpuTraversal {
       }
     }
     // Leave spinlock system-wide (all GPUs and CPUs)
-    [[maybe_unused]] const int oldSync = atomicExch_system(&syncDfs_, 0);
+    [[maybe_unused]] int oldSync = atomicExch_system(&syncDfs_, 0);
     assert(oldSync == 1);
 
     if(retrieved.y < 0) {
@@ -103,7 +103,14 @@ struct GpuTraversal {
     }
 
     dfsAsg_.Deserialize(retrieved.x, partSol, retrieved.y);
+
+        // Enter spinlock system-wide (all GPUs and CPUs)
+    while(atomicCAS_system(&syncDfs_, 0, 1) == 1) {
+      __nanosleep(32);
+    }
     dfsAsg_.ReturnHead(retrieved.x);
+    oldSync = atomicExch_system(&syncDfs_, 0);
+    assert(oldSync == 1);
 
     for(VciGpu i=0, iLim=asg.DwordCount(); i<iLim; i++) {
       uint32_t diff = asg.bits_[i] ^ partSol.bits_[i];

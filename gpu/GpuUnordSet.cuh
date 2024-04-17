@@ -144,7 +144,7 @@ struct GpuUnordSet {
 
   // Returns true if item is added, false if already exists
   __host__ __device__ bool Add(const VciGpu item) {
-    assert(item != 0);
+    assert(1 <= item && item < (VciGpu(1) << bitsPerPack_));
     uint32_t pos=(item*cHashMul) % nBuckets_;
     for(;;) {
       const VciGpu valAt = GetPack(pos);
@@ -162,9 +162,28 @@ struct GpuUnordSet {
     }
   }
 
+  __host__ __device__ void ShiftAfterRemove(VciGpu pos) {
+    assert(GetPack(pos) == 0);
+    VciGpu rangeStart = pos;
+    for(;;) {
+      const uint32_t nextPos = (pos+1) % nBuckets_;
+      const VciGpu valNext = GetPack(nextPos);
+      if(valNext == 0) {
+        break;
+      }
+      const uint32_t hashNext = (valNext * cHashMul) % nBuckets_;
+      if((nextPos > rangeStart && hashNext >= rangeStart) || (nextPos < rangeStart && hashNext <= nextPos)) {
+        SetPack(rangeStart, GetPack(nextPos));
+        SetPack(nextPos, 0);
+        rangeStart = nextPos;
+      }
+      pos = nextPos;
+    }
+  }
+
   // Returns true if the item has been added to the trie, false if removed.
   __host__ __device__ bool Flip(const VciGpu item) {
-    assert(item != 0);
+    assert(1 <= item && item < (VciGpu(1) << bitsPerPack_));
     uint32_t pos=(item*cHashMul) % nBuckets_;
     for(;;) {
       const VciGpu valAt = GetPack(pos);
@@ -172,7 +191,11 @@ struct GpuUnordSet {
         hash_ ^= Hasher(item).hash_;
         SetPack(pos, item ^ valAt);
         count_ += (valAt ? -1 : 1);
-        CheckGrow();
+        if(valAt == item) {
+          ShiftAfterRemove(pos);
+        } else {
+          CheckGrow();
+        }
         return !valAt;
       }
       pos = (pos+1) % nBuckets_;
@@ -181,7 +204,7 @@ struct GpuUnordSet {
 
   // Returns true if the item existed in the trie, false if it didn't exist.
   __host__ __device__ bool Remove(const VciGpu item) {
-    assert(item != 0);
+    assert(1 <= item && item < (VciGpu(1) << bitsPerPack_));
     uint32_t pos=(item*cHashMul) % nBuckets_;
     for(;;) {
       const VciGpu valAt = GetPack(pos);
@@ -189,9 +212,10 @@ struct GpuUnordSet {
         return false;
       }
       if(valAt == item) {
-        SetPack(pos, 0);
         hash_ ^= Hasher(item).hash_;
         count_--;
+        SetPack(pos, 0);
+        ShiftAfterRemove(pos);
         return true;
       }
       pos = (pos+1) % nBuckets_;
