@@ -48,7 +48,7 @@ template<typename TCounter> struct SatTracker {
       nSat_.reset(new TCounter[src.pFormula_->nClauses_+1]);
     }
     pFormula_ = src.pFormula_;
-    totSat_.store(src.totSat_.load(std::memory_order_release), std::memory_order_acquire);
+    totSat_.store(src.totSat_.load(std::memory_order_acquire), std::memory_order_release);
 
     //#pragma omp parallel for schedule(static, kRamPageBytes)
     // for(int64_t i=0; i<=pFormula_->nClauses_; i++) {

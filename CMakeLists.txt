@@ -44,6 +44,9 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
    -Xcompiler -mrdrnd") # -Xcompiler -mbmi -Xcompiler -mbmi2 -Xcompiler -mavx2 -Xcompiler -mfma -Xcompiler -mavx
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic -Werror -mrdrnd -Wno-write-strings") # -mavx2 -mfma -mbmi -mbmi2 -mavx -flto
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -pedantic -Werror -mrdrnd -Wno-write-strings") # -mavx2 -mfma -mbmi -mbmi2  -mavx -flto
+  # if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  #   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -stdlib=libc++")
+  # endif()
 elseif(MSVC)
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler /W4 -Xcompiler /arch:AVX2 \
     -Xcompiler /GL -Xcompiler /Qvec -Xcompiler /Oi -Xcompiler /Ob3 -Xcompiler /WX")

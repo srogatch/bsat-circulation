@@ -136,7 +136,7 @@ int main(int argc, char* argv[]) {
       const VCTrackingSet startFront = locFront;
       int64_t nCombs = 0;
       while(nCombs < locSatTr.MaxCombs()) {
-        const int8_t sortType = i % knSortTypes + kMinSortType; //rng() % knSortTypes + kMinSortType;
+        const int8_t sortType = int(i % knSortTypes) + kMinSortType; //rng() % knSortTypes + kMinSortType;
         if(locFront.Size() == 0 || trav.IsSeenFront(locFront, locUnsatClauses)) {
           std::cout << "%";
           locFront = locUnsatClauses;

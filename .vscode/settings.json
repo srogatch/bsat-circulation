@@ -71,6 +71,9 @@
     "set": "cpp",
     "bitset": "cpp",
     "*.ipp": "cpp",
-    "filesystem": "cpp"
+    "filesystem": "cpp",
+    "codecvt": "cpp",
+    "regex": "cpp",
+    "__nullptr": "cpp"
   }
 }
