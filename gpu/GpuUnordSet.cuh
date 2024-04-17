@@ -125,20 +125,19 @@ struct GpuUnordSet {
         assert(item != 0);
         uint32_t pos=(item*cHashMul) % newNBuckets;
         for(;;) {
-          const VciGpu valAt = GetPack(pos);
+          const VciGpu valAt = GetPack(pos, newBuf, bitsPerPack_);
           if(valAt == 0) {
             SetPack(pos, item, newBuf, bitsPerPack_);
             break;
           }
-          if(valAt == item) {
-            break;
-          }
+          assert(valAt != item);
           pos = (pos+1) % newNBuckets;
         }
       });
       free(buffer_);
     }
     buffer_ = newBuf;
+    nBuckets_ = newNBuckets;
     return true;
   }
 
@@ -172,7 +171,7 @@ struct GpuUnordSet {
         break;
       }
       const uint32_t hashNext = (valNext * cHashMul) % nBuckets_;
-      if((nextPos > rangeStart && hashNext >= rangeStart) || (nextPos < rangeStart && hashNext <= nextPos)) {
+      if(hashNext >= rangeStart || (nextPos < rangeStart && hashNext <= nextPos)) {
         SetPack(rangeStart, GetPack(nextPos));
         SetPack(nextPos, 0);
         rangeStart = nextPos;
@@ -238,6 +237,10 @@ struct GpuUnordSet {
     if(count_ == 0) {
       free(buffer_);
       buffer_ = nullptr;
+      nBuckets_ = 0;
+      return;
+    }
+    if(count_ >= nBuckets_ / 2) {
       return;
     }
     GpuUnordSet t(count_, (VciGpu(1)<<bitsPerPack_) - 1);
@@ -246,6 +249,7 @@ struct GpuUnordSet {
       t.Add(item);
     });
     assert(t.count_ == count_);
+    assert(t.hash_ == hash_);
     *this = std::move(t);
   }
 

@@ -477,6 +477,8 @@ int main(int argc, char* argv[]) {
       vCpuExecs[i][j].nextAsg_.bits_ = reinterpret_cast<uint32_t*>(
         pgis[i].bvBufs_.Get() + nVectsPerVarsBV * uint64_t(j));
       assert(vCpuExecs[i][j].unsatClauses_.buffer_ == nullptr);
+      // TODO: tail bits (beyond the last QWord, but withing the last 128-bit vector) may be corrupt
+      // TODO: avoid so much work over PCIe bus
       gpuErrchk(cudaMemcpyAsync(vCpuExecs[i][j].nextAsg_.bits_, formula.ans_.bits_.get(),
         formula.ans_.nQwords_ * sizeof(uint64_t), cudaMemcpyHostToDevice, cas[i].cs_
       ));

@@ -117,6 +117,7 @@ struct GpuTraversal {
       uint32_t diff = asg.bits_[i] ^ partSol.bits_[i];
       while(diff != 0) {
         const int iBit = __ffs(diff) - 1;
+        assert(diff & (1u<<iBit) != 0);
         diff ^= 1u<<iBit;
         const VciGpu aVar = i*32 + iBit;
         asg.Flip(aVar);

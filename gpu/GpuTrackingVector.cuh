@@ -32,7 +32,7 @@ template<typename TItem> struct GpuTrackingVector {
   __host__ __device__ GpuTrackingVector(const GpuTrackingVector& src) {
     hash_ = src.hash_;
     count_ = src.count_;
-    capacity_ = src.count_;
+    capacity_ = AlignCap(src.count_);
     items_ = malloc(capacity_ * sizeof(TItem));
     assert(items_ != nullptr);
     assert((capacity_ * sizeof(TItem)) % sizeof(__uint128_t) == 0);
@@ -61,7 +61,7 @@ template<typename TItem> struct GpuTrackingVector {
     if(newCap <= capacity_) {
       return false;
     }
-    VciGpu maxCap = max(capacity_ + (capacity_>>1) + 16, newCap);
+    VciGpu maxCap = max(capacity_ + (capacity_>>1) + 8, newCap);
     capacity_ = AlignCap(maxCap);
     TItem* newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
     assert(newItems != nullptr);
@@ -109,6 +109,7 @@ template<typename TItem> struct GpuTrackingVector {
       if(items_[i] == item) {
         hash_ ^= Hasher(item).hash_;
         items_[i] = items_[count_-1];
+        count_--;
         return true;
       }
     }

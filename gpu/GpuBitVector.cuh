@@ -91,10 +91,12 @@ struct GpuBitVector {
 
   // Note the return logic is different from CPU BitVector
   __host__ __device__ int8_t operator[](const VciGpu index) const {
+    assert(1 <= index && index < nBits_);
     return (bits_[index/32] & (1u<<(index&31))) ? 1 : -1;
   }
 
   template<bool doHash = true> __device__ void Flip(const VciGpu index) {
+    assert(1 <= index && index < nBits_);
     if constexpr(doHash) {
       hash_ ^= gpHashSeries[index];
     }
