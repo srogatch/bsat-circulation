@@ -18,7 +18,6 @@ __constant__ GpuRainbow gSeenAsgs;
 #include "GpuBitVector.cuh"
 #include "GpuTraversal.cuh"
 #include "GpuTrackingVector.cuh"
-#include "GpuTrie.cuh"
 
 #include "../SatTracker.h"
 #include "../Traversal.h"
@@ -104,7 +103,7 @@ struct SystemShared {
 struct GpuExec {
   Xoshiro256ss rng_; // seed it on the host
   GpuBitVector nextAsg_; // nVars+1 bits
-  GpuTrie unsatClauses_;
+  GpuUnordSet unsatClauses_;
   // GpuTrackingVector<VciGpu> front_;
 };
 
@@ -125,12 +124,14 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
   GpuExec& curExec = execs[iThread];
 
   if(curExec.unsatClauses_.buffer_ == nullptr) {
-    assert(curExec.unsatClauses_.bitsPerIndex_ == 0);
-    assert(curExec.unsatClauses_.nNodes_ == 0);
+    assert(curExec.unsatClauses_.bitsPerPack_ == 0);
+    assert(curExec.unsatClauses_.nBuckets_ == 0);
     assert(curExec.unsatClauses_.hash_ == 0);
-    assert(curExec.unsatClauses_.nodeHasNum_ == nullptr);
     assert(curExec.unsatClauses_.count_ == 0);
-    for(VciGpu i=1, nClauses=gLinkage.GetClauseCount(); i<=nClauses; i++) {
+    
+    const VciGpu nClauses=gLinkage.GetClauseCount();
+    curExec.unsatClauses_ = GpuUnordSet(nStartUnsat, nClauses);
+    for(VciGpu i=1; i<=nClauses; i++) {
       if(!IsSatisfied(i, curExec.nextAsg_)) {
         curExec.unsatClauses_.Add(i);
       }
@@ -145,7 +146,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     // Get the variables that affect the unsatisfied clauses
     GpuTrackingVector<VciGpu> varFront;
     uint32_t totListLen = 0;
-    const GpuTrie& combClauses = curExec.unsatClauses_; // front_ ?
+    const GpuUnordSet& combClauses = curExec.unsatClauses_; // front_ ?
     combClauses.Visit([&](const VciGpu aClause) {
       for(int8_t sign=-1; sign<=1; sign+=2) {
         const VciGpu varListLen = gLinkage.ClauseArcCount(aClause, sign);

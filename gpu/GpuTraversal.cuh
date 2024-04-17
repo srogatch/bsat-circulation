@@ -4,7 +4,7 @@
 #include "GpuRainbow.cuh"
 #include "GpuBitVector.cuh"
 #include "GpuTrackingVector.cuh"
-#include "GpuTrie.cuh"
+#include "GpuUnordSet.cuh"
 
 __device__ bool IsSatisfied(const VciGpu aClause, const GpuBitVector& asg) {
   for(int8_t sign=-1; sign<=1; sign+=2) {
@@ -21,7 +21,7 @@ __device__ bool IsSatisfied(const VciGpu aClause, const GpuBitVector& asg) {
 }
 
 __device__ void UpdateUnsatCs(const VciGpu aVar, const GpuBitVector& asg,
-  GpuTrie& unsatClauses)
+  GpuUnordSet& unsatClauses)
 {
   const int8_t signSat = asg[aVar];
   const VciGpu nSatArcs = gLinkage.VarArcCount(aVar, signSat);
@@ -78,7 +78,7 @@ struct GpuTraversal {
   }
 
   __device__ bool StepBack(
-    GpuBitVector &asg, GpuTrie& unsatClauses, const VciGpu maxUnsat)
+    GpuBitVector &asg, GpuUnordSet& unsatClauses, const VciGpu maxUnsat)
   {
     VciGpu2 retrieved{-1, -1};
     // Don't set it to zero because it will be completely overwritten
