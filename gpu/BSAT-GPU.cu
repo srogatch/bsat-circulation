@@ -164,7 +164,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     varFront.Shrink();
 
     // Shuffle the front
-    for(VciGpu i=0; i<varFront.count_; i++) {
+    for(VciGpu i=0; i+1<varFront.count_; i++) {
       const VciGpu pos = i + curExec.rng_.Next() % (varFront.count_ - i);
       Swap(varFront.items_[i], varFront.items_[pos]);
     }
@@ -241,6 +241,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     bestRevVars.Sort();
     VciGpu iSR = 0, iBR = 0;
     while(iSR < stepRevs.count_ || iBR < bestRevVars.count_) {
+      assert(iSR == 0 || iSR >= stepRevs.count_ || stepRevs.items_[iSR-1] < stepRevs.items_[iSR]);
+      assert(iBR == 0 || iBR >= bestRevVars.count_ || bestRevVars.items_[iBR-1] < bestRevVars.items_[iBR]);
       VciGpu aVar;
       if(iBR >= bestRevVars.count_ || stepRevs.items_[iSR] < bestRevVars.items_[iBR]) {
         aVar = stepRevs.items_[iSR];

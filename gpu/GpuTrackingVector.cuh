@@ -144,6 +144,7 @@ template<typename TItem> struct GpuTrackingVector {
           iChild = pos*2 + 2;
         }
         if(items_[pos] < items_[iChild]) {
+          Swap(items_[pos], items_[iChild]);
           pos = iChild;
         } else {
           break;
