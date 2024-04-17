@@ -171,8 +171,8 @@ struct GpuUnordSet {
         break;
       }
       const uint32_t hashNext = (valNext * cHashMul) % nBuckets_;
-      if(hashNext >= rangeStart || (nextPos < rangeStart && hashNext <= nextPos)) {
-        SetPack(rangeStart, GetPack(nextPos));
+      if(hashNext == rangeStart) {
+        SetPack(rangeStart, valNext);
         SetPack(nextPos, 0);
         rangeStart = nextPos;
       }
