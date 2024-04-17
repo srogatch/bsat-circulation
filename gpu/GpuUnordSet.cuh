@@ -191,10 +191,10 @@ struct GpuUnordSet {
         hash_ ^= Hasher(item).hash_;
         SetPack(pos, item ^ valAt);
         count_ += (valAt ? -1 : 1);
-        if(valAt == item) {
-          ShiftAfterRemove(pos);
-        } else {
+        if(valAt == 0) {
           CheckGrow();
+        } else {
+          ShiftAfterRemove(pos);
         }
         return !valAt;
       }

@@ -166,9 +166,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     // Shuffle the front
     for(VciGpu i=0; i<varFront.count_; i++) {
       const VciGpu pos = i + curExec.rng_.Next() % (varFront.count_ - i);
-      const VciGpu t = varFront.items_[i];
-      varFront.items_[i] = varFront.items_[pos];
-      varFront.items_[pos] = t;
+      Swap(varFront.items_[i], varFront.items_[pos]);
     }
 
     //// Combine
