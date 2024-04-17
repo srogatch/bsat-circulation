@@ -128,7 +128,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     assert(curExec.unsatClauses_.nBuckets_ == 0);
     assert(curExec.unsatClauses_.hash_ == 0);
     assert(curExec.unsatClauses_.count_ == 0);
-    
+
     const VciGpu nClauses=gLinkage.GetClauseCount();
     curExec.unsatClauses_ = GpuUnordSet(nStartUnsat, nClauses);
     for(VciGpu i=1; i<=nClauses; i++) {
@@ -411,7 +411,7 @@ int main(int argc, char* argv[]) {
     // varFront
     // stepRevs
     // bestRevVars
-    = ((bestInitNUnsat*2 + 16) * sizeof(VciGpu) + 256) * 16;
+    = ((bestInitNUnsat*2 + 16) * sizeof(VciGpu) + 256) * 4;
   const uint64_t overheadBpct = deviceHeapBpct/8;
   
   #pragma omp parallel for num_threads(nGpus)
