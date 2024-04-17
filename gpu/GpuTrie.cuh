@@ -50,6 +50,7 @@ struct GpuTrie {
       buffer_[iHighVect] = (buffer_[iHighVect] & ~((1u<<highOffs)-1)) | (valFullBits>>(bitsPerIndex_-highOffs));
     }
     buffer_[iLowVect] = (buffer_[iLowVect] & lowAnd) | lowOr;
+    assert( GetIndex(at) == val );
   }
 
   // bitChild is 0 for left child and 1 for right child
@@ -78,7 +79,7 @@ struct GpuTrie {
   }
 
   __device__ GpuTrie(const VciGpu capacity) {
-    bitsPerIndex_ = min( VciGpu(ceilf(__logf( capacity ))), 7 );
+    bitsPerIndex_ = max( VciGpu(ceilf(__logf( capacity ))), 7 );
     buffer_ = static_cast<uint32_t*>( malloc( CalcBufBytes(bitsPerIndex_) ) );
     nodeHasNum_ = static_cast<uint32_t*>( malloc( CalcNhnBytes(bitsPerIndex_) ) );
   }
@@ -127,35 +128,44 @@ struct GpuTrie {
       return false;
     }
 
-    const VciGpu newBpi = min(bitsPerIndex_ + 1, 7);
+    const VciGpu newBpi = max(bitsPerIndex_ + 1, 7);
 
     const VciGpu newBufBytes = CalcBufBytes( newBpi );
     uint32_t *newBuf = static_cast<uint32_t*>( malloc( newBufBytes ) );
-    VectCopy( newBuf, buffer_, CalcBufBytes(bitsPerIndex_) );
-    free(buffer_);
+    assert( newBuf != nullptr );
+    if(buffer_ != nullptr) {
+      VectCopy( newBuf, buffer_, CalcBufBytes(bitsPerIndex_) );
+      free(buffer_);
+    }
     buffer_ = newBuf;
 
     const VciGpu newNhnBytes = CalcNhnBytes( newBpi );
     uint32_t *newNhn = static_cast<uint32_t*>( malloc( newNhnBytes ) );
-    const VciGpu oldNhnBytes = CalcNhnBytes(bitsPerIndex_);
-    VectCopy( newNhn, nodeHasNum_, oldNhnBytes );
-    free(nodeHasNum_);
+    assert(newNhn != nullptr);
+    const VciGpu oldNhnBytes = (nodeHasNum_ == nullptr ? 0 : CalcNhnBytes(bitsPerIndex_));
+    if(nodeHasNum_ != nullptr) {
+      VectCopy( newNhn, nodeHasNum_, oldNhnBytes );
+      free(nodeHasNum_);
+    }
     VectSetZero( newNhn+oldNhnBytes, newNhnBytes - oldNhnBytes );
     nodeHasNum_ = newNhn;
-    
+
+    bitsPerIndex_ = newBpi;
     return true;
   }
 
   __host__ __device__ VciGpu Traverse(const VciGpu item) {
-    assert(item != 0);
+    assert(item > 0);
     VciGpu iNode = 0;
     for(int16_t iBit=0; (VciGpu(1)<<iBit) <= item; iBit++) {
+      assert(0 <= iNode && iNode <= nNodes_);
       if(iNode >= nNodes_) {
         CheckGrow(iNode);
+        assert( iNode < (VciGpu(1)<<bitsPerIndex_) );
         SetIndex(2*iNode + ((item>>iBit) & 1), iNode+1);
         SetIndex(2*iNode + (((item>>iBit) & 1) ^ 1), 0);
         iNode = iNode+1;
-        nNodes_ = iNode+1;
+        nNodes_++;
       } else {
         const VciGpu iChild = GetChild( iNode, item, iBit );
         if(iChild == 0) {
@@ -167,9 +177,11 @@ struct GpuTrie {
       }
     }
     if(iNode >= nNodes_) {
+      assert(0 <= iNode && iNode <= nNodes_);
       CheckGrow(iNode);
       SetIndex(2*iNode + 0, 0);
       SetIndex(2*iNode + 1, 0);
+      nNodes_++;
     }
     return iNode;
   }
@@ -202,7 +214,7 @@ struct GpuTrie {
 
   // Returns true if the item existed in the trie, false if it didn't exist.
   __host__ __device__ bool Remove(const VciGpu item) {
-    assert(item != 0);
+    assert(item > 0);
     VciGpu iNode = 0;
     for(int16_t iBit=0; (VciGpu(1)<<iBit) <= item; iBit++) {
       if(iNode >= nNodes_) {
