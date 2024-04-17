@@ -145,12 +145,10 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     curExec.unsatClauses_.Shrink();
     // Get the variables that affect the unsatisfied clauses
     GpuTrackingVector<VciGpu> varFront;
-    uint32_t totListLen = 0;
     const GpuUnordSet& combClauses = curExec.unsatClauses_; // front_ ?
     combClauses.Visit([&](const VciGpu aClause) {
       for(int8_t sign=-1; sign<=1; sign+=2) {
         const VciGpu varListLen = gLinkage.ClauseArcCount(aClause, sign);
-        totListLen += varListLen;
         for(VciGpu j=0; j<varListLen; j++) {
           const VciGpu iVar = gLinkage.ClauseGetTarget(aClause, sign, j);
           const VciGpu aVar = abs(iVar);
@@ -174,7 +172,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     VciGpu bestUnsat = gLinkage.GetClauseCount() + 1;
     GpuTrackingVector<VciGpu> bestRevVars;
     // Make sure the overhead of preparing the combinations doesn't outnumber the effort spent in combinations
-    uint32_t endComb = max(cCombsPerStep, varFront.count_ + combClauses.count_ + totListLen);
+    uint32_t endComb = max(cCombsPerStep, varFront.count_ + combClauses.count_);
     if(varFront.count_ <= 31) [[unlikely]] {
       endComb = min(endComb, (1u<<varFront.count_)-1);
     }
@@ -411,8 +409,8 @@ int main(int argc, char* argv[]) {
     // varFront
     // stepRevs
     // bestRevVars
-    = ((bestInitNUnsat*2 + 16) * ceilf(log2f(formula.nClauses_+1)) / 8 + 256) * 4;
-  const uint64_t overheadBpct = deviceHeapBpct/8;
+    = ((bestInitNUnsat / GpuUnordSet::cStartOccupancy + 16) * ceilf(log2f(formula.nClauses_+1)) / 8 + 256) * 8;
+  const uint64_t overheadBpct = deviceHeapBpct/16;
   
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {

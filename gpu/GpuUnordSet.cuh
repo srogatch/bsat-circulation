@@ -3,6 +3,9 @@
 #include "GpuUtils.cuh"
 
 struct GpuUnordSet {
+  static constexpr const float cShrinkOccupancy = 0.42;
+  static constexpr const float cStartOccupancy = 0.66;
+  static constexpr const float cGrowOccupancy = 0.9;
   static constexpr const uint32_t cHashMul = 2147483647u;
   __uint128_t hash_ = 0;
   uint32_t* buffer_ = nullptr;
@@ -67,8 +70,11 @@ struct GpuUnordSet {
   }
 
   __device__ GpuUnordSet(const VciGpu capacity, const VciGpu maxVal) {
+    if(capacity == 0) {
+      return;
+    }
     bitsPerPack_ = VciGpu(ceilf(__log2f( maxVal+1 )));
-    nBuckets_ = capacity * 2;
+    nBuckets_ = ceilf(capacity / cStartOccupancy);
     const VciGpu nBufBytes = CalcBufBytes(nBuckets_, bitsPerPack_);
     buffer_ = static_cast<uint32_t*>( malloc( nBufBytes ) );
     assert(buffer_ != nullptr);
@@ -90,7 +96,7 @@ struct GpuUnordSet {
   }
 
   __host__ __device__ GpuUnordSet& operator=(GpuUnordSet&& src) {
-    if(&src != this) {
+    if(&src != this) [[likely]] {
       free(buffer_);
 
       bitsPerPack_ = src.bitsPerPack_;
@@ -110,11 +116,11 @@ struct GpuUnordSet {
 
   // Return true if it grew, false if not.
   __host__ __device__  bool CheckGrow() {
-    if(count_ <= nBuckets_ * 3 / 4) {
+    if(count_ <= nBuckets_ * cGrowOccupancy) [[likely]] {
       return false;
     }
 
-    VciGpu newNBuckets = nBuckets_ * 2;
+    VciGpu newNBuckets = ceilf(count_ / cStartOccupancy);
     const VciGpu newBufBytes = CalcBufBytes(newNBuckets, bitsPerPack_);
     uint32_t* newBuf = static_cast<uint32_t*>( malloc( newBufBytes ) );
     assert(newBuf != nullptr);
@@ -234,13 +240,13 @@ struct GpuUnordSet {
   }
 
   __device__ void Shrink() {
-    if(count_ == 0) {
+    if(count_ == 0) [[unlikely]] {
       free(buffer_);
       buffer_ = nullptr;
       nBuckets_ = 0;
       return;
     }
-    if(count_ >= nBuckets_ / 2) {
+    if(count_ >= nBuckets_ * cShrinkOccupancy) {
       return;
     }
     GpuUnordSet t(count_, (VciGpu(1)<<bitsPerPack_) - 1);
