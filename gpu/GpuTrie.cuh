@@ -15,42 +15,50 @@ struct GpuTrie {
 
   GpuTrie() = default;
 
-  __host__ __device__ uint32_t GetIndex(const VciGpu at) const {
-    const uint32_t iLowBit = at * bitsPerIndex_;
+  static __host__ __device__ uint32_t GetIndex(const VciGpu at, const uint32_t* buffer, const int16_t bitsPerIndex) {
+    const uint32_t iLowBit = at * bitsPerIndex;
     const uint32_t iLowVect = iLowBit / cBufElmBits;
-    const uint32_t iHighBit = iLowBit + bitsPerIndex_ - 1;
+    const uint32_t iHighBit = iLowBit + bitsPerIndex - 1;
     const uint32_t iHighVect = iHighBit / cBufElmBits;
     uint32_t val;
     const uint32_t lowOffs = iLowBit % cBufElmBits;
     if(iLowVect == iHighVect) {
-      val = (buffer_[iLowVect] >> lowOffs) & ((1u<<bitsPerIndex_)-1);
+      val = (buffer[iLowVect] >> lowOffs) & ((1u<<bitsPerIndex)-1);
     } else {
       const uint32_t bitsInLow = cBufElmBits-lowOffs;
-      const uint32_t bitsInHigh = bitsPerIndex_-bitsInLow;
+      const uint32_t bitsInHigh = bitsPerIndex-bitsInLow;
       const uint32_t lowMask = (1u<<bitsInLow)-1;
       const uint32_t highMask = (1u<<bitsInHigh)-1;
-      val = ((buffer_[iLowVect]>>lowOffs) & lowMask) | ((buffer_[iHighVect] & highMask)<<bitsInLow);
+      val = ((buffer[iLowVect]>>lowOffs) & lowMask) | ((buffer[iHighVect] & highMask)<<bitsInLow);
     }
     return val;
   }
 
-  __host__ __device__ void SetIndex(const VciGpu at, const uint32_t val) {
-    const uint32_t iLowBit = at * bitsPerIndex_;
+  __host__ __device__ uint32_t GetIndex(const VciGpu at) const {
+    return GetIndex(at, buffer_, bitsPerIndex_);
+  }
+
+  static __host__ __device__ void SetIndex(const VciGpu at, const uint32_t val, uint32_t* buffer, const int16_t bitsPerIndex) {
+    const uint32_t iLowBit = at * bitsPerIndex;
     const uint32_t iLowVect = iLowBit / cBufElmBits;
-    const uint32_t iHighBit = iLowBit + bitsPerIndex_ - 1;
+    const uint32_t iHighBit = iLowBit + bitsPerIndex - 1;
     const uint32_t iHighVect = iHighBit / cBufElmBits;
     const uint32_t lowOffs = iLowBit % cBufElmBits;
     const uint32_t valFullBits = val; // uint32_t(val) & ((1u<<bitsPerIndex_)-1);
     uint32_t lowAnd, lowOr = valFullBits<<lowOffs;
     if(iLowVect == iHighVect) {
-      lowAnd = ~(((1u<<bitsPerIndex_)-1)<<lowOffs);
+      lowAnd = ~(((1u<<bitsPerIndex)-1)<<lowOffs);
     } else {
       lowAnd = (1u<<lowOffs)-1;
       const uint32_t highOffs = (iHighBit+1) % cBufElmBits;
-      buffer_[iHighVect] = (buffer_[iHighVect] & ~((1u<<highOffs)-1)) | (valFullBits>>(bitsPerIndex_-highOffs));
+      buffer[iHighVect] = (buffer[iHighVect] & ~((1u<<highOffs)-1)) | (valFullBits>>(bitsPerIndex-highOffs));
     }
-    buffer_[iLowVect] = (buffer_[iLowVect] & lowAnd) | lowOr;
-    assert( GetIndex(at) == val );
+    buffer[iLowVect] = (buffer[iLowVect] & lowAnd) | lowOr;
+    assert( GetIndex(at, buffer, bitsPerIndex) == val );
+  }
+
+  __host__ __device__ void SetIndex(const VciGpu at, const uint32_t val) {
+    SetIndex(at, val, buffer_, bitsPerIndex_);
   }
 
   // bitChild is 0 for left child and 1 for right child
@@ -134,7 +142,9 @@ struct GpuTrie {
     uint32_t *newBuf = static_cast<uint32_t*>( malloc( newBufBytes ) );
     assert( newBuf != nullptr );
     if(buffer_ != nullptr) {
-      VectCopy( newBuf, buffer_, CalcBufBytes(bitsPerIndex_) );
+      for(VciGpu i=0; i<nNodes_*2; i++) {
+        SetIndex(i, GetIndex(i), newBuf, newBpi);
+      }
       free(buffer_);
     }
     buffer_ = newBuf;
