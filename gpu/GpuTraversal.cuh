@@ -71,11 +71,11 @@ struct GpuTraversal {
     [[maybe_unused]] const int oldSync = atomicExch_system(&syncDfs_, 0);
     assert(oldSync == 1);
 
-    assert(token.x >= 0 && token.y >= 0);
-    dfsAsg_.Serialize(token, asg);
-
-    if(oldHash != 0) {
-      gSeenAsgs.Remove(oldHash);
+    if(token.x >= 0 && token.y >= 0) {
+      dfsAsg_.Serialize(token, asg);
+      if(oldHash != 0) {
+        gSeenAsgs.Remove(oldHash);
+      }
     }
   }
 
