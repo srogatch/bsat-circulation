@@ -30,14 +30,14 @@ struct SystemShared {
   VciGpu nUnsatExecs_;
   VciGpu firstSolRR_;
   VciGpu limitSolRR_;
-  int syncRR_ = 0;
+  int syncRR_;
 
   __device__ void Record(const GpuBitVector& asg, const VciGpu nUnsat) {
     bool full;
     VciGpu target = -1;
     for(;;) {
       // Lock
-      while(atomicCAS_system(&syncRR_, 0, 1) == 1) {
+      while(atomicCAS_system(&syncRR_, 0, 1) != 0) {
         __nanosleep(256);
       }
       const VciGpu newLimit = (limitSolRR_ + 1) & ((VciGpu(1)<<kL2SolRoundRobin)-1);
@@ -503,6 +503,7 @@ int main(int argc, char* argv[]) {
   HostPartSolDfs dfsAsg;
   dfsAsg.Init( maxRamBytes / 2, formula.ans_.nBits_ );
   sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
+  sysShar.Get()->trav_.syncDfs_ = 0;
   sysShar.Get()->nGlobalUnsat_ = bestInitNUnsat;
   sysShar.Get()->nUnsatExecs_ = 0;
   CudaArray<__uint128_t> solRRasgs( (1u<<kL2SolRoundRobin) * uint64_t(nVectsPerVarsBV), CudaArrayType::Pinned );
@@ -510,6 +511,7 @@ int main(int argc, char* argv[]) {
   sysShar.Get()->firstSolRR_ = sysShar.Get()->limitSolRR_ = 0;
   sysShar.Get()->solRRasgs_ = solRRasgs.Get();
   sysShar.Get()->solRRnsUnsat_ = solRRnsUnsat.Get();
+  sysShar.Get()->syncRR_ = 0;
 
   std::cout << "Running on GPU(s)" << std::endl;
   std::atomic<VciGpu> bestNUnsat = bestInitNUnsat.load();

@@ -61,7 +61,7 @@ struct GpuTraversal {
     VciGpu2 token = {-1, -1};
 
     // Enter spinlock system-wide (all GPUs and CPUs)
-    while(atomicCAS_system(&syncDfs_, 0, 1) == 1) {
+    while(atomicCAS_system(&syncDfs_, 0, 1) != 0) {
       __nanosleep(32);
     }
     if(dfsAsg_.IsEmpty() || nUnsat <= dfsAsg_.TopUnsat()) {
@@ -71,6 +71,7 @@ struct GpuTraversal {
     [[maybe_unused]] const int oldSync = atomicExch_system(&syncDfs_, 0);
     assert(oldSync == 1);
 
+    assert(token.x >= 0 && token.y >= 0);
     dfsAsg_.Serialize(token, asg);
 
     if(oldHash != 0) {
@@ -86,7 +87,7 @@ struct GpuTraversal {
     GpuBitVector partSol(asg.nBits_, false);
 
     // Enter spinlock system-wide (all GPUs and CPUs)
-    while(atomicCAS_system(&syncDfs_, 0, 1) == 1) {
+    while(atomicCAS_system(&syncDfs_, 0, 1) != 0) {
       __nanosleep(32);
     }
     if(!dfsAsg_.IsEmpty()) {
@@ -106,7 +107,7 @@ struct GpuTraversal {
     dfsAsg_.Deserialize(retrieved.x, partSol, retrieved.y);
 
         // Enter spinlock system-wide (all GPUs and CPUs)
-    while(atomicCAS_system(&syncDfs_, 0, 1) == 1) {
+    while(atomicCAS_system(&syncDfs_, 0, 1) != 0) {
       __nanosleep(32);
     }
     dfsAsg_.ReturnHead(retrieved.x);
