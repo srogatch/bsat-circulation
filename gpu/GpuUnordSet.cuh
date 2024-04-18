@@ -169,6 +169,14 @@ struct GpuUnordSet {
 
   __host__ __device__ void ShiftAfterRemove(VciGpu pos) {
     assert(GetPack(pos) == 0);
+    VciGpu clusterStart = pos;
+    for(;;) {
+      const VciGpu prev = (clusterStart - 1 + nBuckets_) % nBuckets_;
+      if(GetPack(prev) == 0) {
+        break;
+      }
+      clusterStart = prev;
+    }
     VciGpu rangeStart = pos;
     for(;;) {
       const uint32_t nextPos = (pos+1) % nBuckets_;
@@ -177,7 +185,10 @@ struct GpuUnordSet {
         break;
       }
       const uint32_t hashNext = (valNext * cHashMul) % nBuckets_;
-      if(hashNext == rangeStart) {
+      if( (rangeStart >= clusterStart && clusterStart <= hashNext && hashNext <= rangeStart)
+          || (rangeStart < clusterStart && (clusterStart <= hashNext || hashNext <= rangeStart))
+      )
+      {
         SetPack(rangeStart, valNext);
         SetPack(nextPos, 0);
         rangeStart = nextPos;

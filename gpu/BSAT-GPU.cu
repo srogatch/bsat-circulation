@@ -205,7 +205,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
           }
         }
         if(curExec.unsatClauses_.count_ <= sysShar->nGlobalUnsat_) {
-          sysShar->trav_.RecordAsg(curExec.nextAsg_, bestUnsat);
+          sysShar->trav_.RecordAsg(curExec.nextAsg_, curExec.unsatClauses_.count_);
         }
       }
       for(uint8_t i=0; ; i++) {

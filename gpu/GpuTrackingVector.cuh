@@ -12,7 +12,7 @@ template<typename TItem> struct GpuTrackingVector {
   GpuTrackingVector() = default;
 
   __host__ __device__ static void Copy(TItem* dest, const TItem* src, const VciGpu nItems) {
-    if(nItems == 0) {
+    if(nItems == 0) [[unlikely]] {
       return;
     }
     assert(dest != nullptr);
@@ -41,7 +41,7 @@ template<typename TItem> struct GpuTrackingVector {
 
   __host__ __device__ GpuTrackingVector& operator=(const GpuTrackingVector& src)
   {
-    if(this != &src) {
+    if(this != &src) [[likely]] {
       hash_ = src.hash_;
       count_ = src.count_;
       if(capacity_ < src.count_) {

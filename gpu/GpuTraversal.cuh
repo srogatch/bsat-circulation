@@ -11,8 +11,9 @@ __device__ bool IsSatisfied(const VciGpu aClause, const GpuBitVector& asg) {
     const VciGpu nClauseArcs = gLinkage.ClauseArcCount(aClause, sign);
     for(VciGpu j=0; j<nClauseArcs; j++) {
       const VciGpu iVar = gLinkage.ClauseGetTarget(aClause, sign, j);
+      assert(Signum(iVar) == sign);
       const VciGpu aVar = abs(iVar);
-      if(Signum(iVar) == asg[aVar]) {
+      if(sign == asg[aVar]) {
         return true;
       }
     }
