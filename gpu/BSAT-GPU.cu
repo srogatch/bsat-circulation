@@ -410,7 +410,8 @@ int main(int argc, char* argv[]) {
     // varFront
     // stepRevs
     // bestRevVars
-    = ((bestInitNUnsat / GpuUnordSet::cStartOccupancy + 16) * ceilf(log2f(formula.nClauses_+1)) / 8 + 256) * 8;
+    = ( (bestInitNUnsat / GpuUnordSet::cStartOccupancy + 16) * ceilf(log2f(formula.nClauses_+1)) / 8
+    + bestInitNUnsat * sizeof(VciGpu) * 5 + 16 * 6 );
   const uint64_t overheadBpct = deviceHeapBpct/16;
   
   #pragma omp parallel for num_threads(nGpus)
