@@ -195,7 +195,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
             const VciGpu oldMin = atomicMin_system(&sysShar->nGlobalUnsat_, bestUnsat);
             if(oldMin > bestUnsat) [[likely]] {
               sysShar->Record(curExec.nextAsg_, bestUnsat);
-              combFirst = combFirst + __log2f(curComb-1) + 1;
+              combFirst = combFirst + __log2f(curComb) + 1;
               curComb = 0;
               const VciGpu remVF = varFront.count_ - combFirst;
               if(remVF <= 31) [[unlikely]] {
@@ -411,7 +411,7 @@ int main(int argc, char* argv[]) {
     // stepRevs
     // bestRevVars
     = ( (bestInitNUnsat / GpuUnordSet::cStartOccupancy + 16) * ceilf(log2f(formula.nClauses_+1)) / 8
-    + bestInitNUnsat * sizeof(VciGpu) * 5 + 16 * 6 );
+    + bestInitNUnsat * sizeof(VciGpu) * 8 + 16 * 6 );
   const uint64_t overheadBpct = deviceHeapBpct/16;
   
   #pragma omp parallel for num_threads(nGpus)
