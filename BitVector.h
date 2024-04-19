@@ -129,10 +129,10 @@ template<> struct hash<BitVector> {
   }
 };
 
-template<> struct hash<__uint128_t> {
-  inline std::size_t operator()(const __uint128_t x) const {
-    return (x >> 64) * 1949 ^ (x & uint64_t(-1LL));
-  }
-};
+// template<> struct hash<__uint128_t> {
+//   inline std::size_t operator()(const __uint128_t x) const {
+//     return (x >> 64) * 1949 ^ (x & uint64_t(-1LL));
+//   }
+// };
 
 } // namespace std

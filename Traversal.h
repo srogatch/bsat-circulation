@@ -68,7 +68,7 @@ struct Traversal {
     }
   }
 
-  void FoundMove(const VCTrackingSet& front, const VCTrackingSet& revVars) {
+  void FoundMove([[maybe_unused]] const VCTrackingSet& front, [[maybe_unused]] const VCTrackingSet& revVars) {
     // seenMove_.Add(std::make_pair(front.hash_, revVars.hash_));
   }
 
@@ -78,7 +78,10 @@ struct Traversal {
     OnSeenAssignment(assignment, nUnsat);
   }
 
-  bool IsSeenMove(const VCTrackingSet& unsatClauses, const VCTrackingSet& front, const VCTrackingSet& revVars) const {
+  bool IsSeenMove(
+    [[maybe_unused]] const VCTrackingSet& unsatClauses, [[maybe_unused]] const VCTrackingSet& front,
+    [[maybe_unused]] const VCTrackingSet& revVars) const
+  {
     return false;
     // if(front.Size() > 0) {
     //   if(seenMove_.Contains(std::make_pair(front.hash_, revVars.hash_))) {

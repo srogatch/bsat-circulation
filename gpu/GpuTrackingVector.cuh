@@ -9,7 +9,9 @@ template<typename TItem> struct GpuTrackingVector {
   TItem* items_ = nullptr;
   VciGpu count_ = 0, capacity_ = 0;
 
-  GpuTrackingVector() = default;
+  __host__ __device__ GpuTrackingVector() {
+    assert(items_ == nullptr);
+  }
 
   __host__ __device__ static void Copy(TItem* dest, const TItem* src, const VciGpu nItems) {
     if(nItems == 0) [[unlikely]] {

@@ -16,7 +16,9 @@ struct GpuUnordSet {
   static constexpr const int16_t cBufElmBits = 8 * sizeof(buffer_[0]);
   static constexpr const int16_t cVectBits = sizeof(__uint128_t) * 8;
 
-  GpuUnordSet() = default;
+  __host__ __device__ GpuUnordSet() {
+    assert(buffer_ == nullptr);
+  };
 
   static __host__ __device__ uint32_t GetPack(const VciGpu at, const uint32_t* buffer, const int16_t bitsPerPack) {
     const uint32_t iLowBit = at * bitsPerPack;
@@ -153,7 +155,8 @@ struct GpuUnordSet {
   // Returns true if item is added, false if already exists
   __host__ __device__ bool Add(const VciGpu item) {
     assert(1 <= item && item < (VciGpu(1) << bitsPerPack_));
-    uint32_t pos=(item*cHashMul) % nBuckets_;
+    VciGpu pos = (item*cHashMul) % nBuckets_;
+    assert(0 <= pos && pos < nBuckets_);
     for(;;) {
       const VciGpu valAt = GetPack(pos);
       if(valAt == 0) {
@@ -187,7 +190,8 @@ struct GpuUnordSet {
       if(valNext == 0) {
         break;
       }
-      const uint32_t hashNext = (valNext * cHashMul) % nBuckets_;
+      const VciGpu hashNext = (valNext * cHashMul) % nBuckets_;
+      assert(0 <= hashNext && hashNext < nBuckets_);
       if( (rangeStart >= clusterStart && clusterStart <= hashNext && hashNext <= rangeStart)
           || (rangeStart < clusterStart && (clusterStart <= hashNext || hashNext <= rangeStart))
       )
@@ -203,7 +207,8 @@ struct GpuUnordSet {
   // Returns true if the item has been added to the trie, false if removed.
   __host__ __device__ bool Flip(const VciGpu item) {
     assert(1 <= item && item < (VciGpu(1) << bitsPerPack_));
-    uint32_t pos=(item*cHashMul) % nBuckets_;
+    VciGpu pos=(item*cHashMul) % nBuckets_;
+    assert(0 <= pos && pos < nBuckets_);
     for(;;) {
       const VciGpu valAt = GetPack(pos);
       if(valAt == 0 || valAt == item) {
@@ -224,7 +229,8 @@ struct GpuUnordSet {
   // Returns true if the item existed in the trie, false if it didn't exist.
   __host__ __device__ bool Remove(const VciGpu item) {
     assert(1 <= item && item < (VciGpu(1) << bitsPerPack_));
-    uint32_t pos=(item*cHashMul) % nBuckets_;
+    VciGpu pos = (item*cHashMul) % nBuckets_;
+    assert(0 <= pos && pos < nBuckets_);
     for(;;) {
       const VciGpu valAt = GetPack(pos);
       if(valAt == 0) {

@@ -7,6 +7,8 @@
 constexpr const uint32_t kThreadsPerBlock = 128;
 constexpr const uint8_t kL2SolRoundRobin = 13; // log2( # solutions in the round-robin )
 
+#include "CpuInit.h"
+
 #include "GpuLinkage.cuh"
 __constant__ GpuLinkage gLinkage;
 
@@ -18,9 +20,6 @@ __constant__ GpuRainbow gSeenAsgs;
 #include "GpuBitVector.cuh"
 #include "GpuTraversal.cuh"
 #include "GpuTrackingVector.cuh"
-
-#include "../SatTracker.h"
-#include "../Traversal.h"
 
 struct SystemShared {
   GpuTraversal trav_;
@@ -145,6 +144,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     curExec.unsatClauses_.Shrink();
     // Get the variables that affect the unsatisfied clauses
     GpuTrackingVector<VciGpu> varFront;
+    assert(varFront.items_ == nullptr);
     const GpuUnordSet& combClauses = curExec.unsatClauses_; // front_ ?
     combClauses.Visit([&](const VciGpu aClause) {
       for(int8_t sign=-1; sign<=1; sign+=2) {
@@ -329,80 +329,8 @@ int main(int argc, char* argv[]) {
   }
   GpuCalcHashSeries(std::max(formula.nVars_, formula.nClauses_), cas, gpuHSes);
 
-  std::cout << "Choosing the initial assignment..." << std::endl;
-  std::atomic<VciGpu> bestInitNUnsat = formula.nClauses_ + 1;
-  {
-    Traversal trav;
-    std::mutex muGlobal;
-
-    const uint32_t nCpusPerInit = DivUp<uint32_t>(nSysCpus, 3);
-    omp_set_max_active_levels(2);
-    #pragma omp parallel for schedule(dynamic, 1)
-    for(int j=-1; j<=1; j++) {
-      omp_set_max_active_levels(2);
-
-      BitVector initAsg(formula.nVars_+1);
-      DefaultSatTracker initSatTr(formula);
-      switch(j) {
-      case -1:
-        break; // already all false
-      case 0:
-        initAsg.Randomize();
-        break;
-      case 1:
-        initAsg.SetTrue();
-        break;
-      }
-      VCTrackingSet initUnsatClauses = initSatTr.Populate(initAsg, nullptr);
-      trav.OnSeenAssignment(initAsg, initUnsatClauses.Size());
-      {
-        std::unique_lock<std::mutex> lock(muGlobal);
-        if(initUnsatClauses.Size() < bestInitNUnsat) {
-          bestInitNUnsat = initUnsatClauses.Size();
-        }
-      }
-
-      #pragma omp parallel for schedule(dynamic, 1)
-      for(uint32_t i=0; i<nCpusPerInit; i++) {
-        //std::mt19937_64 rng = GetSeededRandom();
-        BitVector locAsg = initAsg;
-        DefaultSatTracker locSatTr = initSatTr;
-        VCTrackingSet locUnsatClauses = initUnsatClauses;
-        VCTrackingSet locFront = locUnsatClauses;
-        VCTrackingSet revVars;
-        const VCTrackingSet startFront = locFront;
-        int64_t nCombs = 0;
-        while(nCombs < locSatTr.MaxCombs()) {
-          const int8_t sortType = int(i % knSortTypes) + kMinSortType; //rng() % knSortTypes + kMinSortType;
-          if(locFront.Size() == 0 || trav.IsSeenFront(locFront, locUnsatClauses)) {
-            std::cout << "%";
-            locFront = locUnsatClauses;
-          }
-          bool moved = false;
-          VciGpu locBest = bestInitNUnsat.load(std::memory_order_relaxed);
-          const int64_t altNUnsat = locSatTr.GradientDescend(
-            trav, false, &locFront, moved, locAsg, sortType,
-            //locSatTr.NextUnsatCap(nCombs, locUnsatClauses, locBest),
-            locBest,
-            nCombs, locSatTr.MaxCombs(), initUnsatClauses, locUnsatClauses, startFront, locFront, revVars,
-            locBest
-          );
-          if(!moved) {
-            break;
-          }
-          locBest = bestInitNUnsat.load(std::memory_order_relaxed);
-          if(altNUnsat < locBest && locUnsatClauses != initUnsatClauses) {
-            std::unique_lock<std::mutex> lock(muGlobal);
-            if(altNUnsat < bestInitNUnsat) {
-              bestInitNUnsat = altNUnsat;
-              nCombs -= std::min<VCIndex>(locUnsatClauses.Size(), 1<<11);
-            }
-          }
-        }
-      }
-    }
-    formula.ans_ = trav.dfs_.back().assignment_;
-  }
+  // TODO: call CPU Init here
+  const VciGpu bestInitNUnsat = CpuInit(formula);
 
   std::cout << "Preparing GPU data structures" << std::endl;
   std::vector<HostLinkage> linkages;
@@ -423,7 +351,7 @@ int main(int argc, char* argv[]) {
     // bestRevVars
     = ( (bestInitNUnsat / GpuUnordSet::cStartOccupancy + 16) * ceilf(log2f(formula.nClauses_+1)) / 8
     + bestInitNUnsat * sizeof(VciGpu) * 8 + 16 * 6 );
-  const uint64_t overheadBpct = deviceHeapBpct/16;
+  const uint64_t overheadBpct = deviceHeapBpct/4;
   
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
@@ -527,7 +455,7 @@ int main(int argc, char* argv[]) {
   sysShar.Get()->syncRR_ = 0;
 
   std::cout << "Running on GPU(s)" << std::endl;
-  std::atomic<VciGpu> bestNUnsat = bestInitNUnsat.load();
+  std::atomic<VciGpu> bestNUnsat = bestInitNUnsat;
   std::thread solUpdater([&] {
     BitVector asg(formula.nVars_ + 1);
     VciGpu nUnsat;

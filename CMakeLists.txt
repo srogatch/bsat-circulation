@@ -47,6 +47,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -pedantic -Werror -mrdrnd -Wno-write-strings") # -mavx2 -mfma -mbmi -mbmi2  -mavx -flto
   # if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   #   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -stdlib=libc++")
+  #   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
   # endif()
 elseif(MSVC)
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler /W4 -Xcompiler /arch:AVX2 \
@@ -60,6 +61,6 @@ endif()
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
 add_executable(RogasatGPU
-  gpu/BSAT-GPU.cu gpu/GpuLinkage.cu gpu/Common.cpp)
+  gpu/BSAT-GPU.cu gpu/GpuLinkage.cu gpu/CpuInit.cpp gpu/Common.cpp)
 target_include_directories(RogasatGPU PRIVATE gpu)
 target_link_libraries(RogasatGPU PRIVATE CUDA::cudart OpenMP::OpenMP_CXX tbb)
