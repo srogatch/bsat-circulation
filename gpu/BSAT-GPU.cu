@@ -191,11 +191,15 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
         if(curExec.unsatClauses_.count_ < bestUnsat) {
           bestUnsat = curExec.unsatClauses_.count_;
           bestRevVars = stepRevs;
+          // TODO: remove (DEBUG)
+          curExec.unsatClauses_.Visit([&](const VciGpu aClause) {
+            assert( !IsSatisfied(aClause, curExec.nextAsg_) );
+          });
           if(bestUnsat < nStartUnsat) [[unlikely]] {
             const VciGpu oldMin = atomicMin_system(&sysShar->nGlobalUnsat_, bestUnsat);
             if(oldMin > bestUnsat) [[likely]] {
               sysShar->Record(curExec.nextAsg_, bestUnsat);
-              combFirst = combFirst + __log2f(curComb) + 1;
+              combFirst = combFirst + 31 - __clz(curComb);
               curComb = 0;
               const VciGpu remVF = varFront.count_ - combFirst;
               if(remVF <= 31) [[unlikely]] {
@@ -210,12 +214,15 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
       }
       for(uint8_t i=0; ; i++) {
         curComb ^= 1u << i;
+        assert(i + combFirst < varFront.count_);
         const VCIndex aVar = varFront.items_[i+combFirst];
         assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
-        stepRevs.Flip(aVar);
+        [[maybe_unused]] const bool bExisted = stepRevs.Flip(aVar);
+        // Variables may repeat inside varFront
+        //assert( bExisted == !(curComb & (1u << i)) );
         curExec.nextAsg_.Flip(aVar);
         UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
-        if( (curComb & (1u << i)) != 0 ) {
+        if( (curComb & (1u << i)) != 0u ) {
           break;
         }
       }
@@ -260,6 +267,10 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
       curExec.nextAsg_.Flip(aVar);
       UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
+    // TODO: remove (DEBUG)
+    curExec.unsatClauses_.Visit([&](const VciGpu aClause) {
+      assert( !IsSatisfied(aClause, curExec.nextAsg_) );
+    });
     assert(curExec.unsatClauses_.count_ == bestUnsat);
     assert(curExec.unsatClauses_.count_ >= sysShar->nGlobalUnsat_);
 

@@ -39,6 +39,8 @@ __device__ void UpdateUnsatCs(const VciGpu aVar, const GpuBitVector& asg,
   for(VciGpu j=0; j<nArcs; j++) {
     const VciGpu iClause = gLinkage.VarGetTarget(iVar, 1, j);
     assert(1 <= iClause && iClause <= gLinkage.GetClauseCount());
+    // TODO: remove - it's a very heavy assert
+    assert(IsSatisfied(iClause, asg));
     unsatClauses.Remove(iClause);
   }
 }

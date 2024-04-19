@@ -114,6 +114,9 @@ struct GpuUnordSet {
     return *this;
   }
 
+  __host__ __device__ GpuUnordSet(const GpuUnordSet&) = delete;
+  __host__ __device__ GpuUnordSet& operator=(const GpuUnordSet&) = delete;
+
   // Return true if it grew, false if not.
   __host__ __device__  bool CheckGrow() {
     if(count_ <= nBuckets_ * cGrowOccupancy) [[likely]] {
@@ -242,12 +245,15 @@ struct GpuUnordSet {
     if(count_ == 0) {
       return;
     }
+    VciGpu totVisited = 0;
     for(VciGpu i=0; i<nBuckets_; i++) {
       const VciGpu valAt = GetPack(i);
       if(valAt != 0) {
         f(valAt);
+        totVisited++;
       }
     }
+    assert(totVisited == count_);
   }
 
   __device__ void Shrink() {
