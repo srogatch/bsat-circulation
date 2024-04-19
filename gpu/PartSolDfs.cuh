@@ -63,13 +63,17 @@ struct GpuPartSolDfs {
     leftHeads_--;
     const VciGpu iBlock = heads_[leftHeads_];
     deque_[oldLimit].y = nUnsat;
+    while(atomicOr(&deque_[oldLimit].x, 0) != cAvailable) {
+      __nanosleep(256);
+    }
     atomicExch_system(&deque_[oldLimit].x, cWaitingSerialization);
     return VciGpu2{oldLimit, iBlock};
   }
 
   __device__ void Deserialize(const VciGpu iDeque, GpuBitVector& ans, VciGpu& nUnsat) {
     assert(ans.bits_ != nullptr);
-    const VciGpu iBlock = deque_[iDeque].x;
+    const VciGpu iBlock = atomicOr_system(&deque_[iDeque].x, 0);
+    assert(0 <= iBlock && iBlock < capacity_);
     nUnsat = deque_[iDeque].y;
     __uint128_t* pDes = pVects_ + uint64_t(iBlock) * vectsPerPartSol_;
     ans.hash_ = *pDes;

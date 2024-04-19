@@ -204,17 +204,18 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
             }
           }
         }
-        if(curExec.unsatClauses_.count_ <= sysShar->nGlobalUnsat_) {
+        if(curExec.unsatClauses_.count_ <= sysShar->nGlobalUnsat_) [[unlikely]] {
           sysShar->trav_.RecordAsg(curExec.nextAsg_, curExec.unsatClauses_.count_);
         }
       }
       for(uint8_t i=0; ; i++) {
-        curComb ^= 1ULL << i;
+        curComb ^= 1u << i;
         const VCIndex aVar = varFront.items_[i+combFirst];
+        assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
         stepRevs.Flip(aVar);
         curExec.nextAsg_.Flip(aVar);
         UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
-        if( (curComb & (1ULL << i)) != 0 ) {
+        if( (curComb & (1u << i)) != 0 ) {
           break;
         }
       }

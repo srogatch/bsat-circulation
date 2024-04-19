@@ -12,7 +12,7 @@ __device__ bool IsSatisfied(const VciGpu aClause, const GpuBitVector& asg) {
     for(VciGpu j=0; j<nClauseArcs; j++) {
       const VciGpu iVar = gLinkage.ClauseGetTarget(aClause, sign, j);
       assert(Signum(iVar) == sign);
-      const VciGpu aVar = abs(iVar);
+      const VciGpu aVar = iVar * sign;
       if(sign == asg[aVar]) {
         return true;
       }
@@ -107,7 +107,7 @@ struct GpuTraversal {
 
     dfsAsg_.Deserialize(retrieved.x, partSol, retrieved.y);
 
-        // Enter spinlock system-wide (all GPUs and CPUs)
+    // Enter spinlock system-wide (all GPUs and CPUs)
     while(atomicCAS_system(&syncDfs_, 0, 1) != 0) {
       __nanosleep(32);
     }
@@ -126,6 +126,7 @@ struct GpuTraversal {
         UpdateUnsatCs(aVar, asg, unsatClauses);
       }
     }
+    assert(retrieved.y == unsatClauses.count_);
     return true;
   }
 };
