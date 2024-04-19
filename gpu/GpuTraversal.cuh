@@ -24,24 +24,26 @@ __device__ bool IsSatisfied(const VciGpu aClause, const GpuBitVector& asg) {
 __device__ void UpdateUnsatCs(const VciGpu aVar, const GpuBitVector& asg,
   GpuUnordSet& unsatClauses)
 {
+  // Check arcs from both aVar and -aVar
   const int8_t signSat = asg[aVar];
-  const VciGpu iVar = aVar * signSat;
-  
-  VciGpu nArcs = gLinkage.VarArcCount(iVar, -1);
-  for(VciGpu j=0; j<nArcs; j++) {
-    const VciGpu iClause = gLinkage.VarGetTarget(iVar, -1, j);
-    assert(-gLinkage.GetClauseCount() <= iClause && iClause <= -1);
-    if(!IsSatisfied(-iClause, asg)) {
-      unsatClauses.Add(-iClause);
+  for(int8_ t signVar=-1; signVar<=1; signVar+=2) {
+    const VciGpu iVar = aVar * signVar * signSat;
+    VciGpu nArcs = gLinkage.VarArcCount(iVar, -1);
+    for(VciGpu j=0; j<nArcs; j++) {
+      const VciGpu iClause = gLinkage.VarGetTarget(iVar, -1, j);
+      assert(-gLinkage.GetClauseCount() <= iClause && iClause <= -1);
+      if(!IsSatisfied(-iClause, asg)) {
+        unsatClauses.Add(-iClause);
+      }
     }
-  }
-  nArcs = gLinkage.VarArcCount(iVar, 1);
-  for(VciGpu j=0; j<nArcs; j++) {
-    const VciGpu iClause = gLinkage.VarGetTarget(iVar, 1, j);
-    assert(1 <= iClause && iClause <= gLinkage.GetClauseCount());
-    // TODO: remove - it's a very heavy assert
-    assert(IsSatisfied(iClause, asg));
-    unsatClauses.Remove(iClause);
+    nArcs = gLinkage.VarArcCount(iVar, 1);
+    for(VciGpu j=0; j<nArcs; j++) {
+      const VciGpu iClause = gLinkage.VarGetTarget(iVar, 1, j);
+      assert(1 <= iClause && iClause <= gLinkage.GetClauseCount());
+      // TODO: remove - it's a very heavy assert
+      assert(IsSatisfied(iClause, asg));
+      unsatClauses.Remove(iClause);
+    }       
   }
 }
 
