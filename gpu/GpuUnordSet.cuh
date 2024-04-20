@@ -268,15 +268,15 @@ struct GpuUnordSet {
     if(count_ == 0) {
       return;
     }
-    VciGpu totVisited = 0;
+    //VciGpu totVisited = 0;
     for(VciGpu i=0; i<nBuckets_; i++) {
       const VciGpu valAt = GetPack(i);
       if(valAt != 0) {
         f(valAt);
-        totVisited++;
+        //totVisited++;
       }
     }
-    assert(totVisited == count_);
+    // assert(totVisited == count_);
   }
 
   __device__ void Shrink() {
