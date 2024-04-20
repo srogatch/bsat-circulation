@@ -186,7 +186,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     VciGpu bestUnsat = gLinkage.GetClauseCount() + 1;
     GpuTrackingVector<VciGpu> bestRevVars;
     // Make sure the overhead of preparing the combinations doesn't outnumber the effort spent in combinations
-    uint32_t endComb = max(cCombsPerStep, totVarFront);
+    uint32_t endComb = cCombsPerStep; //max(cCombsPerStep, totVarFront);
     if(curExec.varFrontSize_ <= 31) [[unlikely]] {
       endComb = min(endComb, (1u<<curExec.varFrontSize_)-1);
     }
