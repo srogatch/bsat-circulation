@@ -500,7 +500,12 @@ int main(int argc, char* argv[]) {
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
     gpuErrchk(cudaSetDevice(i));
-    ReplicateAssignment(pgis[i].execs_.Get(), pgis[i].execs_.Count());
+    int nBlocksPerSM = 0;
+    gpuErrchk(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nBlocksPerSM, &ReplicateAssignment, kThreadsPerBlock, 0));
+    // This is the upper bound for now without the correction for the actually available VRAM
+    int totBlocks = nBlocksPerSM * cas[i].cdp_.multiProcessorCount;
+    ReplicateAssignment<<<totBlocks, kThreadsPerBlock, 0, cas[i].cs_>>>(
+      pgis[i].execs_.Get(), pgis[i].execs_.Count());
   }
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
