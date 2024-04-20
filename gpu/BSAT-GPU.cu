@@ -123,7 +123,7 @@ __global__ void ReplicateAssignment(GpuExec* execs, const uint32_t nExecs) {
   const uint32_t nThreads = blockDim.x * gridDim.x;
   for(uint32_t i=iThread + 1; i<nExecs; i+=nThreads) {
     GpuExec& curExec = execs[i];
-    VectCopy(curExec.nextAsg_.bits_, execs[0].nextAsg_.bits, curExec.nextAsg_.VectCount() * sizeof(__uint128_t));
+    VectCopy(curExec.nextAsg_.bits_, execs[0].nextAsg_.bits_, curExec.nextAsg_.VectCount() * sizeof(__uint128_t));
     VciGpu iFlip = curExec.rng_.Next() % (curExec.nextAsg_.nBits_ - 1) + 1;
     curExec.nextAsg_.Flip(iFlip);
   }
@@ -159,7 +159,6 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     curExec.unsatClauses_.Shrink( curExec.rng_.Next() );
     // Get the variables that affect the unsatisfied clauses
     const GpuUnordSet& combClauses = curExec.unsatClauses_; // front_ ?
-    VciGpu totVarFront = 0;
     curExec.varFrontSize_ = 0;
     combClauses.Visit<false>(curExec.rng_.Next(), [&](const VciGpu aClause) -> bool {
       for(int8_t sign=-1; sign<=1; sign+=2) {
@@ -167,7 +166,6 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
         for(VciGpu j=0; j<varListLen; j++) {
           const VciGpu iVar = gLinkage.ClauseGetTarget(aClause, sign, j);
           const VciGpu aVar = abs(iVar);
-          totVarFront++;
           // Let the duplicate variables appear multiple times in the array, and thus
           // be considered for combinations multiple times proportionally to their
           // entry numbers.
@@ -429,7 +427,7 @@ int main(int argc, char* argv[]) {
     // This is the upper bound for now without the correction for the actually available VRAM
     pgis[i].nStepBlocks_ = nBlocksPerSM * cas[i].cdp_.multiProcessorCount;
     gpuErrchk(cudaMemGetInfo(&cas[i].freeBytes_, &cas[i].totalBytes_));
-    uint64_t maxRainbowBytes = cas[i].freeBytes_;
+    uint64_t maxRainbowBytes = 1ULL << lround(ceil(log2(cas[i].freeBytes_/3)));
     for(;;) {
       uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + overheadBpct);
       uint64_t rainbowBytes = 1ULL << int(std::log2(maxRainbowBytes));

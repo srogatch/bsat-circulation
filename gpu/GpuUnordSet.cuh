@@ -134,7 +134,7 @@ struct GpuUnordSet {
     VectSetZero(newBuf, newBufBytes);
 
     if(buffer_ != nullptr) {
-      Visit<true>([&](uintptr_t(newBuf), const VciGpu item) {
+      Visit<true>(uintptr_t(newBuf), [&](const VciGpu item) {
         assert(item != 0);
         VciGpu pos=(item*cHashMul) % newNBuckets;
         for(;;) {
@@ -300,7 +300,7 @@ struct GpuUnordSet {
     }
     GpuUnordSet t(count_, (VciGpu(1)<<bitsPerPack_) - 1);
     assert(t.bitsPerPack_ == bitsPerPack_);
-    Visit(seed, [&](const VciGpu item) {
+    Visit<true>(seed, [&](const VciGpu item) {
       t.Add(item);
     });
     assert(t.count_ == count_);
@@ -310,6 +310,6 @@ struct GpuUnordSet {
 
   __device__ ~GpuUnordSet() {
     count_ = 0;
-    Shrink();
+    Shrink(0);
   }
 };
