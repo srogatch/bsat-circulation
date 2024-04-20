@@ -7,6 +7,7 @@ struct GpuUnordSet {
   static constexpr const float cStartOccupancy = 0.66;
   static constexpr const float cGrowOccupancy = 0.9;
   static constexpr const uint32_t cHashMul = 2147483647u;
+  static constexpr const uint32_t cStepPrime = 4294967291u;
   __uint128_t hash_ = 0;
   uint32_t* buffer_ = nullptr;
   VciGpu nBuckets_ = 0;
@@ -133,7 +134,7 @@ struct GpuUnordSet {
     VectSetZero(newBuf, newBufBytes);
 
     if(buffer_ != nullptr) {
-      Visit([&](const VciGpu item) {
+      Visit<true>([&](uintptr_t(newBuf), const VciGpu item) {
         assert(item != 0);
         VciGpu pos=(item*cHashMul) % newNBuckets;
         for(;;) {
@@ -264,22 +265,30 @@ struct GpuUnordSet {
     }
   }
 
-  template<typename F> __host__ __device__  void Visit(const F& f) const {
+  template<bool all, typename F> __host__ __device__  void Visit(const VciGpu seed, const F& f) const {
     if(count_ == 0) {
       return;
     }
     //VciGpu totVisited = 0;
+    VciGpu at = seed;
     for(VciGpu i=0; i<nBuckets_; i++) {
-      const VciGpu valAt = GetPack(i);
+      at = (at + cStepPrime) % nBuckets_;
+      const VciGpu valAt = GetPack(at);
       if(valAt != 0) {
-        f(valAt);
+        if constexpr(all) {
+          f(valAt);
+        } else {
+          if(!f(valAt)) {
+            break;
+          }
+        }
         //totVisited++;
       }
     }
     // assert(totVisited == count_);
   }
 
-  __device__ void Shrink() {
+  __device__ void Shrink(const VciGpu seed) {
     if(count_ == 0) [[unlikely]] {
       free(buffer_);
       buffer_ = nullptr;
@@ -291,7 +300,7 @@ struct GpuUnordSet {
     }
     GpuUnordSet t(count_, (VciGpu(1)<<bitsPerPack_) - 1);
     assert(t.bitsPerPack_ == bitsPerPack_);
-    Visit([&](const VciGpu item) {
+    Visit(seed, [&](const VciGpu item) {
       t.Add(item);
     });
     assert(t.count_ == count_);

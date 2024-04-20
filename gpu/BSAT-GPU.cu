@@ -156,12 +156,12 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
 
   while(curExec.unsatClauses_.count_ >= nStartUnsat && sysShar->nGlobalUnsat_ >= nStartUnsat) {
     // Save memory for varFront
-    curExec.unsatClauses_.Shrink();
+    curExec.unsatClauses_.Shrink( curExec.rng_.Next() );
     // Get the variables that affect the unsatisfied clauses
     const GpuUnordSet& combClauses = curExec.unsatClauses_; // front_ ?
     VciGpu totVarFront = 0;
     curExec.varFrontSize_ = 0;
-    combClauses.Visit([&](const VciGpu aClause) {
+    combClauses.Visit<false>(curExec.rng_.Next(), [&](const VciGpu aClause) -> bool {
       for(int8_t sign=-1; sign<=1; sign+=2) {
         const VciGpu varListLen = gLinkage.ClauseArcCount(aClause, sign);
         for(VciGpu j=0; j<varListLen; j++) {
@@ -176,14 +176,16 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
             curExec.varFrontItems_[curExec.varFrontSize_] = aVar;
             curExec.varFrontSize_++;
           } else {
+            return false;
             // Reservoir sampling
-            const uint64_t r = curExec.rng_.Next() % totVarFront;
-            if(r < kMaxVarFrontSize) {
-              curExec.varFrontItems_[r] = aVar;
-            }
+            // const uint64_t r = curExec.rng_.Next() % totVarFront;
+            // if(r < kMaxVarFrontSize) {
+            //   curExec.varFrontItems_[r] = aVar;
+            // }
           }
         }
       }
+      return true;
     });
 
     // Shuffle the front
