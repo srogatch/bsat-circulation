@@ -67,8 +67,9 @@ struct GpuUnordSet {
   }
 
   static __host__ __device__ VciGpu CalcBufBytes(VciGpu& nBuckets, const VciGpu bitsPerPack) {
-    nBuckets = AlignUp(nBuckets, cVectBits);
-    return (nBuckets * bitsPerPack) / 8;
+    VciGpu nBits = AlignUp(nBuckets*bitsPerPack, cVectBits);
+    nBuckets = nBits / bitsPerPack;
+    return nBits / 8;
   }
 
   __device__ GpuUnordSet(const VciGpu capacity, const VciGpu maxVal) {
@@ -134,7 +135,7 @@ struct GpuUnordSet {
     if(buffer_ != nullptr) {
       Visit([&](const VciGpu item) {
         assert(item != 0);
-        uint32_t pos=(item*cHashMul) % newNBuckets;
+        VciGpu pos=(item*cHashMul) % newNBuckets;
         for(;;) {
           const VciGpu valAt = GetPack(pos, newBuf, bitsPerPack_);
           if(valAt == 0) {
@@ -185,7 +186,7 @@ struct GpuUnordSet {
     }
     VciGpu rangeStart = pos;
     for(;;) {
-      const uint32_t nextPos = (pos+1) % nBuckets_;
+      const VciGpu nextPos = (pos+1) % nBuckets_;
       const VciGpu valNext = GetPack(nextPos);
       if(valNext == 0) {
         break;
@@ -241,6 +242,22 @@ struct GpuUnordSet {
         count_--;
         SetPack(pos, 0);
         ShiftAfterRemove(pos);
+        return true;
+      }
+      pos = (pos+1) % nBuckets_;
+    }
+  }
+
+  __host__ __device__ bool Contains(const VciGpu item) {
+    assert(1 <= item && item < (VciGpu(1) << bitsPerPack_));
+    VciGpu pos = (item*cHashMul) % nBuckets_;
+    assert(0 <= pos && pos < nBuckets_);
+    for(;;) {
+      const VciGpu valAt = GetPack(pos);
+      if(valAt == 0) {
+        return false;
+      }
+      if(valAt == item) {
         return true;
       }
       pos = (pos+1) % nBuckets_;

@@ -17,7 +17,9 @@ struct GpuBitVector {
     return DivUp(nBits_, 128);
   }
 
-  GpuBitVector() = default;
+  __host__ __device__ GpuBitVector() {
+    assert(bits_ == nullptr);
+  }
 
   __host__ __device__ explicit GpuBitVector(
     const VciGpu nBits, const bool setZer0) : nBits_(nBits), flags_(cfOwned)

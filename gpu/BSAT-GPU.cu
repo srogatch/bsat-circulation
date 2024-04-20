@@ -192,9 +192,16 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
           bestUnsat = curExec.unsatClauses_.count_;
           bestRevVars = stepRevs;
           // TODO: remove (DEBUG)
-          curExec.unsatClauses_.Visit([&](const VciGpu aClause) {
-            assert( !IsSatisfied(aClause, curExec.nextAsg_) );
-          });
+          // curExec.unsatClauses_.Visit([&](const VciGpu aClause) {
+          //   assert( !IsSatisfied(aClause, curExec.nextAsg_) );
+          // });
+          // for(VciGpu i=1; i<=gLinkage.GetClauseCount(); i++) {
+          //   if(IsSatisfied(i, curExec.nextAsg_)) {
+          //     assert(!curExec.unsatClauses_.Contains(i));
+          //   } else {
+          //     assert(curExec.unsatClauses_.Contains(i));
+          //   }
+          // }
           if(bestUnsat < nStartUnsat) [[unlikely]] {
             const VciGpu oldMin = atomicMin_system(&sysShar->nGlobalUnsat_, bestUnsat);
             if(oldMin > bestUnsat) [[likely]] {
@@ -267,10 +274,31 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
       curExec.nextAsg_.Flip(aVar);
       UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
-    // TODO: remove (DEBUG)
-    curExec.unsatClauses_.Visit([&](const VciGpu aClause) {
-      assert( !IsSatisfied(aClause, curExec.nextAsg_) );
-    });
+    // // TODO: remove (DEBUG)
+    // for(VciGpu i=1; i<=gLinkage.GetClauseCount(); i++) {
+    //   if(IsSatisfied(i, curExec.nextAsg_)) {
+    //     assert(!curExec.unsatClauses_.Contains(i));
+    //   } else {
+    //     assert(curExec.unsatClauses_.Contains(i));
+    //   }
+    // }
+    // // TODO: remove (DEBUG)
+    // if(curExec.unsatClauses_.count_ != bestUnsat) {
+    //   while(atomicCAS_system(&sysShar->syncRR_, 0, 1) != 0) {
+    //     __nanosleep(256);
+    //   }
+    //   printf("stepRevs: ");
+    //   for(VciGpu i=0; i<stepRevs.count_; i++) {
+    //     printf(" %d ", stepRevs.items_[i]);
+    //   }
+    //   printf("\nbestRevVars: ");
+    //   for(VciGpu i=0; i<bestRevVars.count_; i++) {
+    //     printf(" %d ", bestRevVars.items_[i]);
+    //   }
+    //   printf("\n");
+    //   atomicExch_system(&sysShar->syncRR_, 0);
+    //   assert(false);
+    // }
     assert(curExec.unsatClauses_.count_ == bestUnsat);
     assert(curExec.unsatClauses_.count_ >= sysShar->nGlobalUnsat_);
 
@@ -350,8 +378,8 @@ int main(int argc, char* argv[]) {
     // stepRevs
     // bestRevVars
     = ( (bestInitNUnsat / GpuUnordSet::cStartOccupancy + 16) * ceilf(log2f(formula.nClauses_+1)) / 8
-    + bestInitNUnsat * sizeof(VciGpu) * 8 + 16 * 6 );
-  const uint64_t overheadBpct = deviceHeapBpct/4;
+    + bestInitNUnsat * sizeof(VciGpu) * 12 + 16 * 6 );
+  const uint64_t overheadBpct = deviceHeapBpct/8;
   
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
