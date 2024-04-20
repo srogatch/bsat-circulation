@@ -118,10 +118,21 @@ struct PerGpuInfo {
   uint32_t nStepBlocks_;  
 };
 
+__global__ void ReplicateAssignment(GpuExec* execs, const uint32_t nExecs) {
+  const uint32_t iThread = threadIdx.x + blockIdx.x * blockDim.x;
+  const uint32_t nThreads = blockDim.x * gridDim.x;
+  for(uint32_t i=iThread + 1; i<nExecs; i+=nThreads) {
+    GpuExec& curExec = execs[i];
+    VectCopy(curExec.nextAsg_.bits_, execs[0].nextAsg_.bits, curExec.nextAsg_.VectCount() * sizeof(__uint128_t));
+    VciGpu iFlip = curExec.rng_.Next() % (curExec.nextAsg_.nBits_ - 1) + 1;
+    curExec.nextAsg_.Flip(iFlip);
+  }
+}
+
 __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuExec *execs)
 {
   constexpr const uint32_t cCombsPerStep = 1u<<11;
-  const uint32_t iThread = threadIdx.x + blockIdx.x *  kThreadsPerBlock;
+  const uint32_t iThread = threadIdx.x + blockIdx.x * kThreadsPerBlock;
   assert(blockDim.x == kThreadsPerBlock);
   // const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
   GpuExec& curExec = execs[iThread];
@@ -473,12 +484,11 @@ int main(int argc, char* argv[]) {
         pgis[i].bvBufs_.Get() + nVectsPerVarsBV * uint64_t(j));
       vCpuExecs[i][j].varFrontItems_ = pgis[i].allVarFrontItems_.Get() + uint64_t(j) * kMaxVarFrontSize;
       assert(vCpuExecs[i][j].unsatClauses_.buffer_ == nullptr);
-      // TODO: tail bits (beyond the last QWord, but withing the last 128-bit vector) may be corrupt
-      // TODO: avoid so much work over PCIe bus
-      gpuErrchk(cudaMemcpyAsync(vCpuExecs[i][j].nextAsg_.bits_, formula.ans_.bits_.get(),
-        formula.ans_.nQwords_ * sizeof(uint64_t), cudaMemcpyHostToDevice, cas[i].cs_
-      ));
     }
+    // TODO: tail bits (beyond the last QWord, but withing the last 128-bit vector) may be corrupt
+    gpuErrchk(cudaMemcpyAsync(vCpuExecs[i][0].nextAsg_.bits_, formula.ans_.bits_.get(),
+      formula.ans_.nQwords_ * sizeof(uint64_t), cudaMemcpyHostToDevice, cas[i].cs_
+    ));
     gpuErrchk(cudaMemcpyAsync(
       pgis[i].execs_.Get(), vCpuExecs[i].get(), pgis[i].execs_.Count() * sizeof(GpuExec),
       cudaMemcpyHostToDevice, cas[i].cs_
@@ -486,6 +496,11 @@ int main(int argc, char* argv[]) {
     seenAsgs[i].Marshal(pgis[i].gr_);
     gpuErrchk(cudaMemcpyToSymbolAsync(
       gSeenAsgs, &pgis[i].gr_, sizeof(pgis[i].gr_), 0, cudaMemcpyHostToDevice, cas[i].cs_));
+  }
+  #pragma omp parallel for num_threads(nGpus)
+  for(int i=0; i<nGpus; i++) {
+    gpuErrchk(cudaSetDevice(i));
+    ReplicateAssignment(pgis[i].execs_.Get(), pgis[i].execs_.Count());
   }
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
