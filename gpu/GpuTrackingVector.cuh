@@ -192,9 +192,14 @@ template<typename TItem> struct GpuTrackingVector {
       return;
     }
     capacity_ = newCap;
-    TItem* newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
-    assert(newItems != nullptr);
-    Copy(newItems, items_, count_);
+    TItem* newItems;
+    if(capacity_ > 0) {
+      newItems = reinterpret_cast<TItem*>(malloc(capacity_ * sizeof(TItem)));
+      assert(newItems != nullptr);
+      Copy(newItems, items_, count_);
+    } else {
+      newItems = nullptr;
+    }
     free(items_);
     items_ = newItems;
   }

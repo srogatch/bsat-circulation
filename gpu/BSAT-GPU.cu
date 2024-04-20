@@ -396,6 +396,7 @@ int main(int argc, char* argv[]) {
   CudaArray<SystemShared> sysShar(1, CudaArrayType::Managed);
   HostPartSolDfs dfsAsg;
   dfsAsg.Init( maxRamBytes / 2, formula.ans_.nBits_ );
+  CudaArray<VciGpu> solRRnsUnsat( 1u<<kL2SolRoundRobin, CudaArrayType::Managed );
   
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
@@ -487,7 +488,6 @@ int main(int argc, char* argv[]) {
   sysShar.Get()->nGlobalUnsat_ = bestInitNUnsat;
   sysShar.Get()->nUnsatExecs_ = 0;
   CudaArray<__uint128_t> solRRasgs( (1u<<kL2SolRoundRobin) * uint64_t(nVectsPerVarsBV), CudaArrayType::Pinned );
-  CudaArray<VciGpu> solRRnsUnsat( 1u<<kL2SolRoundRobin, CudaArrayType::Pinned );
   sysShar.Get()->firstSolRR_ = sysShar.Get()->limitSolRR_ = 0;
   sysShar.Get()->solRRasgs_ = solRRasgs.Get();
   sysShar.Get()->solRRnsUnsat_ = solRRnsUnsat.Get();
