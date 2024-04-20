@@ -98,9 +98,9 @@ struct GpuBitVector {
   }
 
   template<bool doHash = true> __device__ void Flip(const VciGpu index) {
-    if( !(1 <= index && index < nBits_) ) {
-      printf(" %d/%d ", index, nBits_);
-    }
+    // if( !(1 <= index && index < nBits_) ) {
+    //   printf(" %d/%d ", index, nBits_);
+    // }
     assert(1 <= index && index < nBits_);
     if constexpr(doHash) {
       hash_ ^= gpHashSeries[index];
