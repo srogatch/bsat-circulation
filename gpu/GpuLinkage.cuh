@@ -21,6 +21,7 @@ class GpuLinkage {
   }
 
   __device__ VciGpu ArcCount(const VciGpu from, const int8_t sign, const VciGpu nItems, GpuPerSignHead *heads, VciGpu *targets) const {
+    assert(from != 0);
     const int8_t hSign = SignToHead(sign);
     const VciGpu *pHead = &heads[from + nItems][hSign];
     return *(pHead+1) - *pHead;

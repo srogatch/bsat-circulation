@@ -144,6 +144,7 @@ struct GpuTraversal {
         assert(diff & (1u<<iBit) != 0);
         diff ^= 1u<<iBit;
         const VciGpu aVar = i*32 + iBit;
+        assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
         asg.Flip(aVar);
         UpdateUnsatCs(aVar, asg, unsatClauses);
       }

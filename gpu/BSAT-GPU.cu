@@ -105,11 +105,14 @@ struct GpuExec {
   GpuBitVector nextAsg_; // nVars+1 bits
   GpuUnordSet unsatClauses_;
   // GpuTrackingVector<VciGpu> front_;
+  VciGpu *varFrontItems_;
+  VciGpu varFrontSize_;
 };
 
 struct PerGpuInfo {
   CudaArray<GpuExec> execs_;
   CudaArray<__uint128_t> bvBufs_;
+  CudaArray<VciGpu> allVarFrontItems_;
   GpuLinkage gl_;
   GpuRainbow gr_;
   uint32_t nStepBlocks_;  
@@ -144,10 +147,9 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     // Save memory for varFront
     curExec.unsatClauses_.Shrink();
     // Get the variables that affect the unsatisfied clauses
-    GpuTrackingVector<VciGpu> varFront;
-    assert(varFront.items_ == nullptr);
     const GpuUnordSet& combClauses = curExec.unsatClauses_; // front_ ?
     VciGpu totVarFront = 0;
+    curExec.varFrontSize_ = 0;
     combClauses.Visit([&](const VciGpu aClause) {
       for(int8_t sign=-1; sign<=1; sign+=2) {
         const VciGpu varListLen = gLinkage.ClauseArcCount(aClause, sign);
@@ -158,13 +160,15 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
           // Let the duplicate variables appear multiple times in the array, and thus
           // be considered for combinations multiple times proportionally to their
           // entry numbers.
-          if(varFront.count_ < kMaxVarFrontSize) {
-            varFront.Add<false>(aVar);
+          assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
+          if(curExec.varFrontSize_ < kMaxVarFrontSize) {
+            curExec.varFrontItems_[curExec.varFrontSize_] = aVar;
+            curExec.varFrontSize_++;
           } else {
             // Reservoir sampling
             const uint64_t r = curExec.rng_.Next() % totVarFront;
             if(r < kMaxVarFrontSize) {
-              varFront.items_[r] = aVar;
+              curExec.varFrontItems_[r] = aVar;
             }
           }
         }
@@ -172,9 +176,9 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     });
 
     // Shuffle the front
-    for(VciGpu i=0; i+1<varFront.count_; i++) {
-      const VciGpu pos = i + curExec.rng_.Next() % (varFront.count_ - i);
-      Swap(varFront.items_[i], varFront.items_[pos]);
+    for(VciGpu i=0; i+1<curExec.varFrontSize_; i++) {
+      const VciGpu pos = i + curExec.rng_.Next() % (curExec.varFrontSize_ - i);
+      Swap(curExec.varFrontItems_[i], curExec.varFrontItems_[pos]);
     }
 
     //// Combine
@@ -183,13 +187,14 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     GpuTrackingVector<VciGpu> bestRevVars;
     // Make sure the overhead of preparing the combinations doesn't outnumber the effort spent in combinations
     uint32_t endComb = max(cCombsPerStep, totVarFront);
-    if(varFront.count_ <= 31) [[unlikely]] {
-      endComb = min(endComb, (1u<<varFront.count_)-1);
+    if(curExec.varFrontSize_ <= 31) [[unlikely]] {
+      endComb = min(endComb, (1u<<curExec.varFrontSize_)-1);
     }
     // Initial assignment
     uint32_t curComb = 1;
     {
-      const VciGpu aVar = varFront.items_[0];
+      const VciGpu aVar = curExec.varFrontItems_[0];
+      assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
       stepRevs.Add<false>(aVar);
       curExec.nextAsg_.Flip(aVar);
       UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
@@ -216,11 +221,13 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
             const VciGpu oldMin = atomicMin_system(&sysShar->nGlobalUnsat_, bestUnsat);
             if(oldMin > bestUnsat) [[likely]] {
               sysShar->Record(curExec.nextAsg_, bestUnsat);
-              combFirst = combFirst + 31 - __clz(curComb);
+              combFirst = combFirst + 32 - __clz(curComb);
               curComb = 0;
-              const VciGpu remVF = varFront.count_ - combFirst;
+              const VciGpu remVF = curExec.varFrontSize_ - combFirst;
               if(remVF <= 31) [[unlikely]] {
-                endComb = min(endComb, (1u<<remVF)-1);
+                endComb = min(cCombsPerStep, (1u<<remVF)-1);
+              } else {
+                endComb = cCombsPerStep;
               }
             }
           }
@@ -231,8 +238,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
       }
       for(uint8_t i=0; ; i++) {
         curComb ^= 1u << i;
-        assert(i + combFirst < varFront.count_);
-        const VCIndex aVar = varFront.items_[i+combFirst];
+        assert(i + combFirst < curExec.varFrontSize_);
+        const VCIndex aVar = curExec.varFrontItems_[i+combFirst];
         assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
         [[maybe_unused]] const bool bExisted = stepRevs.Flip(aVar);
         // Variables may repeat inside varFront
@@ -244,9 +251,6 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
         }
       }
     }
-    // Save memory for the reallocations that are coming next
-    varFront.Clear();
-    varFront.Shrink();
 
     // Check the combinations results
     if(bestUnsat > gLinkage.GetClauseCount()) [[unlikely]] {
@@ -267,10 +271,10 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
       assert(iSR == 0 || iSR >= stepRevs.count_ || stepRevs.items_[iSR-1] < stepRevs.items_[iSR]);
       assert(iBR == 0 || iBR >= bestRevVars.count_ || bestRevVars.items_[iBR-1] < bestRevVars.items_[iBR]);
       VciGpu aVar;
-      if(iBR >= bestRevVars.count_ || stepRevs.items_[iSR] < bestRevVars.items_[iBR]) {
+      if( iBR >= bestRevVars.count_ || (iSR < stepRevs.count_ && stepRevs.items_[iSR] < bestRevVars.items_[iBR]) ) {
         aVar = stepRevs.items_[iSR];
         iSR++;
-      } else if(iSR >= stepRevs.count_ || bestRevVars.items_[iBR] < stepRevs.items_[iSR]) {
+      } else if( iSR >= stepRevs.count_ || (iBR < bestRevVars.count_ && bestRevVars.items_[iBR] < stepRevs.items_[iSR]) ) {
         aVar = bestRevVars.items_[iBR];
         iBR++;
       } else {
@@ -281,6 +285,9 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
         iBR++;
         continue;
       }
+      // if(!(1 <= aVar && aVar <= gLinkage.GetVarCount())) {
+      //   printf(" %d ", aVar);
+      // }
       curExec.nextAsg_.Flip(aVar);
       UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
@@ -380,7 +387,8 @@ int main(int argc, char* argv[]) {
   const uint64_t hostHeapBpct
     = sizeof(GpuExec)
     + nVectsPerVarsBV * sizeof(__uint128_t) // GpuExec::nextAsg_
-    + 256 * 2 // Alignment
+    + kMaxVarFrontSize * sizeof(VciGpu) // varFrontItems_
+    + 256 * 3 // Alignment
     + 256; // Thread stack
   const uint64_t deviceHeapBpct
     // GpuExec::unsatClauses_
@@ -440,6 +448,9 @@ int main(int argc, char* argv[]) {
     pgis[i].bvBufs_ = CudaArray<__uint128_t>(
       pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * nVectsPerVarsBV, CudaArrayType::Device
     );
+    pgis[i].allVarFrontItems_ = CudaArray<VciGpu>(
+      pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * kMaxVarFrontSize, CudaArrayType::Device
+    );
     pgis[i].execs_ = CudaArray<GpuExec>(
       pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock), CudaArrayType::Device
     );
@@ -460,6 +471,7 @@ int main(int argc, char* argv[]) {
       vCpuExecs[i][j].nextAsg_.nBits_ = formula.nVars_ + 1;
       vCpuExecs[i][j].nextAsg_.bits_ = reinterpret_cast<uint32_t*>(
         pgis[i].bvBufs_.Get() + nVectsPerVarsBV * uint64_t(j));
+      vCpuExecs[i][j].varFrontItems_ = pgis[i].allVarFrontItems_.Get() + uint64_t(j) * kMaxVarFrontSize;
       assert(vCpuExecs[i][j].unsatClauses_.buffer_ == nullptr);
       // TODO: tail bits (beyond the last QWord, but withing the last 128-bit vector) may be corrupt
       // TODO: avoid so much work over PCIe bus
