@@ -148,7 +148,7 @@ struct HostPartSolDfs {
     );
     pVects_ = CudaArray<__uint128_t>(uint64_t(capacityPartSols_) * vectsPerPartSol_, CudaArrayType::Pinned);
     heads_ = CudaArray<VciGpu>(capacityPartSols_, CudaArrayType::Pinned);
-    deque_ = CudaArray<VciGpu2>(capacityPartSols_, CudaArrayType::Pinned);
+    deque_ = CudaArray<VciGpu2>(capacityPartSols_, CudaArrayType::Managed);
     for(VciGpu i=0; i<capacityPartSols_; i++) {
       heads_.Get()[i] = i;
       deque_.Get()[i] = {GpuPartSolDfs::cAvailable, -1};

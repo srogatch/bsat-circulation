@@ -6,6 +6,7 @@
 
 constexpr const uint32_t kThreadsPerBlock = 128;
 constexpr const uint8_t kL2SolRoundRobin = 13; // log2( # solutions in the round-robin )
+constexpr const uint32_t kMaxVarFrontSize = 4096;
 
 #include "CpuInit.h"
 
@@ -146,20 +147,29 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     GpuTrackingVector<VciGpu> varFront;
     assert(varFront.items_ == nullptr);
     const GpuUnordSet& combClauses = curExec.unsatClauses_; // front_ ?
+    VciGpu totVarFront = 0;
     combClauses.Visit([&](const VciGpu aClause) {
       for(int8_t sign=-1; sign<=1; sign+=2) {
         const VciGpu varListLen = gLinkage.ClauseArcCount(aClause, sign);
         for(VciGpu j=0; j<varListLen; j++) {
           const VciGpu iVar = gLinkage.ClauseGetTarget(aClause, sign, j);
           const VciGpu aVar = abs(iVar);
+          totVarFront++;
           // Let the duplicate variables appear multiple times in the array, and thus
           // be considered for combinations multiple times proportionally to their
           // entry numbers.
-          varFront.Add<false>(aVar);
+          if(varFront.count_ < kMaxVarFrontSize) {
+            varFront.Add<false>(aVar);
+          } else {
+            // Reservoir sampling
+            const uint64_t r = curExec.rng_.Next() % totVarFront;
+            if(r < kMaxVarFrontSize) {
+              varFront.items_[r] = aVar;
+            }
+          }
         }
       }
     });
-    varFront.Shrink();
 
     // Shuffle the front
     for(VciGpu i=0; i+1<varFront.count_; i++) {
@@ -172,7 +182,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     VciGpu bestUnsat = gLinkage.GetClauseCount() + 1;
     GpuTrackingVector<VciGpu> bestRevVars;
     // Make sure the overhead of preparing the combinations doesn't outnumber the effort spent in combinations
-    uint32_t endComb = max(cCombsPerStep, varFront.count_ + combClauses.count_);
+    uint32_t endComb = max(cCombsPerStep, totVarFront);
     if(varFront.count_ <= 31) [[unlikely]] {
       endComb = min(endComb, (1u<<varFront.count_)-1);
     }
@@ -378,8 +388,14 @@ int main(int argc, char* argv[]) {
     // stepRevs
     // bestRevVars
     = ( (bestInitNUnsat / GpuUnordSet::cStartOccupancy + 16) * ceilf(log2f(formula.nClauses_+1)) / 8
-    + bestInitNUnsat * sizeof(VciGpu) * 12 + 16 * 6 );
-  const uint64_t overheadBpct = deviceHeapBpct/8;
+    + kMaxVarFrontSize * 2 * sizeof(VciGpu) + 16 * 6 );
+  const uint64_t overheadBpct = deviceHeapBpct/6;
+
+    // Pinned should be better than managed here, because managed memory transfers at page granularity,
+  // while Pinned - at PCIe bus granularity, which is much smaller.
+  CudaArray<SystemShared> sysShar(1, CudaArrayType::Managed);
+  HostPartSolDfs dfsAsg;
+  dfsAsg.Init( maxRamBytes / 2, formula.ans_.nBits_ );
   
   #pragma omp parallel for num_threads(nGpus)
   for(int i=0; i<nGpus; i++) {
@@ -466,11 +482,6 @@ int main(int argc, char* argv[]) {
   }
   vCpuExecs.clear();
 
-  // Pinned should be better than managed here, because managed memory transfers at page granularity,
-  // while Pinned - at PCIe bus granularity, which is much smaller.
-  CudaArray<SystemShared> sysShar(1, CudaArrayType::Pinned);
-  HostPartSolDfs dfsAsg;
-  dfsAsg.Init( maxRamBytes / 2, formula.ans_.nBits_ );
   sysShar.Get()->trav_.dfsAsg_ = dfsAsg.Marshal();
   sysShar.Get()->trav_.syncDfs_ = 0;
   sysShar.Get()->nGlobalUnsat_ = bestInitNUnsat;
