@@ -7,7 +7,7 @@
 constexpr const uint32_t kThreadsPerBlock = 128;
 constexpr const uint8_t kL2SolRoundRobin = 13; // log2( # solutions in the round-robin )
 constexpr const uint32_t kMaxVarFrontSize = 128;
-constexpr const uint8_t kL2CombsPerStep = 11;
+constexpr const uint8_t kL2CombsPerStep = 9;
 constexpr const uint32_t kCombsPerStep = (1u<<kL2CombsPerStep) - 1;
 
 #include "CpuInit.h"
@@ -153,7 +153,15 @@ __global__ __launch_bounds__(kThreadsPerBlock, 5) void StepKernel(const VciGpu n
     }
   }
 
-  assert(curExec.unsatClauses_.count_ >= sysShar->nGlobalUnsat_);
+  if(curExec.unsatClauses_.count_ < sysShar->nGlobalUnsat_) {
+    const VciGpu oldMin = atomicMin_system(&sysShar->nGlobalUnsat_, curExec.unsatClauses_.count_);
+    if(oldMin > curExec.unsatClauses_.count_) [[likely]] {
+      sysShar->Record(curExec.nextAsg_, curExec.unsatClauses_.count_);
+    }
+  }
+  if(curExec.unsatClauses_.count_ <= sysShar->nGlobalUnsat_) [[unlikely]] {
+    sysShar->trav_.RecordAsg(curExec.nextAsg_, curExec.unsatClauses_.count_);
+  }
 
   while(curExec.unsatClauses_.count_ >= nStartUnsat && sysShar->nGlobalUnsat_ >= nStartUnsat) {
     // Save memory for varFront
@@ -168,9 +176,6 @@ __global__ __launch_bounds__(kThreadsPerBlock, 5) void StepKernel(const VciGpu n
         for(VciGpu j=0; j<varListLen; j++) {
           const VciGpu iVar = gLinkage.ClauseGetTarget(aClause, sign, j);
           const VciGpu aVar = abs(iVar);
-          // Let the duplicate variables appear multiple times in the array, and thus
-          // be considered for combinations multiple times proportionally to their
-          // entry numbers.
           assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
           if(!seenVars.Add(aVar)) {
             continue;
@@ -327,7 +332,49 @@ __global__ __launch_bounds__(kThreadsPerBlock, 5) void StepKernel(const VciGpu n
       break; // some other executor found an improvement
     }
 
-    // TODO: Sequential Gradient Descent
+    seenVars.Clear();
+    // Sequential Gradient Descent
+    VciGpu nCombs = 0;
+    combClauses.Visit<false>(curExec.rng_.Next(), [&](const VciGpu aClause) -> bool {
+      for(int8_t sign=-1; sign<=1; sign+=2) {
+        const VciGpu varListLen = gLinkage.ClauseArcCount(aClause, sign);
+        for(VciGpu j=0; j<varListLen; j++) {
+          const VciGpu iVar = gLinkage.ClauseGetTarget(aClause, sign, j);
+          const VciGpu aVar = abs(iVar);
+          assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
+          if(!seenVars.Add(aVar)) {
+            continue;
+          }
+          nCombs++;
+          if(nCombs >= kCombsPerStep) {
+            return false;
+          }
+        }
+      }
+      return true;
+    });
+    bestUnsat = curExec.unsatClauses_.count_;
+    seenVars.Visit<true>(curExec.rng_.Next(), [&](const VciGpu aVar) {
+      assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
+      curExec.nextAsg_.Flip(aVar);
+      UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
+      if(curExec.unsatClauses_.count_ >= bestUnsat || gSeenAsgs[curExec.nextAsg_.hash_]) {
+        curExec.nextAsg_.Flip(aVar);
+        UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
+        return;
+      }
+      bestUnsat = curExec.unsatClauses_.count_;
+      if(bestUnsat < nStartUnsat) [[unlikely]] {
+        const VciGpu oldMin = atomicMin_system(&sysShar->nGlobalUnsat_, bestUnsat);
+        if(oldMin > bestUnsat) [[likely]] {
+          sysShar->Record(curExec.nextAsg_, bestUnsat);
+        }
+      }
+      if(curExec.unsatClauses_.count_ <= sysShar->nGlobalUnsat_) [[unlikely]] {
+        sysShar->trav_.RecordAsg(curExec.nextAsg_, curExec.unsatClauses_.count_);
+      }
+    });
+
   }
 }
 
@@ -396,8 +443,9 @@ int main(int argc, char* argv[]) {
     + 256; // Thread stack
   const uint64_t deviceHeapBpct
     = 2 * (bestInitNUnsat / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nClauses_+1) / 8) // GpuExec::unsatClauses_
-    + 4 * (kMaxVarFrontSize / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nVars_+1) / 8) // stepRevs, bestRevVars, seenVars
-    + 16 * 6; // Alignment
+    + 3 * (kMaxVarFrontSize / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nVars_+1) / 8) // stepRevs, bestRevVars
+    + 2 * (kCombsPerStep / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nVars_+1) / 8) // seenVars
+    + 16 * 7; // Alignment
   const uint64_t overheadBpct = (hostHeapBpct + deviceHeapBpct) / 6;
 
     // Pinned should be better than managed here, because managed memory transfers at page granularity,

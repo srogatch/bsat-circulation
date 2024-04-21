@@ -351,4 +351,13 @@ struct GpuUnordSet {
     count_ = 0;
     Shrink(0);
   }
+
+  __device__ void Clear() {
+    count_ = 0;
+    hash_ = 0;
+    VciGpu t = nBuckets_;
+    const VciGpu nBytes = CalcBufBytes(t, bitsPerPack_);
+    assert(t == nBuckets_);
+    VectSetZero(buffer_, nBytes);
+  }
 };
