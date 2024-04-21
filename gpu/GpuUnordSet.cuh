@@ -7,7 +7,7 @@ struct GpuUnordSet {
   static constexpr const float cStartOccupancy = 0.66;
   static constexpr const float cGrowOccupancy = 0.9;
   static constexpr const uint32_t cHashMul = 2147483647u;
-  static constexpr const uint32_t cStepPrime = 4294967291u;
+  static constexpr const uint32_t cStepPrime = 2147483567u;
   __uint128_t hash_ = 0;
   uint32_t* buffer_ = nullptr;
   VciGpu nBuckets_ = 0;
@@ -307,9 +307,10 @@ struct GpuUnordSet {
       return;
     }
     //VciGpu totVisited = 0;
-    VciGpu at = seed;
+    VciGpu at = abs(seed) % nBuckets_;
     for(VciGpu i=0; i<nBuckets_; i++) {
       at = (at + cStepPrime) % nBuckets_;
+      assert(0 <= at && at < nBuckets_);
       const VciGpu valAt = GetPack(at);
       if(valAt != 0) {
         if constexpr(all) {
