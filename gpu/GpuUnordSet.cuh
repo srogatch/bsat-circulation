@@ -125,6 +125,7 @@ struct GpuUnordSet {
       VciGpu nBufBytes;
       if(bitsPerPack_ != src.bitsPerPack_ || nBuckets_ < ceilf(src.count_ / cGrowOccupancy)) {
         free(buffer_);
+        buffer_ = nullptr;
         bitsPerPack_ = src.bitsPerPack_;
         nBuckets_ = ceilf(src.count_ / cStartOccupancy);
         nBufBytes = CalcBufBytes(nBuckets_, bitsPerPack_);

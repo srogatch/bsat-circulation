@@ -131,7 +131,7 @@ __global__ void ReplicateAssignment(GpuExec* execs, const uint32_t nExecs) {
   }
 }
 
-__global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuExec *execs)
+__global__ __launch_bounds__(kThreadsPerBlock, 5) void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuExec *execs)
 {
   const uint32_t iThread = threadIdx.x + blockIdx.x * kThreadsPerBlock;
   assert(blockDim.x == kThreadsPerBlock);
@@ -391,12 +391,10 @@ int main(int argc, char* argv[]) {
     + 256 * 3 // Alignment
     + 256; // Thread stack
   const uint64_t deviceHeapBpct
-    // GpuExec::unsatClauses_
-    // stepRevs
-    // bestRevVars
-    = ( 2 * (bestInitNUnsat / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nClauses_+1) / 8)
-    + kMaxVarFrontSize * sizeof(VciGpu) * 4 + 16 * 6 );
-  const uint64_t overheadBpct = deviceHeapBpct/6;
+    = 2 * (bestInitNUnsat / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nClauses_+1) / 8) // GpuExec::unsatClauses_
+    + 4 * (kMaxVarFrontSize / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nVars_+1) / 8) // stepRevs, bestRevVars
+    + 16 * 6; // Alignment
+  const uint64_t overheadBpct = (hostHeapBpct + deviceHeapBpct) / 6;
 
     // Pinned should be better than managed here, because managed memory transfers at page granularity,
   // while Pinned - at PCIe bus granularity, which is much smaller.
@@ -415,25 +413,34 @@ int main(int argc, char* argv[]) {
     // This is the upper bound for now without the correction for the actually available VRAM
     pgis[i].nStepBlocks_ = nBlocksPerSM * cas[i].cdp_.multiProcessorCount;
     gpuErrchk(cudaMemGetInfo(&cas[i].freeBytes_, &cas[i].totalBytes_));
+    size_t devHeapSize = 0;
+    gpuErrchk(cudaDeviceGetLimit(&devHeapSize, cudaLimitMallocHeapSize));
     uint64_t maxRainbowBytes = 1ULL << lround(ceil(log2(cas[i].freeBytes_/3)));
     for(;;) {
-      uint64_t bytesBothHeaps = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + overheadBpct);
-      uint64_t rainbowBytes = 1ULL << int(std::log2(maxRainbowBytes));
-      uint64_t totVramReq = bytesBothHeaps + rainbowBytes;
-      if(totVramReq <= cas[i].freeBytes_) {
+      const uint64_t bytesHostHeap = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + overheadBpct);
+      const uint64_t bytesDeviceHeap = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * deviceHeapBpct;
+      const uint64_t rainbowBytes = 1ULL << int(std::log2(maxRainbowBytes));
+      const uint64_t totVramReq = bytesHostHeap + devHeapSize + rainbowBytes;
+      if(totVramReq <= cas[i].freeBytes_ && bytesDeviceHeap <= devHeapSize) {
         break;
       }
-      const double reduction = std::sqrt( double(cas[i].freeBytes_) / totVramReq );
+      const double vramRed2 = double(cas[i].freeBytes_) / totVramReq;
+      const double devHeapRed = double(devHeapSize) / bytesDeviceHeap;
+      if(devHeapRed < 1) {
+        pgis[i].nStepBlocks_ *= devHeapRed;
+        continue;
+      }
+      const double reduction = std::sqrt(vramRed2);
       maxRainbowBytes *= reduction;
       pgis[i].nStepBlocks_ *= reduction;
     }
     seenAsgs[i].Init(maxRainbowBytes, cas[i]);
     gpuErrchk(cudaMemGetInfo(&cas[i].freeBytes_, &cas[i].totalBytes_));
-    pgis[i].nStepBlocks_ = std::min<uint64_t>(
+    pgis[i].nStepBlocks_ = std::min<uint64_t>(devHeapSize / deviceHeapBpct, std::min<uint64_t>(
       nBlocksPerSM * cas[i].cdp_.multiProcessorCount,
       cas[i].freeBytes_
-        / (uint64_t(kThreadsPerBlock) * (hostHeapBpct + deviceHeapBpct + overheadBpct))
-    );
+        / (uint64_t(kThreadsPerBlock) * (hostHeapBpct + overheadBpct))
+    ));
     Logger() << "Rainbow Table: " << double(uint64_t(seenAsgs[i].nbfDwords_) * sizeof(uint32_t)) / (1ULL<<30)
       << " GB, Host heap: "
       << double(pgis[i].nStepBlocks_) *  kThreadsPerBlock * hostHeapBpct / (1ULL<<30)
@@ -441,9 +448,6 @@ int main(int argc, char* argv[]) {
       << double(pgis[i].nStepBlocks_) *  kThreadsPerBlock * deviceHeapBpct / (1ULL<<30)
       << " GB. nStepBlocks: " << pgis[i].nStepBlocks_;
 
-    // Enable dynamic memory allocation in the CUDA kernel
-    gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize,
-      pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * deviceHeapBpct));
     pgis[i].bvBufs_ = CudaArray<__uint128_t>(
       pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * nVectsPerVarsBV, CudaArrayType::Device
     );
