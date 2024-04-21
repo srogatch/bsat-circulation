@@ -77,5 +77,23 @@ VciGpu CpuInit(Formula& formula) {
     }
   }
   formula.ans_ = trav.dfs_.back().assignment_;
+  DefaultSatTracker satTr(formula);
+  VCTrackingSet unsatClauses = satTr.Populate(formula.ans_, nullptr);
+  std::vector<MultiItem<VCIndex>> varFront = formula.ClauseFrontToVars(unsatClauses, formula.ans_);
+  VCTrackingSet affectedClauses;
+  for(VCIndex i=0; i<VCIndex(varFront.size()); i++) {
+    const VCIndex aVar = varFront[i].item_;
+    assert(1 <= aVar && aVar <= formula.nVars_);
+    for(int8_t sign=-1; sign<=1; sign+=2) {
+      const VCIndex nArcs = formula.var2clause_.ArcCount(aVar, sign);
+      for(VCIndex j=0; j<nArcs; j++) {
+        const VCIndex aClause = formula.var2clause_.GetTarget(aVar, sign, j) * sign;
+        assert(1 <= aClause && aClause <= formula.nClauses_);
+        affectedClauses.Add(aClause);
+      }
+    }
+  }
+  std::cout << "|unsatClauses|=" << unsatClauses.Size() << ", |varFront|=" << varFront.size()
+    << ", |affectedClauses|=" << affectedClauses.Size() << std::endl;
   return bestInitNUnsat;
 }
