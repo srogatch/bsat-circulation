@@ -1,4 +1,4 @@
-//#undef NDEBUG
+#undef NDEBUG
 
 #include "Common.h"
 
@@ -6,7 +6,7 @@
 
 constexpr const uint32_t kThreadsPerBlock = 128;
 constexpr const uint8_t kL2SolRoundRobin = 13; // log2( # solutions in the round-robin )
-constexpr const uint32_t kMaxVarFrontSize = 4096;
+constexpr const uint32_t kMaxVarFrontSize = 1024;
 
 #include "CpuInit.h"
 
@@ -131,7 +131,7 @@ __global__ void ReplicateAssignment(GpuExec* execs, const uint32_t nExecs) {
 
 __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuExec *execs)
 {
-  constexpr const uint32_t cCombsPerStep = 1u<<11;
+  constexpr const uint32_t cCombsPerStep = (1u<<9) - 1;
   const uint32_t iThread = threadIdx.x + blockIdx.x * kThreadsPerBlock;
   assert(blockDim.x == kThreadsPerBlock);
   // const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
@@ -194,8 +194,10 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
 
     //// Combine
     GpuTrackingVector<VciGpu> stepRevs;
+    stepRevs.Reserve(kMaxVarFrontSize);
     VciGpu bestUnsat = gLinkage.GetClauseCount() + 1;
     GpuTrackingVector<VciGpu> bestRevVars;
+    bestRevVars.Reserve(kMaxVarFrontSize);
     // Make sure the overhead of preparing the combinations doesn't outnumber the effort spent in combinations
     uint32_t endComb = cCombsPerStep; //max(cCombsPerStep, totVarFront);
     if(curExec.varFrontSize_ <= 31) [[unlikely]] {
@@ -253,6 +255,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
         const VCIndex aVar = curExec.varFrontItems_[i+combFirst];
         assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
         [[maybe_unused]] const bool bExisted = stepRevs.Flip(aVar);
+        assert(stepRevs.count_ <= kMaxVarFrontSize);
         // Variables may repeat inside varFront
         //assert( bExisted == !(curComb & (1u << i)) );
         curExec.nextAsg_.Flip(aVar);
@@ -330,6 +333,8 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     assert(curExec.unsatClauses_.count_ == bestUnsat);
     assert(curExec.unsatClauses_.count_ >= sysShar->nGlobalUnsat_);
 
+    gSeenAsgs.Add(curExec.nextAsg_.hash_);
+
     if(sysShar->nGlobalUnsat_ < nStartUnsat) [[unlikely]] {
       break; // some other executor found an improvement
     }
@@ -403,11 +408,10 @@ int main(int argc, char* argv[]) {
     + 256; // Thread stack
   const uint64_t deviceHeapBpct
     // GpuExec::unsatClauses_
-    // varFront
     // stepRevs
     // bestRevVars
-    = ( (bestInitNUnsat / GpuUnordSet::cStartOccupancy + 16) * ceilf(log2f(formula.nClauses_+1)) / 8
-    + kMaxVarFrontSize * 2 * sizeof(VciGpu) + 16 * 6 );
+    = ( 2 * (bestInitNUnsat / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nClauses_+1) / 8)
+    + kMaxVarFrontSize * sizeof(VciGpu) * 4 + 16 * 6 );
   const uint64_t overheadBpct = deviceHeapBpct/6;
 
     // Pinned should be better than managed here, because managed memory transfers at page granularity,

@@ -9,11 +9,11 @@ template<typename TItem> struct GpuTrackingVector {
   TItem* items_ = nullptr;
   VciGpu count_ = 0, capacity_ = 0;
 
-  __host__ __device__ GpuTrackingVector() {
+  __device__ GpuTrackingVector() {
     assert(items_ == nullptr);
   }
 
-  __host__ __device__ static void Copy(TItem* dest, const TItem* src, const VciGpu nItems) {
+  __device__ static void Copy(TItem* dest, const TItem* src, const VciGpu nItems) {
     if(nItems == 0) [[unlikely]] {
       return;
     }
@@ -31,7 +31,7 @@ template<typename TItem> struct GpuTrackingVector {
     return AlignUp(count, sizeof(__uint128_t) / sizeof(TItem));
   }
 
-  __host__ __device__ GpuTrackingVector(const GpuTrackingVector& src) {
+  __device__ GpuTrackingVector(const GpuTrackingVector& src) {
     hash_ = src.hash_;
     count_ = src.count_;
     capacity_ = AlignCap(src.count_);
@@ -41,7 +41,7 @@ template<typename TItem> struct GpuTrackingVector {
     Copy(items_, src.items_, count_);
   }
 
-  __host__ __device__ GpuTrackingVector& operator=(const GpuTrackingVector& src)
+  __device__ GpuTrackingVector& operator=(const GpuTrackingVector& src)
   {
     if(this != &src) [[likely]] {
       hash_ = src.hash_;
@@ -59,7 +59,7 @@ template<typename TItem> struct GpuTrackingVector {
   }
 
   // Returns whether the vector was resized
-  __host__ __device__ bool Reserve(const VciGpu newCap) {
+  __device__ bool Reserve(const VciGpu newCap) {
     if(newCap <= capacity_) {
       return false;
     }
@@ -74,7 +74,7 @@ template<typename TItem> struct GpuTrackingVector {
   }
 
   // Returns whether the item existed in the collection
-  __host__ __device__ bool Flip(const TItem item) {
+  __device__ bool Flip(const TItem item) {
     hash_ ^= Hasher(item).hash_;
     for(VciGpu i=count_-1; i>=0; i--) {
       if(items_[i] == item) {
@@ -90,7 +90,7 @@ template<typename TItem> struct GpuTrackingVector {
   }
 
   // Returns whether a new item was added, or a duplicate existed
-  template<bool checkDup> __host__ __device__ bool Add(const TItem item) {
+  template<bool checkDup> __device__ bool Add(const TItem item) {
     if constexpr(checkDup) {
       for(VciGpu i=count_-1; i>=0; i--) {
         if(items_[i] == item) {
@@ -106,7 +106,7 @@ template<typename TItem> struct GpuTrackingVector {
   }
 
   // Returns true if the item had existed in the collection
-  __host__ __device__ bool Remove(const TItem& item) {
+  __device__ bool Remove(const TItem& item) {
     for(VciGpu i=count_-1; i>=0; i--) {
       if(items_[i] == item) {
         hash_ ^= Hasher(item).hash_;
@@ -118,7 +118,7 @@ template<typename TItem> struct GpuTrackingVector {
     return false;
   }
 
-  __host__ __device__ ~GpuTrackingVector() {
+  __device__ ~GpuTrackingVector() {
     free(items_);
     items_ = nullptr;
   }

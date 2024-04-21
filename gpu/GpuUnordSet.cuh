@@ -85,7 +85,7 @@ struct GpuUnordSet {
     VectSetZero(buffer_, nBufBytes);
   }
 
-  __host__ __device__ GpuUnordSet(GpuUnordSet&& src) {
+  __device__ GpuUnordSet(GpuUnordSet&& src) {
     bitsPerPack_ = src.bitsPerPack_;
     buffer_ = src.buffer_;
     hash_ = src.hash_;
@@ -99,7 +99,7 @@ struct GpuUnordSet {
     src.nBuckets_ = 0;
   }
 
-  __host__ __device__ GpuUnordSet& operator=(GpuUnordSet&& src) {
+  __device__ GpuUnordSet& operator=(GpuUnordSet&& src) {
     if(&src != this) [[likely]] {
       free(buffer_);
 

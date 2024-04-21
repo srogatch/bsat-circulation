@@ -21,7 +21,7 @@ struct GpuBitVector {
     assert(bits_ == nullptr);
   }
 
-  __host__ __device__ explicit GpuBitVector(
+  __device__ explicit GpuBitVector(
     const VciGpu nBits, const bool setZer0) : nBits_(nBits), flags_(cfOwned)
   {
     const VciGpu nVects = VectCount();
@@ -37,7 +37,7 @@ struct GpuBitVector {
     }
   }
 
-  __host__ __device__ GpuBitVector(GpuBitVector&& src)
+  __device__ GpuBitVector(GpuBitVector&& src)
   : hash_(src.hash_), bits_(src.bits_), nBits_(src.nBits_), flags_(src.flags_)
   {
     src.hash_ = 0;
@@ -46,9 +46,9 @@ struct GpuBitVector {
     src.flags_ = 0;
   }
 
-  __host__ __device__ GpuBitVector& operator=(GpuBitVector&& src)
+  __device__ GpuBitVector& operator=(GpuBitVector&& src)
   {
-    if(this != &src) {
+    if(this != &src) [[likely]] {
       if(flags_ & cfOwned) {
         free(bits_);
       }
@@ -64,7 +64,7 @@ struct GpuBitVector {
     return *this;
   }
 
-  __host__ __device__ GpuBitVector(const GpuBitVector& src)
+  __device__ GpuBitVector(const GpuBitVector& src)
   : hash_(src.hash_), nBits_(src.nBits_), flags_(src.flags_ | cfOwned)
   {
     const VciGpu nVects = VectCount();
@@ -75,7 +75,7 @@ struct GpuBitVector {
     }
   }
 
-  __host__ __device__ ~GpuBitVector() {
+  __device__ ~GpuBitVector() {
     if(flags_ & cfOwned) {
       free(bits_);
     }

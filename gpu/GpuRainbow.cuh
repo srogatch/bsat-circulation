@@ -5,12 +5,13 @@
 
 struct GpuRainbow {
   uint32_t* bitfield_;
-  // uint64_t nbfDwords_;
+  uint64_t nbfDwords_;
   uint8_t nUseBits_;
   uint8_t firstUseBit_;
 
   __device__ __host__ uint64_t ToIndex(const __uint128_t hash) const {
     const uint64_t index = (hash >> firstUseBit_) & ((1ULL<<nUseBits_)-1);
+    assert(index < 32*nbfDwords_);
     return index;
   }
 
@@ -59,5 +60,6 @@ struct HostRainbow {
     gr.bitfield_ = bitfield_.Get();
     gr.nUseBits_ = nUseBits_;
     gr.firstUseBit_ = firstUseBit_;
+    gr.nbfDwords_ = nbfDwords_;
   }
 };
