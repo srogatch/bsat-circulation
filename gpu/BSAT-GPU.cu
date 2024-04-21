@@ -7,6 +7,8 @@
 constexpr const uint32_t kThreadsPerBlock = 128;
 constexpr const uint8_t kL2SolRoundRobin = 13; // log2( # solutions in the round-robin )
 constexpr const uint32_t kMaxVarFrontSize = 1024;
+constexpr const uint8_t kL2CombsPerStep = 9;
+constexpr const uint32_t kCombsPerStep = (1u<<kL2CombsPerStep) - 1;
 
 #include "CpuInit.h"
 
@@ -131,7 +133,6 @@ __global__ void ReplicateAssignment(GpuExec* execs, const uint32_t nExecs) {
 
 __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuExec *execs)
 {
-  constexpr const uint32_t cCombsPerStep = (1u<<9) - 1;
   const uint32_t iThread = threadIdx.x + blockIdx.x * kThreadsPerBlock;
   assert(blockDim.x == kThreadsPerBlock);
   // const uint32_t nThreads = gridDim.x * kThreadsPerBlock;
@@ -193,13 +194,11 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     }
 
     //// Combine
-    GpuTrackingVector<VciGpu> stepRevs;
-    stepRevs.Reserve(kMaxVarFrontSize);
+    GpuUnordSet stepRevs(kL2CombsPerStep, gLinkage.GetVarCount());
     VciGpu bestUnsat = gLinkage.GetClauseCount() + 1;
-    GpuTrackingVector<VciGpu> bestRevVars;
-    bestRevVars.Reserve(kMaxVarFrontSize);
+    GpuUnordSet bestRevVars(kL2CombsPerStep, gLinkage.GetVarCount());
     // Make sure the overhead of preparing the combinations doesn't outnumber the effort spent in combinations
-    uint32_t endComb = cCombsPerStep; //max(cCombsPerStep, totVarFront);
+    uint32_t endComb = kCombsPerStep; //max(cCombsPerStep, totVarFront);
     if(curExec.varFrontSize_ <= 31) [[unlikely]] {
       endComb = min(endComb, (1u<<curExec.varFrontSize_)-1);
     }
@@ -208,7 +207,7 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     {
       const VciGpu aVar = curExec.varFrontItems_[0];
       assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
-      stepRevs.Add<false>(aVar);
+      stepRevs.Add(aVar);
       curExec.nextAsg_.Flip(aVar);
       UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
     }
@@ -238,9 +237,9 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
               curComb = 0;
               const VciGpu remVF = curExec.varFrontSize_ - combFirst;
               if(remVF <= 31) [[unlikely]] {
-                endComb = min(cCombsPerStep, (1u<<remVF)-1);
+                endComb = min(kCombsPerStep, (1u<<remVF)-1);
               } else {
-                endComb = cCombsPerStep;
+                endComb = kCombsPerStep;
               }
             }
           }
@@ -278,33 +277,18 @@ __global__ void StepKernel(const VciGpu nStartUnsat, SystemShared* sysShar, GpuE
     }
 
     // Revert to the best assignment
-    stepRevs.Sort();
-    bestRevVars.Sort();
-    VciGpu iSR = 0, iBR = 0;
-    while(iSR < stepRevs.count_ || iBR < bestRevVars.count_) {
-      assert(iSR == 0 || iSR >= stepRevs.count_ || stepRevs.items_[iSR-1] < stepRevs.items_[iSR]);
-      assert(iBR == 0 || iBR >= bestRevVars.count_ || bestRevVars.items_[iBR-1] < bestRevVars.items_[iBR]);
-      VciGpu aVar;
-      if( iBR >= bestRevVars.count_ || (iSR < stepRevs.count_ && stepRevs.items_[iSR] < bestRevVars.items_[iBR]) ) {
-        aVar = stepRevs.items_[iSR];
-        iSR++;
-      } else if( iSR >= stepRevs.count_ || (iBR < bestRevVars.count_ && bestRevVars.items_[iBR] < stepRevs.items_[iSR]) ) {
-        aVar = bestRevVars.items_[iBR];
-        iBR++;
-      } else {
-        assert(iSR < stepRevs.count_);
-        assert(iBR < bestRevVars.count_);
-        assert(stepRevs.items_[iSR] == bestRevVars.items_[iBR]);
-        iSR++;
-        iBR++;
-        continue;
+    stepRevs.Visit<true>(curExec.rng_.Next(), [&](const VciGpu aVar) {
+      if(!bestRevVars.Contains(aVar)) {
+        curExec.nextAsg_.Flip(aVar);
+        UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
       }
-      // if(!(1 <= aVar && aVar <= gLinkage.GetVarCount())) {
-      //   printf(" %d ", aVar);
-      // }
-      curExec.nextAsg_.Flip(aVar);
-      UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
-    }
+    });
+    bestRevVars.Visit<true>(curExec.rng_.Next(), [&](const VciGpu aVar) {
+      if(!stepRevs.Contains(aVar)) {
+        curExec.nextAsg_.Flip(aVar);
+        UpdateUnsatCs(aVar, curExec.nextAsg_, curExec.unsatClauses_);
+      }
+    });
     // // TODO: remove (DEBUG)
     // for(VciGpu i=1; i<=gLinkage.GetClauseCount(); i++) {
     //   if(IsSatisfied(i, curExec.nextAsg_)) {

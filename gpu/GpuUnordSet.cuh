@@ -119,7 +119,44 @@ struct GpuUnordSet {
   }
 
   __host__ __device__ GpuUnordSet(const GpuUnordSet&) = delete;
-  __host__ __device__ GpuUnordSet& operator=(const GpuUnordSet&) = delete;
+
+  __host__ __device__ GpuUnordSet& operator=(const GpuUnordSet& src) {
+    if(&src != this) [[likely]] {
+      VciGpu nBufBytes;
+      if(bitsPerPack_ != src.bitsPerPack_ || nBuckets_ < ceilf(src.count_ / cGrowOccupancy)) {
+        free(buffer_);
+        bitsPerPack_ = src.bitsPerPack_;
+        nBuckets_ = ceilf(src.count_ / cStartOccupancy);
+        nBufBytes = CalcBufBytes(nBuckets_, bitsPerPack_);
+        buffer_ = static_cast<uint32_t*>( malloc( nBufBytes ) );
+        assert(buffer_ != nullptr);
+      }
+      else {
+        VciGpu t = nBuckets_;
+        nBufBytes = CalcBufBytes(t, bitsPerPack_);
+        assert(t == nBuckets_);
+      }
+      VectSetZero(buffer_, nBufBytes);
+      count_ = 0;
+      src.Visit<true>(uintptr_t(buffer_), [&](const VciGpu item) {
+        assert(item != 0);
+        count_++;
+        VciGpu pos=(item*cHashMul) % nBuckets_;
+        for(;;) {
+          const VciGpu valAt = GetPack(pos);
+          if(valAt == 0) {
+            SetPack(pos, item);
+            break;
+          }
+          assert(valAt != item);
+          pos = (pos+1) % nBuckets_;
+        }
+      });
+      assert(count_ == src.count_);
+      hash_ = src.hash_;
+    }
+    return *this;
+  }
 
   // Return true if it grew, false if not.
   __host__ __device__  bool CheckGrow() {
