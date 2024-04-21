@@ -1,4 +1,4 @@
-#undef NDEBUG
+//#undef NDEBUG
 
 #include "Common.h"
 
@@ -427,7 +427,6 @@ int main(int argc, char* argv[]) {
 
   // TODO: call CPU Init here
   const VciGpu bestInitNUnsat = CpuInit(formula);
-
   std::cout << "Preparing GPU data structures" << std::endl;
   std::vector<HostLinkage> linkages;
   HostLinkage::Init(formula, cas, linkages);
