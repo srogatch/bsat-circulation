@@ -6,8 +6,8 @@
 
 constexpr const uint32_t kThreadsPerBlock = 128;
 constexpr const uint8_t kL2SolRoundRobin = 13; // log2( # solutions in the round-robin )
-constexpr const uint32_t kMaxVarFrontSize = 1024;
-constexpr const uint8_t kL2CombsPerStep = 9;
+constexpr const uint32_t kMaxVarFrontSize = 128;
+constexpr const uint8_t kL2CombsPerStep = 11;
 constexpr const uint32_t kCombsPerStep = (1u<<kL2CombsPerStep) - 1;
 
 #include "CpuInit.h"
@@ -160,6 +160,7 @@ __global__ __launch_bounds__(kThreadsPerBlock, 5) void StepKernel(const VciGpu n
     curExec.unsatClauses_.Shrink( curExec.rng_.Next() );
     // Get the variables that affect the unsatisfied clauses
     const GpuUnordSet& combClauses = curExec.unsatClauses_; // front_ ?
+    GpuUnordSet seenVars(kMaxVarFrontSize, gLinkage.GetVarCount());
     curExec.varFrontSize_ = 0;
     combClauses.Visit<false>(curExec.rng_.Next(), [&](const VciGpu aClause) -> bool {
       for(int8_t sign=-1; sign<=1; sign+=2) {
@@ -171,6 +172,9 @@ __global__ __launch_bounds__(kThreadsPerBlock, 5) void StepKernel(const VciGpu n
           // be considered for combinations multiple times proportionally to their
           // entry numbers.
           assert(1 <= aVar && aVar <= gLinkage.GetVarCount());
+          if(!seenVars.Add(aVar)) {
+            continue;
+          }
           if(curExec.varFrontSize_ < kMaxVarFrontSize) {
             curExec.varFrontItems_[curExec.varFrontSize_] = aVar;
             curExec.varFrontSize_++;
@@ -392,7 +396,7 @@ int main(int argc, char* argv[]) {
     + 256; // Thread stack
   const uint64_t deviceHeapBpct
     = 2 * (bestInitNUnsat / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nClauses_+1) / 8) // GpuExec::unsatClauses_
-    + 4 * (kMaxVarFrontSize / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nVars_+1) / 8) // stepRevs, bestRevVars
+    + 4 * (kMaxVarFrontSize / GpuUnordSet::cShrinkOccupancy + 16) * ceilf(log2f(formula.nVars_+1) / 8) // stepRevs, bestRevVars, seenVars
     + 16 * 6; // Alignment
   const uint64_t overheadBpct = (hostHeapBpct + deviceHeapBpct) / 6;
 
@@ -415,12 +419,13 @@ int main(int argc, char* argv[]) {
     gpuErrchk(cudaMemGetInfo(&cas[i].freeBytes_, &cas[i].totalBytes_));
     size_t devHeapSize = 0;
     gpuErrchk(cudaDeviceGetLimit(&devHeapSize, cudaLimitMallocHeapSize));
-    uint64_t maxRainbowBytes = 1ULL << lround(ceil(log2(cas[i].freeBytes_/3)));
+    cas[i].freeBytes_ -= devHeapSize;
+    uint64_t maxRainbowBytes = 1ULL << lround(ceil(log2(cas[i].freeBytes_/2)));
     for(;;) {
       const uint64_t bytesHostHeap = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * (hostHeapBpct + overheadBpct);
       const uint64_t bytesDeviceHeap = pgis[i].nStepBlocks_ * uint64_t(kThreadsPerBlock) * deviceHeapBpct;
       const uint64_t rainbowBytes = 1ULL << int(std::log2(maxRainbowBytes));
-      const uint64_t totVramReq = bytesHostHeap + devHeapSize + rainbowBytes;
+      const uint64_t totVramReq = bytesHostHeap + rainbowBytes;
       if(totVramReq <= cas[i].freeBytes_ && bytesDeviceHeap <= devHeapSize) {
         break;
       }
@@ -436,7 +441,7 @@ int main(int argc, char* argv[]) {
     }
     seenAsgs[i].Init(maxRainbowBytes, cas[i]);
     gpuErrchk(cudaMemGetInfo(&cas[i].freeBytes_, &cas[i].totalBytes_));
-    pgis[i].nStepBlocks_ = std::min<uint64_t>(devHeapSize / deviceHeapBpct, std::min<uint64_t>(
+    pgis[i].nStepBlocks_ = std::min<uint64_t>(devHeapSize / (uint64_t(kThreadsPerBlock) * deviceHeapBpct), std::min<uint64_t>(
       nBlocksPerSM * cas[i].cdp_.multiProcessorCount,
       cas[i].freeBytes_
         / (uint64_t(kThreadsPerBlock) * (hostHeapBpct + overheadBpct))

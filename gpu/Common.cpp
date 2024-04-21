@@ -11,7 +11,7 @@ void CudaAttributes::Init(const int i_gpu) {
   std::cout << "Using device #" << i_gpu << ": " << cdp_.name << std::endl;
   gpuErrchk(cudaMemGetInfo(&freeBytes_, &totalBytes_));
   // Enable dynamic memory allocation in the CUDA kernel
-  gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize, freeBytes_ / 3));
+  gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize, freeBytes_ * 0.45));
   gpuErrchk(cudaMemGetInfo(&freeBytes_, &totalBytes_));
   gpuErrchk(cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync | cudaDeviceMapHost | cudaDeviceLmemResizeToMax));
   gpuErrchk(cudaStreamCreate(&cs_));
