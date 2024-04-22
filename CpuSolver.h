@@ -64,7 +64,8 @@ struct CpuSolver {
     IneqSystem ieSys(varFront, affectedClauses);
     for(VCIndex i=0; i<ieSys.ClauseCount(); i++) {
       const VCIndex aClause = ieSys.clauseMap_[i];
-      ieSys.c_[i] = satTr.nSat_[aClause];
+      assert(1 <= aClause && aClause <= pFormula_->nClauses_);
+      ieSys.c_[i] = 1 - double(satTr.nSat_[aClause]);
       for(VCIndex j=0; j<ieSys.VarCount(); j++) {
         const VCIndex aVar = ieSys.varMap_[j];
         if(pFormula_->clause2var_.HasArc(aClause, aVar)) {
@@ -101,6 +102,7 @@ struct CpuSolver {
           continue;
         }
         const double mul = - ieSys.A_[j][i] / ieSys.A_[i][i];
+        assert(mul >= 0);
         for(VCIndex k=0; k<ieSys.VarCount(); k++) {
           if(k == i) {
             ieSys.A_[j][k] = 0; // Avoid floating-point flaws / epsilons
