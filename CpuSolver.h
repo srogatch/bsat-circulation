@@ -136,9 +136,11 @@ struct CpuSolver {
     }
     for(VCIndex i=0; i<ieSys.ClauseCount(); i++) {
       if(ieSys.c_[i] > eps) {
+        std::cout << "UNSATISFIABLE" << std::endl;
         return false; // Unsatisfiable
       }
     }
+    std::cout << "SATISFIABLE" << std::endl;
     assert(pFormula_->SolWorks());
     return true;
   }
