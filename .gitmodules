@@ -1,0 +1,3 @@
+[submodule "extern/osqp"]
+	path = extern/osqp
+	url = git@github.com:osqp/osqp.git

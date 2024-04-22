@@ -2,58 +2,8 @@
 
 #include "SatTracker.h"
 #include "Traversal.h"
-
-struct IneqSystem {
-  std::vector<std::vector<double>> A_;
-  std::vector<double> c_;
-  std::vector<VCIndex> clauseMap_;
-  std::vector<VCIndex> varMap_;
-
-  IneqSystem(
-    const std::vector<MultiItem<VCIndex>>& varFront,
-    const VCTrackingSet& affectedClauses)
-  {
-    clauseMap_ = affectedClauses.ToVector();
-    varMap_.reserve(varFront.size());
-    for(VCIndex i=0; i<VCIndex(varFront.size()); i++) {
-      varMap_.push_back(varFront[i].item_);
-    }
-
-    A_.resize(clauseMap_.size());
-    for(VCIndex i=0; i<VCIndex(clauseMap_.size()); i++) {
-      A_[i].resize(varMap_.size(), 0);
-    }
-
-    c_.resize(clauseMap_.size(), 0);
-  }
-
-  explicit IneqSystem(const Formula& formula)
-  {
-    clauseMap_.reserve(formula.nClauses_);
-    for(VCIndex i=1; i<=formula.nClauses_; i++) {
-      clauseMap_.push_back(i);
-    }
-    varMap_.reserve(formula.nVars_);
-    for(VCIndex i=1; i<=formula.nVars_; i++) {
-      varMap_.push_back(i);
-    }
-
-    A_.resize(clauseMap_.size());
-    for(VCIndex i=0; i<VCIndex(clauseMap_.size()); i++) {
-      A_[i].resize(varMap_.size(), 0);
-    }
-
-    c_.resize(clauseMap_.size(), 0);
-  }
-
-  VCIndex VarCount() const {
-    return varMap_.size();
-  }
-
-  VCIndex ClauseCount() const {
-    return clauseMap_.size();
-  }
-};
+#include "extern/eigen/Eigen/Sparse"
+#include <osqp/osqp.h>
 
 struct CpuSolver {
   Formula *pFormula_;
@@ -61,29 +11,6 @@ struct CpuSolver {
   explicit CpuSolver(Formula& formula) : pFormula_(&formula) { }
 
   bool Solve() {
-    DefaultSatTracker satTr(*pFormula_);
-    VCTrackingSet unsatClauses = satTr.Populate(pFormula_->ans_, nullptr);
-    std::vector<MultiItem<VCIndex>> varFront = pFormula_->ClauseFrontToVars(unsatClauses, pFormula_->ans_);
-    VCTrackingSet affectedClauses;
-    for(VCIndex i=0; i<VCIndex(varFront.size()); i++) {
-      const VCIndex aVar = varFront[i].item_;
-      assert(1 <= aVar && aVar <= pFormula_->nVars_);
-      for(int8_t sign=-1; sign<=1; sign+=2) {
-        const VCIndex nArcs = pFormula_->var2clause_.ArcCount(aVar, sign);
-        for(VCIndex j=0; j<nArcs; j++) {
-          const VCIndex aClause = pFormula_->var2clause_.GetTarget(aVar, sign, j) * sign;
-          assert(1 <= aClause && aClause <= pFormula_->nClauses_);
-          affectedClauses.Add(aClause);
-        }
-      }
-    }
-    std::cout << "|unsatClauses|=" << unsatClauses.Size() << ", |varFront|=" << varFront.size()
-      << ", |affectedClauses|=" << affectedClauses.Size() << std::endl;
-
-    //IneqSystem ieSys(varFront, affectedClauses);
-    IneqSystem ieSys(*pFormula_);
-
-    #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
     for(VCIndex i=0; i<ieSys.ClauseCount(); i++) {
       const VCIndex aClause = ieSys.clauseMap_[i];
       assert(1 <= aClause && aClause <= pFormula_->nClauses_);
