@@ -143,12 +143,12 @@ struct CpuSolver {
         if(j == leadRow[i] || fabs(ieSys.A_[j][i]) <= eps) {
           continue;
         }
-        if(Signum(ieSys.A_[j][i]) == Signum(ieSys.A_[leadRow[i]][i])) {
-          // No problem to assign
-          continue;
-        }
+        // if(Signum(ieSys.A_[j][i]) != Signum(ieSys.A_[leadRow[i]][i])) {
+        //   // No problem to assign
+        //   continue;
+        // }
         const double mul = - ieSys.A_[j][i] / ieSys.A_[leadRow[i]][i];
-        assert(mul >= 0);
+        // assert(mul <= 0);
         for(VCIndex k=0; k<ieSys.VarCount(); k++) {
           if(k == i) {
             assert( fabs(ieSys.A_[j][k] + mul * ieSys.A_[leadRow[i]][k]) <= eps );
@@ -172,6 +172,9 @@ struct CpuSolver {
         }
       }
       if(j >= ieSys.ClauseCount()) {
+        // if(pFormula_->ans_[ieSys.varMap_[i]] != false) {
+        //   pFormula_->ans_.Flip(ieSys.varMap_[i]);
+        // }
         continue; // The assignment of this variable doesn't matter
       }
       const int8_t sign = Signum(ieSys.A_[j][i]);
@@ -181,9 +184,11 @@ struct CpuSolver {
       }
       #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
       for(VCIndex k=0; k<ieSys.ClauseCount(); k++) {
-        assert(Signum(ieSys.A_[k][i]) == sign || Signum(ieSys.A_[k][i]) == 0);
-        ieSys.c_[k] -= ieSys.A_[k][i] * sign;
-        ieSys.A_[k][i] = 0;
+        //assert(Signum(ieSys.A_[k][i]) == sign || Signum(ieSys.A_[k][i]) == 0);
+        if(Signum(ieSys.A_[k][i]) == sign) {
+          ieSys.c_[k] -= ieSys.A_[k][i] * sign;
+          ieSys.A_[k][i] = 0;
+        }
       }
     }
     for(VCIndex i=0; i<ieSys.ClauseCount(); i++) {
@@ -197,7 +202,6 @@ struct CpuSolver {
     std::atomic<bool> allSat = true;
     #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(VCIndex iClause=1; iClause<=pFormula_->nClauses_; iClause++) {
-      #pragma omp cancellation point for
       if(pFormula_->dummySat_[iClause]) {
         continue; // satisfied because the clause contains a variable and its negation
       }
@@ -234,7 +238,6 @@ struct CpuSolver {
           std::cout << " > " << ieSys.c_[i] << std::endl;
         }
         allSat.store(false);
-        #pragma omp cancel for
       }
     }
     if(!allSat) {
