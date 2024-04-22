@@ -27,6 +27,25 @@ struct IneqSystem {
     c_.resize(clauseMap_.size(), 0);
   }
 
+  explicit IneqSystem(const Formula& formula)
+  {
+    clauseMap_.reserve(formula.nClauses_);
+    for(VCIndex i=1; i<=formula.nClauses_; i++) {
+      clauseMap_.push_back(i);
+    }
+    varMap_.reserve(formula.nVars_);
+    for(VCIndex i=1; i<=formula.nVars_; i++) {
+      varMap_.push_back(i);
+    }
+
+    A_.resize(clauseMap_.size());
+    for(VCIndex i=0; i<VCIndex(clauseMap_.size()); i++) {
+      A_[i].resize(varMap_.size(), 0);
+    }
+
+    c_.resize(clauseMap_.size(), 0);
+  }
+
   VCIndex VarCount() const {
     return varMap_.size();
   }
@@ -61,11 +80,14 @@ struct CpuSolver {
     std::cout << "|unsatClauses|=" << unsatClauses.Size() << ", |varFront|=" << varFront.size()
       << ", |affectedClauses|=" << affectedClauses.Size() << std::endl;
 
-    IneqSystem ieSys(varFront, affectedClauses);
+    //IneqSystem ieSys(varFront, affectedClauses);
+    IneqSystem ieSys(*pFormula_);
+
+    #pragma omp parallel for
     for(VCIndex i=0; i<ieSys.ClauseCount(); i++) {
       const VCIndex aClause = ieSys.clauseMap_[i];
       assert(1 <= aClause && aClause <= pFormula_->nClauses_);
-      ieSys.c_[i] = 1 - double(satTr.nSat_[aClause]);
+      ieSys.c_[i] = 2 - pFormula_->clause2var_.ArcCount(aClause); // - double(satTr.nSat_[aClause]);
       for(VCIndex j=0; j<ieSys.VarCount(); j++) {
         const VCIndex aVar = ieSys.varMap_[j];
         if(pFormula_->clause2var_.HasArc(aClause, aVar)) {
@@ -93,6 +115,11 @@ struct CpuSolver {
         ieSys.A_[i].swap(ieSys.A_[j]);
         std::swap(ieSys.clauseMap_[i], ieSys.clauseMap_[j]);
       }
+      const double rev = 1.0 / fabs(ieSys.A_[i][i]);
+      for(VCIndex j=0; j<ieSys.VarCount(); j++) {
+        ieSys.A_[i][j] *= rev;
+      }
+      ieSys.c_[i] *= rev;
       for(j=0; j<ieSys.ClauseCount(); j++) {
         if(j == i || fabs(ieSys.A_[j][i]) <= eps) {
           continue;
@@ -103,8 +130,10 @@ struct CpuSolver {
         }
         const double mul = - ieSys.A_[j][i] / ieSys.A_[i][i];
         assert(mul >= 0);
+        #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
         for(VCIndex k=0; k<ieSys.VarCount(); k++) {
           if(k == i) {
+            assert( fabs(ieSys.A_[j][k] + mul * ieSys.A_[i][k]) <= eps );
             ieSys.A_[j][k] = 0; // Avoid floating-point flaws / epsilons
             continue;
           }
@@ -132,8 +161,11 @@ struct CpuSolver {
       if(pFormula_->ans_[ieSys.varMap_[i]] != setTrue) {
         pFormula_->ans_.Flip(ieSys.varMap_[i]);
       }
-      for(; j<ieSys.ClauseCount(); j++) {
-        ieSys.c_[j] -= ieSys.A_[j][i] * sign;
+      #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
+      for(VCIndex k=0; k<ieSys.ClauseCount(); k++) {
+        assert(Signum(ieSys.A_[k][i]) == sign || Signum(ieSys.A_[k][i]) == 0);
+        ieSys.c_[k] -= ieSys.A_[k][i] * sign;
+        ieSys.A_[k][i] = 0;
       }
     }
     for(VCIndex i=0; i<ieSys.ClauseCount(); i++) {
@@ -143,7 +175,53 @@ struct CpuSolver {
       }
     }
     std::cout << "SATISFIABLE" << std::endl;
-    assert(pFormula_->SolWorks());
+
+    std::atomic<bool> allSat = true;
+    #pragma omp parallel for schedule(guided, kRamPageBytes)
+    for(VCIndex iClause=1; iClause<=pFormula_->nClauses_; iClause++) {
+      #pragma omp cancellation point for
+      if(pFormula_->dummySat_[iClause]) {
+        continue; // satisfied because the clause contains a variable and its negation
+      }
+      bool satisfied = false;
+      #pragma unroll
+      for(int8_t sgnTo=-1; sgnTo<=1; sgnTo+=2) {
+        const VCIndex nArcs = pFormula_->clause2var_.ArcCount(iClause, sgnTo);
+        for(VCIndex at=0; at<nArcs; at++) {
+          const VCIndex iVar = pFormula_->clause2var_.GetTarget(iClause, sgnTo, at);
+          assert(Signum(iVar) == sgnTo);
+          const int8_t sgnAsg = pFormula_->ans_[llabs(iVar)] ? 1 : -1;
+          if(sgnAsg == sgnTo) {
+            satisfied = true;
+            break;
+          }
+        }
+      }
+      if(!satisfied)
+      {
+        #pragma omp critical
+        {
+          VCIndex i;
+          for(i=0; i<ieSys.ClauseCount(); i++) {
+            if(ieSys.clauseMap_[i] == iClause) {
+              break;
+            }
+          }
+          std::cout << iClause << "/" << i << ": ";
+          for(VCIndex j=0; j<ieSys.VarCount(); j++) {
+            if(ieSys.A_[i][j] != 0) {
+              std::cout << " (" << ieSys.varMap_[j] << "/" << j << ")" << ieSys.A_[i][j];
+            }
+          }
+          std::cout << " > " << ieSys.c_[i] << std::endl;
+        }
+        allSat.store(false);
+        #pragma omp cancel for
+      }
+    }
+    if(!allSat) {
+      std::cout << "Verification failed." << std::endl;
+    }
     return true;
   }
 };
