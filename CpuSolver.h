@@ -83,7 +83,7 @@ struct CpuSolver {
     //IneqSystem ieSys(varFront, affectedClauses);
     IneqSystem ieSys(*pFormula_);
 
-    #pragma omp parallel for
+    #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
     for(VCIndex i=0; i<ieSys.ClauseCount(); i++) {
       const VCIndex aClause = ieSys.clauseMap_[i];
       assert(1 <= aClause && aClause <= pFormula_->nClauses_);
@@ -133,10 +133,12 @@ struct CpuSolver {
       leadRow[i] = nLeads;
       nLeads++;
       const double rev = 1.0 / fabs(ieSys.A_[leadRow[i]][i]);
+      #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
       for(VCIndex j=0; j<ieSys.VarCount(); j++) {
         ieSys.A_[leadRow[i]][j] *= rev;
       }
       ieSys.c_[leadRow[i]] *= rev;
+      #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
       for(j=0; j<ieSys.ClauseCount(); j++) {
         if(j == leadRow[i] || fabs(ieSys.A_[j][i]) <= eps) {
           continue;
@@ -147,7 +149,6 @@ struct CpuSolver {
         }
         const double mul = - ieSys.A_[j][i] / ieSys.A_[leadRow[i]][i];
         assert(mul >= 0);
-        #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
         for(VCIndex k=0; k<ieSys.VarCount(); k++) {
           if(k == i) {
             assert( fabs(ieSys.A_[j][k] + mul * ieSys.A_[leadRow[i]][k]) <= eps );
