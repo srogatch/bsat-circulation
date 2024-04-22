@@ -82,7 +82,7 @@ struct Linkage {
     VCIndex l=0, r=VCIndex(arcs.size());
     // l: inclusive bound, r: exclusive bound
     while(l < r) {
-      const VCIndex m = (l+r) / 2;
+      const VCIndex m = (l + r - 1) / 2;
       const VCIndex cur = arcs[m];
       if(cur == to) {
         return true;
