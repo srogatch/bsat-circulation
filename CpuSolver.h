@@ -91,12 +91,16 @@ struct CpuSolver {
         smtA.emplace_back(pFormula_->nClauses_ + aVar - 1, aVar - 1, 1);
         optL.emplace_back(-1);
         optH.emplace_back(+1);
-        smtP.emplace_back(aVar-1, aVar-1, -2);
+        // 0 * x[i] * x[i]
+        smtP.emplace_back(aVar-1, aVar-1, 0);
         initX.emplace_back(pFormula_->ans_[aVar] ? 1 : -1);
       }
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
-        // 2 * max 0.5*y[i]*y[i]
-        smtP.emplace_back(startY+i, startY+i, 0.5);
+        // coeff*y[i]*y[i]
+        smtP.emplace_back(startY+i, startY+i, 0);
+        optQ[startY+i] = 0.25;
+        // y[i]*z[i] = (1-x[i])*(1+x[i]) = 1 - x[i]*x[i]
+        // smtP.emplace_back(startY+i, startZ+i, 1.5);
         // x[i] = 1 - y[i]  <=>  x[i]+y[i] = 1
         smtA.emplace_back(pFormula_->nClauses_ + startY + i, i, 1); // x[i]
         smtA.emplace_back(pFormula_->nClauses_ + startY + i, startY+i, 1); // y[i]
@@ -105,8 +109,9 @@ struct CpuSolver {
         initX.emplace_back(1 - (pFormula_->ans_[i+1] ? 1 : -1));
       }
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
-        // 2 * max 0.5*z[i]*z[i]
-        smtP.emplace_back(startZ+i, startZ+i, 0.5);
+        // coeff * z[i] * z[i]
+        smtP.emplace_back(startZ+i, startZ+i, 0);
+        optQ[startZ+i] = 0.25;
         // x[i] = z[i] - 1  <=>  x[i] - z[i] = -1
         smtA.emplace_back(pFormula_->nClauses_ + startZ + i, i, 1); // x[i]
         smtA.emplace_back(pFormula_->nClauses_ + startZ + i, startZ+i, -1); // z[i]
@@ -144,7 +149,7 @@ struct CpuSolver {
     settings->alpha = 1.0; // Over-relaxation parameter (you can tune this)
     //settings->time_limit = 500;
     settings->max_iter = 1000 * 1000 * 1000;
-    settings->rho = 1.87;
+    settings->rho = 1.05e3; //1.87;
     settings->eps_abs = 1e-4; //1.0 / pFormula_->nClauses_;
     settings->eps_rel = 1e-4; //1.0 / pFormula_->nClauses_;
     settings->polishing = 1;
