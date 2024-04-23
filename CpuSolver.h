@@ -199,7 +199,8 @@ struct CpuSolver {
       }
     }
     if(totSat < pFormula_->nClauses_) {
-      std::cout << "Verification failed." << std::endl;
+      const VCIndex nUnsat = pFormula_->CountUnsat(pFormula_->ans_);
+      std::cout << "Verification failed: " << nUnsat << " unsatisfied clauses." << std::endl;
     }
 
 cleanup:
