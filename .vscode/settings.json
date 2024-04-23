@@ -74,6 +74,8 @@
     "filesystem": "cpp",
     "codecvt": "cpp",
     "regex": "cpp",
-    "__nullptr": "cpp"
+    "__nullptr": "cpp",
+    "future": "cpp",
+    "valarray": "cpp"
   }
 }

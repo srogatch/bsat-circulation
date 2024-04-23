@@ -5,128 +5,171 @@
 #include "extern/eigen/Eigen/Sparse"
 #include <osqp/osqp.h>
 
+struct SpMatTriple {
+  uint64_t row_ : 32;
+  uint64_t col_ : 31;
+  uint64_t val_ : 1; // 1 for 1, 0 for -1
+
+  SpMatTriple(const VCIndex aClause, const VCIndex aVar, const int8_t sign) {
+    row_ = aClause;
+    col_ = aVar;
+    val_ = (sign + 1) / 2;
+  }
+};
+
+struct CSCMatrix {
+  std::vector<OSQPFloat> values;
+  std::vector<OSQPInt> row_indices;
+  std::vector<OSQPInt> col_ptrs;
+};
+
+// Comparator for sorting triples by column and then by row
+bool tripleComparator(const SpMatTriple& a, const SpMatTriple& b) {
+    return (a.col_ < b.col_) || (a.col_ == b.col_ && a.row_ < b.row_);
+}
+
+// Function to convert triples to CSC format
+CSCMatrix triplesToCSC(std::vector<SpMatTriple> &triples, OSQPInt rows, OSQPInt cols)
+{
+  std::sort(triples.begin(), triples.end(), tripleComparator);
+
+  CSCMatrix csc;
+  csc.col_ptrs.resize(cols + 1, 0);
+
+  OSQPInt current_col = 0;
+  for (const SpMatTriple &t : triples)
+  {
+    csc.values.push_back(-1 + 2 * int8_t(t.val_));
+    csc.row_indices.push_back(t.row_);
+
+    // Update column pointers
+    for (; current_col <= t.col_; ++current_col)
+    {
+      csc.col_ptrs[current_col] = csc.values.size() - 1;
+    }
+  }
+
+  // Fill in the remaining column pointers if the last columns are empty
+  for (; current_col <= cols; ++current_col)
+  {
+    csc.col_ptrs[current_col] = csc.values.size();
+  }
+
+  return csc;
+}
+
 struct CpuSolver {
   Formula *pFormula_;
 
   explicit CpuSolver(Formula& formula) : pFormula_(&formula) { }
 
   bool Solve() {
-    for(VCIndex i=0; i<ieSys.ClauseCount(); i++) {
-      const VCIndex aClause = ieSys.clauseMap_[i];
-      assert(1 <= aClause && aClause <= pFormula_->nClauses_);
-      ieSys.c_[i] = 2 - pFormula_->clause2var_.ArcCount(aClause); // - double(satTr.nSat_[aClause]);
-      for(int8_t sign=-1; sign<=1; sign+=2) {
-        const VCIndex nArcs = pFormula_->clause2var_.ArcCount(aClause, sign);
-        for(VCIndex j=0; j<nArcs; j++) {
-          const VCIndex iVar = pFormula_->clause2var_.GetTarget(aClause, sign, j);
-          const VCIndex aVar = llabs(iVar);
-          assert(ieSys.varMap_[aVar-1] == aVar);
-          if(iVar < 0) {
-            ieSys.A_[i][aVar-1] = -1;
-          } else {
-            ieSys.A_[i][aVar-1] = 1;
+    std::vector<OSQPFloat> optL, optH, optQ(pFormula_->nVars_, 0), initX;
+    CSCMatrix optA, optP;
+    {
+      std::vector<SpMatTriple> smtA, smtP;
+      for(VCIndex aClause=1; aClause<=pFormula_->nClauses_; aClause++) {
+        optL.emplace_back( 2 - pFormula_->clause2var_.ArcCount(aClause) );
+        optH.emplace_back( pFormula_->clause2var_.ArcCount(aClause) );
+        for(int8_t sign=-1; sign<=1; sign+=2) {
+          const VCIndex nArcs = pFormula_->clause2var_.ArcCount(aClause, sign);
+          for(VCIndex j=0; j<nArcs; j++) {
+            const VCIndex iVar = pFormula_->clause2var_.GetTarget(aClause, sign, j);
+            const VCIndex aVar = llabs(iVar);
+            if(iVar < 0) {
+              smtA.emplace_back(aClause-1, aVar-1, -1);
+            } else {
+              smtA.emplace_back(aClause-1, aVar-1, +1);
+            }
           }
         }
       }
-      // for(VCIndex j=0; j<ieSys.VarCount(); j++) {
-      //   const VCIndex aVar = ieSys.varMap_[j];
-      //   if(pFormula_->clause2var_.HasArc(aClause, aVar)) {
-      //     ieSys.A_[i][j] = 1;
-      //   } else if(pFormula_->clause2var_.HasArc(aClause, -aVar)) {
-      //     ieSys.A_[i][j] = -1;
-      //   }
-      // }
+      for(VCIndex aVar=1; aVar<=pFormula_->nVars_; aVar++) {
+        smtA.emplace_back(pFormula_->nClauses_ + aVar - 1, aVar-1, 1);
+        optL.emplace_back(-1);
+        optH.emplace_back(+1);
+        smtP.emplace_back(aVar-1, aVar-1, 1);
+        initX.emplace_back(pFormula_->ans_[aVar] ? 1 : -1);
+      }
+      optA = triplesToCSC(smtA, pFormula_->nClauses_+pFormula_->nVars_, pFormula_->nVars_);
+      optP = triplesToCSC(smtP, pFormula_->nVars_, pFormula_->nVars_);
     }
 
-    constexpr const double eps = 1e-10;
+    // Create CSC matrices for P and A
+    std::unique_ptr<OSQPCscMatrix> osqpP(new OSQPCscMatrix);
+    osqpP->m = pFormula_->nVars_;
+    osqpP->n = pFormula_->nVars_;
+    osqpP->nz = -1;
+    osqpP->nzmax = optP.values.size();
+    osqpP->x = optP.values.data();
+    osqpP->i = optP.row_indices.data();
+    osqpP->p = optP.col_ptrs.data();
 
-    std::vector<VCIndex> leadRow(ieSys.VarCount(), -1);
-    VCIndex nLeads = 0;
-    for(VCIndex i=0; i<ieSys.VarCount(); i++) {
-      VCIndex j=nLeads;
-      for(; j<ieSys.ClauseCount(); j++) {
-        if( fabs(ieSys.A_[j][i]) > eps ) {
-          break;
-        }
-      }
-      if(j >= ieSys.ClauseCount()) {
-        continue;
-      }
-      if(nLeads != j) {
-        std::swap(ieSys.c_[nLeads], ieSys.c_[j]);
-        ieSys.A_[nLeads].swap(ieSys.A_[j]);
-        std::swap(ieSys.clauseMap_[nLeads], ieSys.clauseMap_[j]);
-      }
-      leadRow[i] = nLeads;
-      nLeads++;
-      const double rev = 1.0 / fabs(ieSys.A_[leadRow[i]][i]);
-      #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
-      for(VCIndex j=0; j<ieSys.VarCount(); j++) {
-        ieSys.A_[leadRow[i]][j] *= rev;
-      }
-      ieSys.c_[leadRow[i]] *= rev;
-      #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
-      for(j=0; j<ieSys.ClauseCount(); j++) {
-        if(j == leadRow[i] || fabs(ieSys.A_[j][i]) <= eps) {
-          continue;
-        }
-        // if(Signum(ieSys.A_[j][i]) != Signum(ieSys.A_[leadRow[i]][i])) {
-        //   // No problem to assign
-        //   continue;
-        // }
-        const double mul = - ieSys.A_[j][i] / ieSys.A_[leadRow[i]][i];
-        // assert(mul <= 0);
-        for(VCIndex k=0; k<ieSys.VarCount(); k++) {
-          if(k == i) {
-            assert( fabs(ieSys.A_[j][k] + mul * ieSys.A_[leadRow[i]][k]) <= eps );
-            ieSys.A_[j][k] = 0; // Avoid floating-point flaws / epsilons
-            continue;
-          }
-          ieSys.A_[j][k] += mul * ieSys.A_[leadRow[i]][k];
-        }
-        ieSys.c_[j] += mul * ieSys.c_[leadRow[i]];
-      }
+    std::unique_ptr<OSQPCscMatrix> osqpA(new OSQPCscMatrix);
+    osqpA->m = pFormula_->nClauses_+pFormula_->nVars_;
+    osqpA->n = pFormula_->nVars_;
+    osqpA->nz = -1;
+    osqpA->nzmax = optA.values.size();
+    osqpA->x = optA.values.data();
+    osqpA->i = optA.row_indices.data();
+    osqpA->p = optA.col_ptrs.data();
+
+    // Problem settings
+    std::unique_ptr<OSQPSettings> settings(new OSQPSettings);
+    osqp_set_default_settings(settings.get());
+    settings->alpha = 1.0; // Over-relaxation parameter (you can tune this)
+    settings->time_limit = 500;
+    settings->max_iter = 1000 * 1000 * 1000;
+    settings->rho = 1.87;
+    settings->eps_abs = 1.0 / pFormula_->nClauses_;
+    settings->eps_rel = 1.0 / pFormula_->nClauses_;
+    settings->polishing = 1;
+
+    // Declare solver pointer
+    OSQPSolver* solver = nullptr;
+    // Initialize the solver
+    OSQPInt exitflag = osqp_setup(&solver, osqpP.get(), optQ.data(), osqpA.get(), optL.data(), optH.data(),
+      pFormula_->nClauses_ + pFormula_->nVars_, pFormula_->nVars_, settings.get());
+    if (exitflag != 0) {
+      std::cout << "Inequations solver failed to initialize." << std::endl;
+      return false;
     }
 
-    for(VCIndex i=0; i<ieSys.VarCount(); i++) {
-      if(i >= ieSys.ClauseCount()) {
-        break; // every variable is assigned
-      }
-      VCIndex j=0;
-      for(; j<ieSys.ClauseCount(); j++) {
-        if(fabs(ieSys.A_[j][i]) > eps) {
-          break;
-        }
-      }
-      if(j >= ieSys.ClauseCount()) {
-        // if(pFormula_->ans_[ieSys.varMap_[i]] != false) {
-        //   pFormula_->ans_.Flip(ieSys.varMap_[i]);
-        // }
-        continue; // The assignment of this variable doesn't matter
-      }
-      const int8_t sign = Signum(ieSys.A_[j][i]);
-      const bool setTrue = (sign > 0);
-      if(pFormula_->ans_[ieSys.varMap_[i]] != setTrue) {
-        pFormula_->ans_.Flip(ieSys.varMap_[i]);
-      }
-      #pragma omp parallel for num_threads(nSysCpus) schedule(guided, kRamPageBytes/sizeof(double))
-      for(VCIndex k=0; k<ieSys.ClauseCount(); k++) {
-        //assert(Signum(ieSys.A_[k][i]) == sign || Signum(ieSys.A_[k][i]) == 0);
-        if(Signum(ieSys.A_[k][i]) == sign) {
-          ieSys.c_[k] -= ieSys.A_[k][i] * sign;
-          ieSys.A_[k][i] = 0;
-        }
-      }
-    }
-    for(VCIndex i=0; i<ieSys.ClauseCount(); i++) {
-      if(ieSys.c_[i] > eps) {
-        std::cout << "UNSATISFIABLE" << std::endl;
-        return false; // Unsatisfiable
-      }
-    }
-    std::cout << "SATISFIABLE" << std::endl;
+    osqp_warm_start(solver, initX.data(), nullptr);
 
-    std::atomic<bool> allSat = true;
+    osqp_solve(solver);
+    constexpr const double eps = 1e-3;
+    VCIndex nUnint = 0;
+    std::atomic<VCIndex> totSat = 0;
+
+    if (solver->info->status_val != OSQP_SOLVED && solver->info->status_val != OSQP_SOLVED_INACCURATE) {
+      std::cout << "UNSATISFIABLE" << std::endl;
+      goto cleanup;
+    }
+    for(VCIndex i=0; i<pFormula_->nVars_; i++) {
+      bool setTrue;
+      if(solver->solution->x[i] >= 1.0-eps) {
+        setTrue = true;
+      } else if(solver->solution->x[i] <= -1+eps) {
+        setTrue = false;
+      } else {
+        //std::cout << "Solution at var " << i+1 << " is not integer." << std::endl;
+        setTrue = (solver->solution->x[i] >= 0);
+        nUnint++;
+      }
+      VCIndex aVar = i+1;
+      if(pFormula_->ans_[aVar] != setTrue) {
+        pFormula_->ans_.Flip(aVar);
+      }
+    }
+    if(nUnint == 0) {
+      std::cout << "SATISFIABLE" << std::endl;
+    }
+    else {
+      std::cout << "nUnint=" << nUnint << std::endl;
+      std::cout << "UNKNOWN" << std::endl;
+    }
+
     #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(VCIndex iClause=1; iClause<=pFormula_->nClauses_; iClause++) {
       if(pFormula_->dummySat_[iClause]) {
@@ -146,30 +189,16 @@ struct CpuSolver {
           }
         }
       }
-      if(!satisfied)
-      {
-        #pragma omp critical
-        {
-          VCIndex i;
-          for(i=0; i<ieSys.ClauseCount(); i++) {
-            if(ieSys.clauseMap_[i] == iClause) {
-              break;
-            }
-          }
-          std::cout << iClause << "/" << i << ": ";
-          for(VCIndex j=0; j<ieSys.VarCount(); j++) {
-            if(ieSys.A_[i][j] != 0) {
-              std::cout << " (" << ieSys.varMap_[j] << "/" << j << ")" << ieSys.A_[i][j];
-            }
-          }
-          std::cout << " > " << ieSys.c_[i] << std::endl;
-        }
-        allSat.store(false);
+      if(satisfied) {
+        totSat.fetch_add(1);
       }
     }
-    if(!allSat) {
+    if(totSat < pFormula_->nClauses_) {
       std::cout << "Verification failed." << std::endl;
     }
+
+cleanup:
+    osqp_cleanup(solver);
     return true;
   }
 };

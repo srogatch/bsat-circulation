@@ -18,7 +18,7 @@ rm bin/BSAT-Debug
 # Anything below g++-12 may have a bug with unsigned __int128 arithmetic in STL std::map
 set -e
 icpx -fsycl BSAT.cpp -DNDEBUG -O3 -funroll-loops -ffast-math -march=native \
-  -std=c++20 -qopenmp -Wl,--no-as-needed -ldl -ljemalloc -ltbb -o "bin/Rogasat" &
+  -std=c++20 -qopenmp -Wl,--no-as-needed -ldl -ljemalloc -ltbb -losqp -o "bin/Rogasat" &
 # Save the PID of the background process
 clang_pid=$!
 if $found_seq; then  
@@ -33,11 +33,11 @@ if $found_seq; then
 fi
 
 icpx -fsycl BSAT.cpp -g -O3 -funroll-loops -ffast-math -march=native \
-  -std=c++20 -qopenmp -Wl,--no-as-needed -ldl -ljemalloc -ltbb -o bin/BSAT-Release &
+  -std=c++20 -qopenmp -Wl,--no-as-needed -ldl -ljemalloc -ltbb -losqp -o bin/BSAT-Release &
 icpx -fsycl BSAT.cpp -gdwarf-4 -O2 -fno-inline -fno-omit-frame-pointer -ffast-math -march=native \
-  -std=c++20 -qopenmp -Wl,--no-as-needed -ldl -ljemalloc -ltbb -o bin/BSAT-Profiling &
+  -std=c++20 -qopenmp -Wl,--no-as-needed -ldl -ljemalloc -ltbb -losqp -o bin/BSAT-Profiling &
 clang++-17 BSAT.cpp -ggdb3 -O2 -fsanitize=address,undefined -std=c++20 -march=native -fopenmp \
-  -Wl,--no-as-needed -ldl -ljemalloc -ltbb -o bin/BSAT-Sanitize &
+  -Wl,--no-as-needed -ldl -ljemalloc -ltbb -losqp -o bin/BSAT-Sanitize &
 icpx -fsycl BSAT.cpp -ggdb3 -std=c++20 -march=native -qopenmp -Wl,--no-as-needed \
-  -ldl -ljemalloc -ltbb -Wall -Wextra -o bin/BSAT-Debug &
+  -ldl -ljemalloc -ltbb -losqp -Wall -Wextra -o bin/BSAT-Debug &
 wait
