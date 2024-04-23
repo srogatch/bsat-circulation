@@ -66,7 +66,12 @@ struct CpuSolver {
   bool Solve() {
     std::cout << "Populating the Quadratic solver" << std::endl;
 
-    std::vector<OSQPFloat> optL, optH, optQ(pFormula_->nVars_, -1), initX;
+    const VCIndex nUnkonwns = 3 * pFormula_->nVars_;
+    const VCIndex startY = pFormula_->nVars_;
+    const VCIndex startZ = 2 * pFormula_->nVars_;
+
+    std::vector<OSQPFloat> optL, optH, optQ(nUnkonwns, 0), initX;
+
     CSCMatrix optA, optP;
     {
       std::vector<SpMatTriple> smtA, smtP;
@@ -83,26 +88,41 @@ struct CpuSolver {
         }
       }
       for(VCIndex aVar=1; aVar<=pFormula_->nVars_; aVar++) {
-        smtA.emplace_back(pFormula_->nClauses_ + aVar - 1, aVar-1, 1);
+        smtA.emplace_back(pFormula_->nClauses_ + aVar - 1, aVar - 1, 1);
         optL.emplace_back(-1);
         optH.emplace_back(+1);
-        smtP.emplace_back(aVar-1, aVar-1, 1);
+        smtP.emplace_back(aVar-1, aVar-1, -2);
         initX.emplace_back(pFormula_->ans_[aVar] ? 1 : -1);
       }
-      // A loop
-      // for(VCIndex i=0; i+1<pFormula_->nVars_; i++) {
-      //   smtP.emplace_back(i, i+1, 1);
-      // }
-      // smtP.emplace_back(0, pFormula_->nVars_-1, 1);
+      for(VCIndex i=0; i<pFormula_->nVars_; i++) {
+        // 2 * max 0.5*y[i]*y[i]
+        smtP.emplace_back(startY+i, startY+i, 0.5);
+        // x[i] = 1 - y[i]  <=>  x[i]+y[i] = 1
+        smtA.emplace_back(pFormula_->nClauses_ + startY + i, i, 1); // x[i]
+        smtA.emplace_back(pFormula_->nClauses_ + startY + i, startY+i, 1); // y[i]
+        optL.emplace_back(1);
+        optH.emplace_back(1);
+        initX.emplace_back(1 - (pFormula_->ans_[i+1] ? 1 : -1));
+      }
+      for(VCIndex i=0; i<pFormula_->nVars_; i++) {
+        // 2 * max 0.5*z[i]*z[i]
+        smtP.emplace_back(startZ+i, startZ+i, 0.5);
+        // x[i] = z[i] - 1  <=>  x[i] - z[i] = -1
+        smtA.emplace_back(pFormula_->nClauses_ + startZ + i, i, 1); // x[i]
+        smtA.emplace_back(pFormula_->nClauses_ + startZ + i, startZ+i, -1); // z[i]
+        optL.emplace_back(-1);
+        optH.emplace_back(-1);
+        initX.emplace_back(1 + (pFormula_->ans_[i+1] ? 1 : -1));
+      }
 
-      optA = triplesToCSC(smtA, pFormula_->nClauses_+pFormula_->nVars_, pFormula_->nVars_);
-      optP = triplesToCSC(smtP, pFormula_->nVars_, pFormula_->nVars_);
+      optA = triplesToCSC(smtA, pFormula_->nClauses_+nUnkonwns, nUnkonwns);
+      optP = triplesToCSC(smtP, nUnkonwns, nUnkonwns);
     }
 
     // Create CSC matrices for P and A
     std::unique_ptr<OSQPCscMatrix> osqpP(new OSQPCscMatrix);
-    osqpP->m = pFormula_->nVars_;
-    osqpP->n = pFormula_->nVars_;
+    osqpP->m = nUnkonwns;
+    osqpP->n = nUnkonwns;
     osqpP->nz = -1;
     osqpP->nzmax = optP.values.size();
     osqpP->x = optP.values.data();
@@ -110,8 +130,8 @@ struct CpuSolver {
     osqpP->p = optP.col_ptrs.data();
 
     std::unique_ptr<OSQPCscMatrix> osqpA(new OSQPCscMatrix);
-    osqpA->m = pFormula_->nClauses_+pFormula_->nVars_;
-    osqpA->n = pFormula_->nVars_;
+    osqpA->m = pFormula_->nClauses_ + nUnkonwns;
+    osqpA->n = nUnkonwns;
     osqpA->nz = -1;
     osqpA->nzmax = optA.values.size();
     osqpA->x = optA.values.data();
@@ -133,7 +153,7 @@ struct CpuSolver {
     OSQPSolver* solver = nullptr;
     // Initialize the solver
     OSQPInt exitflag = osqp_setup(&solver, osqpP.get(), optQ.data(), osqpA.get(), optL.data(), optH.data(),
-      pFormula_->nClauses_ + pFormula_->nVars_, pFormula_->nVars_, settings.get());
+      pFormula_->nClauses_ + nUnkonwns, nUnkonwns, settings.get());
     if (exitflag != 0) {
       std::cout << "Inequations solver failed to initialize." << std::endl;
       return false;
