@@ -8,8 +8,8 @@ import numpy as np
 
 A = np.array([
 #  y  z  x
-  [2, 1, 0], # y
-  [1, 2, 0], # z
+  [1, 0.5, 0], # y
+  [0.5, 1, 0], # z
   [0, 0, 0]  # x
 ])
 
