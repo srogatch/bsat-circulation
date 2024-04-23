@@ -6,14 +6,14 @@
 #include <osqp/osqp.h>
 
 struct SpMatTriple {
-  uint64_t row_ : 32;
-  uint64_t col_ : 31;
-  uint64_t val_ : 1; // 1 for 1, 0 for -1
+  VCIndex row_;
+  VCIndex col_;
+  float val_;
 
-  SpMatTriple(const VCIndex aClause, const VCIndex aVar, const int8_t sign) {
+  SpMatTriple(const VCIndex aClause, const VCIndex aVar, const float val) {
     row_ = aClause;
     col_ = aVar;
-    val_ = (sign + 1) / 2;
+    val_ = val;
   }
 };
 
@@ -39,7 +39,7 @@ CSCMatrix triplesToCSC(std::vector<SpMatTriple> &triples, OSQPInt rows, OSQPInt 
   OSQPInt current_col = 0;
   for (const SpMatTriple &t : triples)
   {
-    csc.values.push_back(-1 + 2 * int8_t(t.val_));
+    csc.values.push_back( t.val_ );
     csc.row_indices.push_back(t.row_);
 
     // Update column pointers
@@ -64,6 +64,8 @@ struct CpuSolver {
   explicit CpuSolver(Formula& formula) : pFormula_(&formula) { }
 
   bool Solve() {
+    std::cout << "Populating the Quadratic solver" << std::endl;
+
     std::vector<OSQPFloat> optL, optH, optQ(pFormula_->nVars_, 0), initX;
     CSCMatrix optA, optP;
     {
@@ -76,11 +78,7 @@ struct CpuSolver {
           for(VCIndex j=0; j<nArcs; j++) {
             const VCIndex iVar = pFormula_->clause2var_.GetTarget(aClause, sign, j);
             const VCIndex aVar = llabs(iVar);
-            if(iVar < 0) {
-              smtA.emplace_back(aClause-1, aVar-1, -1);
-            } else {
-              smtA.emplace_back(aClause-1, aVar-1, +1);
-            }
+            smtA.emplace_back(aClause-1, aVar-1, Signum(iVar));
           }
         }
       }
@@ -89,6 +87,9 @@ struct CpuSolver {
         optL.emplace_back(-1);
         optH.emplace_back(+1);
         smtP.emplace_back(aVar-1, aVar-1, 1);
+        // for(VCIndex i=aVar; i<pFormula_->nVars_; i++) {
+        //   smtP.emplace_back(aVar-1, i, 0);
+        // }
         initX.emplace_back(pFormula_->ans_[aVar] ? 1 : -1);
       }
       optA = triplesToCSC(smtA, pFormula_->nClauses_+pFormula_->nVars_, pFormula_->nVars_);
@@ -118,7 +119,7 @@ struct CpuSolver {
     std::unique_ptr<OSQPSettings> settings(new OSQPSettings);
     osqp_set_default_settings(settings.get());
     settings->alpha = 1.0; // Over-relaxation parameter (you can tune this)
-    settings->time_limit = 500;
+    //settings->time_limit = 500;
     settings->max_iter = 1000 * 1000 * 1000;
     settings->rho = 1.87;
     settings->eps_abs = 1.0 / pFormula_->nClauses_;
@@ -147,14 +148,18 @@ struct CpuSolver {
       goto cleanup;
     }
     for(VCIndex i=0; i<pFormula_->nVars_; i++) {
+      const double val = solver->solution->x[i];
+      if( !(-1-eps <= val && val <= 1+eps) ) {
+        std::cout << " v" << i+1 << "=" << val << " ";
+      }
       bool setTrue;
-      if(solver->solution->x[i] >= 1.0-eps) {
+      if(val >= 1.0-eps) {
         setTrue = true;
-      } else if(solver->solution->x[i] <= -1+eps) {
+      } else if(val <= -1+eps) {
         setTrue = false;
       } else {
         //std::cout << "Solution at var " << i+1 << " is not integer." << std::endl;
-        setTrue = (solver->solution->x[i] >= 0);
+        setTrue = (val >= 0);
         nUnint++;
       }
       VCIndex aVar = i+1;
