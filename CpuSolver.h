@@ -66,7 +66,7 @@ struct CpuSolver {
   bool Solve() {
     std::cout << "Populating the Quadratic solver" << std::endl;
 
-    std::vector<OSQPFloat> optL, optH, optQ(pFormula_->nVars_, 0), initX;
+    std::vector<OSQPFloat> optL, optH, optQ(pFormula_->nVars_, -1), initX;
     CSCMatrix optA, optP;
     {
       std::vector<SpMatTriple> smtA, smtP;
@@ -87,11 +87,14 @@ struct CpuSolver {
         optL.emplace_back(-1);
         optH.emplace_back(+1);
         smtP.emplace_back(aVar-1, aVar-1, 1);
-        // for(VCIndex i=aVar; i<pFormula_->nVars_; i++) {
-        //   smtP.emplace_back(aVar-1, i, 0);
-        // }
         initX.emplace_back(pFormula_->ans_[aVar] ? 1 : -1);
       }
+      // A loop
+      // for(VCIndex i=0; i+1<pFormula_->nVars_; i++) {
+      //   smtP.emplace_back(i, i+1, 1);
+      // }
+      // smtP.emplace_back(0, pFormula_->nVars_-1, 1);
+
       optA = triplesToCSC(smtA, pFormula_->nClauses_+pFormula_->nVars_, pFormula_->nVars_);
       optP = triplesToCSC(smtP, pFormula_->nVars_, pFormula_->nVars_);
     }
@@ -122,8 +125,8 @@ struct CpuSolver {
     //settings->time_limit = 500;
     settings->max_iter = 1000 * 1000 * 1000;
     settings->rho = 1.87;
-    settings->eps_abs = 1.0 / pFormula_->nClauses_;
-    settings->eps_rel = 1.0 / pFormula_->nClauses_;
+    settings->eps_abs = 1e-4; //1.0 / pFormula_->nClauses_;
+    settings->eps_rel = 1e-4; //1.0 / pFormula_->nClauses_;
     settings->polishing = 1;
 
     // Declare solver pointer
