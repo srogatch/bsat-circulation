@@ -7,12 +7,13 @@ import numpy as np
 # ])
 
 A = np.array([
-#  y  z  x
-  [1, -0.5, 0], # y
-  [-0.5, 1, 0], # z
-  [0, 0, 0]  # x
+#  x  y, z
+  [1, -1, 0], # x
+  [-1, 1, 0], # y
+  [0, 0, 0]  # z
 ])
 
+eps = 1e-9
 eigenvalues = np.linalg.eigvals(A)
-is_positive_semidefinite = np.all(eigenvalues >= 0)
+is_positive_semidefinite = np.all(eigenvalues >= -eps)
 print("Matrix A is positive semidefinite:", is_positive_semidefinite)

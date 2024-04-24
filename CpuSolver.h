@@ -150,8 +150,9 @@ struct CpuSolver {
     //settings->time_limit = 500;
     settings->max_iter = 1000 * 1000 * 1000;
     settings->rho = 3.65e-1; //1.87;
-    settings->eps_abs = 1e-7; //1.0 / pFormula_->nClauses_;
-    settings->eps_rel = 1e-7; //1.0 / pFormula_->nClauses_;
+    settings->eps_abs = 1e-8; //1.0 / pFormula_->nClauses_;
+    settings->eps_rel = 1e-8; //1.0 / pFormula_->nClauses_;
+    //settings->rho
     settings->polishing = 1;
 
     // Declare solver pointer
