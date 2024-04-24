@@ -99,23 +99,27 @@ struct CpuSolver {
         // coeff*y[i]*y[i]
         smtP.emplace_back(startY+i, startY+i, 0);
         //smtP.emplace_back(startY+i, startZ+i, -1);
+        optQ[startY+i] = -0.5;
         // u[i] + v[i] = 4
         smtA.emplace_back(pFormula_->nClauses_ + startY + i, startY + i, 1); // u[i]
         smtA.emplace_back(pFormula_->nClauses_ + startY + i, startZ+i, 1); // v[i]
         optL.emplace_back(4);
         optH.emplace_back(4);
-        initX.emplace_back(1 - (pFormula_->ans_[i+1] ? 1 : -1));
+        const double x = (pFormula_->ans_[i+1] ? 1 : -1);
+        initX.emplace_back((x-1)*(x-1));
       }
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
         // coeff * z[i] * z[i]
         smtP.emplace_back(startZ+i, startZ+i, 0);
-        // z-x=1
+        optQ[startZ+i] = -0.5;
+        // u[i]-v[i]+4x = 0
         smtA.emplace_back(pFormula_->nClauses_ + startZ + i, startY+i, 1); // u[i]
         smtA.emplace_back(pFormula_->nClauses_ + startZ + i, startZ+i, -1); // v[i]
         smtA.emplace_back(pFormula_->nClauses_ + startZ + i, i, 4); // x[i]
         optL.emplace_back(0);
         optH.emplace_back(0);
-        initX.emplace_back(1 + (pFormula_->ans_[i+1] ? 1 : -1));
+        const double x = (pFormula_->ans_[i+1] ? 1 : -1);
+        initX.emplace_back((x+1)*(x+1));
       }
 
       optA = triplesToCSC(smtA, pFormula_->nClauses_+nUnkonwns, nUnkonwns);
@@ -148,8 +152,8 @@ struct CpuSolver {
     //settings->time_limit = 500;
     settings->max_iter = 1000 * 1000 * 1000;
     settings->rho = 3.65e-1; //1.87;
-    settings->eps_abs = 1e-8; //1.0 / pFormula_->nClauses_;
-    settings->eps_rel = 1e-8; //1.0 / pFormula_->nClauses_;
+    settings->eps_abs = 1e-7; //1.0 / pFormula_->nClauses_;
+    settings->eps_rel = 1e-7; //1.0 / pFormula_->nClauses_;
     //settings->rho
     settings->polishing = 1;
 
