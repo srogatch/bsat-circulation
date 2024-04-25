@@ -98,21 +98,22 @@ struct CpuSolver {
       }
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
         smtP.emplace_back(startU+i, startU+i, 0);
-        optQ[startU+i] = -0.25;
-        smtA.emplace_back(pFormula_->nClauses_ + startU + i, i, 2); // 2 * x[i]
-        smtA.emplace_back(pFormula_->nClauses_ + startU + i, startU+i, 1); // u[i]
-        optL.emplace_back(2);
-        optH.emplace_back(2);
+        // u*v --> min
+        smtP.emplace_back(startU+i, startV+i, 1);
+        smtA.emplace_back(pFormula_->nClauses_ + startU + i, startU + i, 1); // u[i]
+        smtA.emplace_back(pFormula_->nClauses_ + startU + i, startV + i, 1); // v[i]
+        optL.emplace_back(4);
+        optH.emplace_back(4);
         const double x = (pFormula_->ans_[i+1] ? 1 : -1);
         initX.emplace_back((x-1)*(x-1));
       }
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
         smtP.emplace_back(startV+i, startV+i, 0);
-        optQ[startV+i] = -0.25;
-        smtA.emplace_back(pFormula_->nClauses_ + startV + i, i, -2); // -2x[i]
-        smtA.emplace_back(pFormula_->nClauses_ + startV + i, startV+i, 1); // v[i]
-        optL.emplace_back(2);
-        optH.emplace_back(2);
+        smtA.emplace_back(pFormula_->nClauses_ + startV + i, startU+i, 1); // u[i]
+        smtA.emplace_back(pFormula_->nClauses_ + startV + i, startV+i, -1); // -v[i]
+        smtA.emplace_back(pFormula_->nClauses_ + startV + i, i, 4); // 4*x[i]
+        optL.emplace_back(0);
+        optH.emplace_back(0);
         const double x = (pFormula_->ans_[i+1] ? 1 : -1);
         initX.emplace_back((x+1)*(x+1));
       }
