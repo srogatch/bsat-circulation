@@ -66,9 +66,10 @@ struct CpuSolver {
   bool Solve() {
     std::cout << "Populating the Quadratic solver" << std::endl;
 
-    const VCIndex nUnkonwns = 3 * pFormula_->nVars_;
-    const VCIndex startY = pFormula_->nVars_;
-    const VCIndex startZ = 2 * pFormula_->nVars_;
+    const VCIndex nUnkonwns = 3 * pFormula_->nVars_; // x, u, v
+    const VCIndex startU = pFormula_->nVars_;
+    const VCIndex startV = 2 * pFormula_->nVars_;
+    const VCIndex startS = 3 * pFormula_->nVars_;
 
     std::vector<OSQPFloat> optL, optH, optQ(nUnkonwns, 0), initX;
 
@@ -96,28 +97,22 @@ struct CpuSolver {
         initX.emplace_back(pFormula_->ans_[aVar] ? 1 : -1);
       }
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
-        // coeff*y[i]*y[i]
-        smtP.emplace_back(startY+i, startY+i, 0);
-        //smtP.emplace_back(startY+i, startZ+i, -1);
-        optQ[startY+i] = -0.5;
-        // u[i] + v[i] = 4
-        smtA.emplace_back(pFormula_->nClauses_ + startY + i, startY + i, 1); // u[i]
-        smtA.emplace_back(pFormula_->nClauses_ + startY + i, startZ+i, 1); // v[i]
-        optL.emplace_back(4);
-        optH.emplace_back(4);
+        smtP.emplace_back(startU+i, startU+i, 0);
+        optQ[startU+i] = -0.25;
+        smtA.emplace_back(pFormula_->nClauses_ + startU + i, i, 2); // 2 * x[i]
+        smtA.emplace_back(pFormula_->nClauses_ + startU + i, startU+i, 1); // u[i]
+        optL.emplace_back(2);
+        optH.emplace_back(2);
         const double x = (pFormula_->ans_[i+1] ? 1 : -1);
         initX.emplace_back((x-1)*(x-1));
       }
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
-        // coeff * z[i] * z[i]
-        smtP.emplace_back(startZ+i, startZ+i, 0);
-        optQ[startZ+i] = -0.5;
-        // u[i]-v[i]+4x = 0
-        smtA.emplace_back(pFormula_->nClauses_ + startZ + i, startY+i, 1); // u[i]
-        smtA.emplace_back(pFormula_->nClauses_ + startZ + i, startZ+i, -1); // v[i]
-        smtA.emplace_back(pFormula_->nClauses_ + startZ + i, i, 4); // x[i]
-        optL.emplace_back(0);
-        optH.emplace_back(0);
+        smtP.emplace_back(startV+i, startV+i, 0);
+        optQ[startV+i] = -0.25;
+        smtA.emplace_back(pFormula_->nClauses_ + startV + i, i, -2); // -2x[i]
+        smtA.emplace_back(pFormula_->nClauses_ + startV + i, startV+i, 1); // v[i]
+        optL.emplace_back(2);
+        optH.emplace_back(2);
         const double x = (pFormula_->ans_[i+1] ? 1 : -1);
         initX.emplace_back((x+1)*(x+1));
       }
@@ -181,7 +176,7 @@ struct CpuSolver {
     for(VCIndex i=0; i<pFormula_->nVars_; i++) {
       const double val = solver->solution->x[i];
       if( !(-1-eps <= val && val <= 1+eps) ) {
-        std::cout << " v" << i+1 << "=" << val << " ";
+        std::cout << " Rx" << i+1 << "=" << val << " ";
       }
       bool setTrue;
       if(val >= 1.0-eps) {
@@ -192,6 +187,7 @@ struct CpuSolver {
         //std::cout << "Solution at var " << i+1 << " is not integer." << std::endl;
         setTrue = (val >= 0);
         nUnint++;
+        std::cout << " x" << i+1 << "=" << val << " ";
       }
       VCIndex aVar = i+1;
       if(pFormula_->ans_[aVar] != setTrue) {
