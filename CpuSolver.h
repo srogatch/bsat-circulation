@@ -66,13 +66,13 @@ struct CpuSolver {
   bool Solve() {
     std::cout << "Populating the Quadratic solver" << std::endl;
 
-    const VCIndex nUnkonwns = 4 * pFormula_->nVars_; // x, u, v, s
+    const VCIndex nUnkonwns = 3 * pFormula_->nVars_; // x, u, v
     const VCIndex nRanges = 2 * pFormula_->nVars_;
     const VCIndex startU = pFormula_->nVars_;
     const VCIndex startV = 2 * pFormula_->nVars_;
-    const VCIndex startS = 3 * pFormula_->nVars_;
-    const VCIndex startR1 = 4 * pFormula_->nVars_;
-    const VCIndex startR2 = 5 * pFormula_->nVars_;
+    const VCIndex startR1 = 3 * pFormula_->nVars_;
+    const VCIndex startR2 = 4 * pFormula_->nVars_;
+    //const VCIndex startS = 3 * pFormula_->nVars_;
 
     std::vector<OSQPFloat> optL, optH, optQ(nUnkonwns, 0), initX;
 
@@ -103,11 +103,13 @@ struct CpuSolver {
       // u
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
         smtP.emplace_back(startU+i, startU+i, 0);
+        // u*v --> min
+        smtP.emplace_back(startU+i, startV+i, 1);
         smtA.emplace_back(pFormula_->nClauses_ + startU + i, startU + i, 1); // u[i]
         smtA.emplace_back(pFormula_->nClauses_ + startU + i, startV + i, 1); // v[i]
-        smtA.emplace_back(pFormula_->nClauses_ + startU + i, startS + i, -2);
-        optL.emplace_back(2);
-        optH.emplace_back(2);
+//        smtA.emplace_back(pFormula_->nClauses_ + startU + i, startS + i, -2);
+        optL.emplace_back(4);
+        optH.emplace_back(4);
         const double x = (pFormula_->ans_[i+1] ? 1 : -1);
         initX.emplace_back((x-1)*(x-1));
       }
@@ -122,24 +124,25 @@ struct CpuSolver {
         const double x = (pFormula_->ans_[i+1] ? 1 : -1);
         initX.emplace_back((x+1)*(x+1));
       }
-      // s
-      for(VCIndex i=0; i<pFormula_->nVars_; i++) {
-        smtP.emplace_back(startS+i, startS+i, 2);
-        // s*s - 2*s --> min
-        optQ[startS+i] = -2;
-        smtA.emplace_back(pFormula_->nClauses_ + startS + i, startS + i, 1);
-        optL.emplace_back(0);
-        optH.emplace_back(1);
-        const double x = (pFormula_->ans_[i+1] ? 1 : -1);
-        initX.emplace_back(1); // s == x*x
-      }
-      // r1
+      // // s
+      // for(VCIndex i=0; i<pFormula_->nVars_; i++) {
+      //   smtP.emplace_back(startS+i, startS+i, 2);
+      //   // s*s - 2*s --> min
+      //   optQ[startS+i] = -2;
+      //   smtA.emplace_back(pFormula_->nClauses_ + startS + i, startS + i, 1);
+      //   optL.emplace_back(0);
+      //   optH.emplace_back(1);
+      //   const double x = (pFormula_->ans_[i+1] ? 1 : -1);
+      //   initX.emplace_back(1); // s == x*x
+      // }
+
+      // r1: u range
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
         smtA.emplace_back(pFormula_->nClauses_ + startR1 + i, startU + i, 1);
         optL.emplace_back(0);
         optH.emplace_back(4);
       }
-      // r2
+      // r2: v range
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
         smtA.emplace_back(pFormula_->nClauses_ + startR2 + i, startV + i, 1);
         optL.emplace_back(0);
@@ -191,6 +194,7 @@ struct CpuSolver {
       return false;
     }
 
+    assert(initX.size() == nUnkonwns);
     osqp_warm_start(solver, initX.data(), nullptr);
 
     osqp_solve(solver);
@@ -217,7 +221,8 @@ struct CpuSolver {
         setTrue = (val >= 0);
         nUnint++;
         std::cout << " " << i+1 << ":x" << "=" << val << ",u=" << solver->solution->x[startU+i]
-          << ",v=" << solver->solution->x[startV+i] << ",s=" << solver->solution->x[startS+i];
+          << ",v=" << solver->solution->x[startV+i] // << ",s=" << solver->solution->x[startS+i];
+          << " ";
       }
       VCIndex aVar = i+1;
       if(pFormula_->ans_[aVar] != setTrue) {
