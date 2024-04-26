@@ -128,10 +128,9 @@ struct CpuSolver {
         nConstraints++;
 
         smtA.emplace_back(nConstraints, nUnknowns, 1); // t
-        smtA.emplace_back(nConstraints, nUnknowns+2, 1); // v
-        smtA.emplace_back(nConstraints, -i, 1); // -x
-        optL.emplace_back(-1);
-        optH.emplace_back(-1);
+        smtA.emplace_back(nConstraints, nUnknowns+1, 1); // u
+        optL.emplace_back(-2);
+        optH.emplace_back(-2);
         nConstraints++;
 
         smtA.emplace_back(nConstraints, nUnknowns+2, 1); // v
@@ -139,8 +138,8 @@ struct CpuSolver {
         optH.emplace_back(1);
         nConstraints++;
 
-        optQ.emplace_back(1); // t
-        optQ.emplace_back(1); // u
+        optQ.emplace_back(0); // t
+        optQ.emplace_back(0); // u
         optQ.emplace_back(1); // v
         const double x = (pFormula_->ans_[i+1] ? 1 : -1);
         initX.emplace_back(x - 1); // t --> x-1
