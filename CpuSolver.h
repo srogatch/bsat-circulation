@@ -81,7 +81,7 @@ struct CpuSolver {
         optH.emplace_back(+1);
         //smtP.emplace_back(nUnknowns, nUnknowns, 0);
         initX.emplace_back(pFormula_->ans_[aVar] ? 1 : -1);
-        optQ.emplace_back(1); // don't optimize x
+        optQ.emplace_back(0); // don't optimize x
         nUnknowns++;
         nConstraints++;
       }
@@ -107,7 +107,7 @@ struct CpuSolver {
         optH.emplace_back( pFormula_->clause2var_.ArcCount(aClause)*2 - 1 );
         nConstraints++;
 
-        optQ.emplace_back(1);
+        optQ.emplace_back(0); // don't optimize c
         initX.emplace_back(clauseSum);
         nUnknowns++;
       }
