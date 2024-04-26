@@ -106,10 +106,31 @@ struct CpuSolver {
         optL.emplace_back(-INFINITY);
         optH.emplace_back( pFormula_->clause2var_.ArcCount(aClause)*2 - 1 );
         nConstraints++;
-
         optQ.emplace_back(1);
         initX.emplace_back(clauseSum);
         nUnknowns++;
+      }
+
+      for(VCIndex i=0; i<pFormula_->nVars_; i++) {
+        smtA.emplace_back(nConstraints, nUnknowns, 1); // y
+        smtA.emplace_back(nConstraints, i, 1); // x
+        optL.emplace_back(1);
+        optH.emplace_back(1);
+        optQ.emplace_back(0);
+        initX.emplace_back(1 - (pFormula_->ans_[i+1] ? 1 : -1));
+        nConstraints++;
+        nUnknowns++;
+
+        smtA.emplace_back(nConstraints, nUnknowns, 1); // z
+        smtA.emplace_back(nConstraints, i, -1); // x
+        optL.emplace_back(1);
+        optH.emplace_back(1);
+        optQ.emplace_back(0);
+        initX.emplace_back(1 + (pFormula_->ans_[i+1] ? 1 : -1));
+        nConstraints++;
+        nUnknowns++;
+
+        smtP.emplace_back(nUnknowns-2, nUnknowns-1, 1);
       }
 
       optA = triplesToCSC(smtA, nConstraints, nUnknowns);
