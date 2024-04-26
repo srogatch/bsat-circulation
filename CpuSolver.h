@@ -98,8 +98,8 @@ struct CpuSolver {
           }
         }
         smtA.emplace_back(nConstraints, nUnknowns, -1); // c[i]
-        optL.emplace_back(pFormula_->clause2var_.ArcCount(aClause));
-        optH.emplace_back(pFormula_->clause2var_.ArcCount(aClause));
+        optL.emplace_back(-pFormula_->clause2var_.ArcCount(aClause));
+        optH.emplace_back(-pFormula_->clause2var_.ArcCount(aClause));
         nConstraints++;
 
         smtA.emplace_back(nConstraints, nUnknowns, 1);
