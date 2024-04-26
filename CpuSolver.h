@@ -120,32 +120,22 @@ struct CpuSolver {
         optH.emplace_back(0);
         nConstraints++;
 
-        smtA.emplace_back(nConstraints, nUnknowns+1, 1); // u
-        smtA.emplace_back(nConstraints, nUnknowns+2, 1); // v
-        smtA.emplace_back(nConstraints, i, 1); // x
-        optL.emplace_back(-1);
-        optH.emplace_back(-1);
-        nConstraints++;
-
-        smtA.emplace_back(nConstraints, nUnknowns, 1); // t
-        smtA.emplace_back(nConstraints, nUnknowns+1, 1); // u
+        smtA.emplace_back(nConstraints, nUnknowns, 1);
         optL.emplace_back(-2);
-        optH.emplace_back(-2);
+        optH.emplace_back(2);
         nConstraints++;
 
-        smtA.emplace_back(nConstraints, nUnknowns+2, 1); // v
-        optL.emplace_back(-1);
-        optH.emplace_back(1);
+        smtA.emplace_back(nConstraints, nUnknowns+1, 1);
+        optL.emplace_back(-2);
+        optH.emplace_back(0);
         nConstraints++;
 
-        optQ.emplace_back(0); // t
-        optQ.emplace_back(0); // u
-        optQ.emplace_back(1); // v
+        optQ.emplace_back(1); // t
+        optQ.emplace_back(1); // u
         const double x = (pFormula_->ans_[i+1] ? 1 : -1);
         initX.emplace_back(x - 1); // t --> x-1
         initX.emplace_back(-x - 1); // u --> -x-1
-        initX.emplace_back(0); // v --> 0
-        nUnknowns+=3;
+        nUnknowns+=2;
       }
 
       optA = triplesToCSC(smtA, nConstraints, nUnknowns);
