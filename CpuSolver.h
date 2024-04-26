@@ -127,6 +127,13 @@ struct CpuSolver {
         optH.emplace_back(-1);
         nConstraints++;
 
+        smtA.emplace_back(nConstraints, nUnknowns, 1); // t
+        smtA.emplace_back(nConstraints, nUnknowns+2, 1); // v
+        smtA.emplace_back(nConstraints, -i, 1); // -x
+        optL.emplace_back(-1);
+        optH.emplace_back(-1);
+        nConstraints++;
+
         smtA.emplace_back(nConstraints, nUnknowns+2, 1); // v
         optL.emplace_back(-1);
         optH.emplace_back(1);
