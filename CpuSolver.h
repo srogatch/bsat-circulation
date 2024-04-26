@@ -70,72 +70,41 @@ struct CpuSolver {
     VCIndex nUnknowns = 0;
 
     std::vector<OSQPFloat> optL, optH, optQ, initX;
+    const double k = pow(2, 1.0 / pFormula_->nVars_);
 
     CSCMatrix optA, optP;
     {
       std::vector<SpMatTriple> smtA, smtP;
       // x
-      for(VCIndex aVar=1; aVar<=pFormula_->nVars_; aVar++) {
+      for(VCIndex i=0; i<pFormula_->nVars_; i++) {
+        const VCIndex aVar = i+1;
         smtA.emplace_back(nConstraints, nUnknowns, 1);
-        optL.emplace_back(-1);
-        optH.emplace_back(+1);
-        //smtP.emplace_back(nUnknowns, nUnknowns, 0);
-        initX.emplace_back(pFormula_->ans_[aVar] ? 1 : -1);
+        optL.emplace_back( pow(k, i) );
+        optH.emplace_back( pow(k, i+0.5) );
+        // Make sure it distinguishes
+        const double middle = pow(k, i+0.25);
+        assert(optL.back() < middle && middle < optH.back());
+        initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
         optQ.emplace_back(0); // don't optimize x
         nUnknowns++;
         nConstraints++;
       }
 
       for(VCIndex aClause=1; aClause<=pFormula_->nClauses_; aClause++) {
-        int64_t clauseSum = 0;
+        double clauseSum = 0;
         for(int8_t sign=-1; sign<=1; sign+=2) {
           const VCIndex nArcs = pFormula_->clause2var_.ArcCount(aClause, sign);
           for(VCIndex j=0; j<nArcs; j++) {
             const VCIndex iVar = pFormula_->clause2var_.GetTarget(aClause, sign, j);
             const VCIndex aVar = llabs(iVar);
-            smtA.emplace_back(nConstraints, aVar-1, -Signum(iVar));
-            clauseSum += 1 - (pFormula_->ans_[aVar] ? 1 : -1);
+            const double middle = pow(k, aVar-1 + 0.25);
+            smtA.emplace_back(nConstraints, aVar-1, Signum(iVar));
+            clauseSum += iVar > 0 ? -middle : middle;
           }
         }
-        smtA.emplace_back(nConstraints, nUnknowns, -1); // c[i]
-        optL.emplace_back(-pFormula_->clause2var_.ArcCount(aClause));
-        optH.emplace_back(-pFormula_->clause2var_.ArcCount(aClause));
+        optL.emplace_back(clauseSum);
+        optH.emplace_back(INFINITY);
         nConstraints++;
-
-        smtA.emplace_back(nConstraints, nUnknowns, 1);
-        optL.emplace_back(0);
-        optH.emplace_back( pFormula_->clause2var_.ArcCount(aClause)*2 - 1 );
-        nConstraints++;
-
-        optQ.emplace_back(0); // don't optimize c
-        initX.emplace_back(clauseSum);
-        nUnknowns++;
-      }
-
-      for(VCIndex i=0; i<pFormula_->nVars_; i++) {
-        smtA.emplace_back(nConstraints, nUnknowns, 1); // t
-        smtA.emplace_back(nConstraints, nUnknowns+1, -1); // u
-        smtA.emplace_back(nConstraints, i, -2); // x
-        optL.emplace_back(0);
-        optH.emplace_back(0);
-        nConstraints++;
-
-        smtA.emplace_back(nConstraints, nUnknowns, 1);
-        optL.emplace_back(-2);
-        optH.emplace_back(2);
-        nConstraints++;
-
-        smtA.emplace_back(nConstraints, nUnknowns+1, 1);
-        optL.emplace_back(-2);
-        optH.emplace_back(0);
-        nConstraints++;
-
-        optQ.emplace_back(1); // t
-        optQ.emplace_back(1); // u
-        const double x = (pFormula_->ans_[i+1] ? 1 : -1);
-        initX.emplace_back(x - 1); // t --> x-1
-        initX.emplace_back(-x - 1); // u --> -x-1
-        nUnknowns+=2;
       }
 
       optA = triplesToCSC(smtA, nConstraints, nUnknowns);
@@ -196,23 +165,8 @@ struct CpuSolver {
       goto cleanup;
     }
     for(VCIndex i=0; i<pFormula_->nVars_; i++) {
-      const double val = solver->solution->x[i];
-      if( !(-1-eps <= val && val <= 1+eps) ) {
-        std::cout << " Rx" << i+1 << "=" << val << " ";
-      }
-      bool setTrue;
-      if(val >= 1.0-eps) {
-        setTrue = true;
-      } else if(val <= -1+eps) {
-        setTrue = false;
-      } else {
-        //std::cout << "Solution at var " << i+1 << " is not integer." << std::endl;
-        setTrue = (val >= 0);
-        nUnint++;
-        std::cout << " " << i+1 << ":x" << "=" << val //<< ",u=" << solver->solution->x[startU+i]
-          //<< ",v=" << solver->solution->x[startV+i] // << ",s=" << solver->solution->x[startS+i];
-          << " ";
-      }
+      const double val = solver->solution->x[i] - pow(k, i+0.25);
+      const bool setTrue = (val > -0);
       VCIndex aVar = i+1;
       if(pFormula_->ans_[aVar] != setTrue) {
         pFormula_->ans_.Flip(aVar);
