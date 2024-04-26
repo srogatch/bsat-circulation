@@ -93,14 +93,16 @@ struct CpuSolver {
       for(VCIndex aClause=1; aClause<=pFormula_->nClauses_; aClause++) {
         double clauseSum = 0;
         for(int8_t sign=-1; sign<=1; sign+=2) {
+          double locSum = 0;
           const VCIndex nArcs = pFormula_->clause2var_.ArcCount(aClause, sign);
           for(VCIndex j=0; j<nArcs; j++) {
             const VCIndex iVar = pFormula_->clause2var_.GetTarget(aClause, sign, j);
             const VCIndex aVar = llabs(iVar);
             const double middle = pow(k, aVar-1 + 0.25);
             smtA.emplace_back(nConstraints, aVar-1, Signum(iVar));
-            clauseSum += iVar > 0 ? -middle : middle;
+            locSum += iVar > 0 ? -middle : middle;
           }
+          clauseSum += locSum;
         }
         optL.emplace_back(clauseSum);
         optH.emplace_back(INFINITY);
