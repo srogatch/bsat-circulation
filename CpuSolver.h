@@ -106,31 +106,35 @@ struct CpuSolver {
         optL.emplace_back(-INFINITY);
         optH.emplace_back( pFormula_->clause2var_.ArcCount(aClause)*2 - 1 );
         nConstraints++;
+
         optQ.emplace_back(1);
         initX.emplace_back(clauseSum);
         nUnknowns++;
       }
 
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
-        smtA.emplace_back(nConstraints, nUnknowns, 1); // y
+        smtA.emplace_back(nConstraints, nUnknowns, 1); // t
+        smtA.emplace_back(nConstraints, nUnknowns+1, -1); // u
+        smtA.emplace_back(nConstraints, i, -2); // x
+        optL.emplace_back(0);
+        optH.emplace_back(0);
+        nConstraints++;
+
+        smtA.emplace_back(nConstraints, nUnknowns+1, 1); // u
+        smtA.emplace_back(nConstraints, nUnknowns+2, 1); // v
         smtA.emplace_back(nConstraints, i, 1); // x
-        optL.emplace_back(1);
-        optH.emplace_back(1);
-        optQ.emplace_back(0);
-        initX.emplace_back(1 - (pFormula_->ans_[i+1] ? 1 : -1));
+        optL.emplace_back(-1);
+        optH.emplace_back(-1);
         nConstraints++;
-        nUnknowns++;
 
-        smtA.emplace_back(nConstraints, nUnknowns, 1); // z
-        smtA.emplace_back(nConstraints, i, -1); // x
-        optL.emplace_back(1);
-        optH.emplace_back(1);
-        optQ.emplace_back(0);
-        initX.emplace_back(1 + (pFormula_->ans_[i+1] ? 1 : -1));
-        nConstraints++;
-        nUnknowns++;
-
-        smtP.emplace_back(nUnknowns-2, nUnknowns-1, 1);
+        optQ.emplace_back(1); // t
+        optQ.emplace_back(1); // u
+        optQ.emplace_back(1); // v
+        const double x = (pFormula_->ans_[i+1] ? 1 : -1);
+        initX.emplace_back(x - 1); // t --> x-1
+        initX.emplace_back(-x - 1); // u --> -x-1
+        initX.emplace_back(0); // v --> 0
+        nUnknowns+=3;
       }
 
       optA = triplesToCSC(smtA, nConstraints, nUnknowns);
