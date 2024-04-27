@@ -70,7 +70,7 @@ struct CpuSolver {
     VCIndex nUnknowns = 0;
 
     std::vector<OSQPFloat> optL, optH, optQ, initX;
-    const double k = pow(2, 1.0 / pFormula_->nVars_);
+    const double k = pow(exp2(40), 1.0 / pFormula_->nVars_);
 
     CSCMatrix optA, optP;
     {
@@ -79,13 +79,13 @@ struct CpuSolver {
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
         const VCIndex aVar = i+1;
         smtA.emplace_back(nConstraints, nUnknowns, 1);
-        optL.emplace_back( pow(k, i) );
-        optH.emplace_back( pow(k, i+0.5) );
+        optL.emplace_back( pow(k, i+1) );
+        optH.emplace_back( pow(k, i+1.5) );
         // Make sure it distinguishes
-        const double middle = pow(k, i+0.25);
+        const double middle = pow(k, i+1.25);
         assert(optL.back() < middle && middle < optH.back());
         initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
-        optQ.emplace_back(0); // don't optimize x
+        optQ.emplace_back(1.0 / middle);
         nUnknowns++;
         nConstraints++;
       }
@@ -98,7 +98,7 @@ struct CpuSolver {
           for(VCIndex j=0; j<nArcs; j++) {
             const VCIndex iVar = pFormula_->clause2var_.GetTarget(aClause, sign, j);
             const VCIndex aVar = llabs(iVar);
-            const double middle = pow(k, aVar-1 + 0.25);
+            const double middle = pow(k, aVar + 0.25);
             smtA.emplace_back(nConstraints, aVar-1, Signum(iVar));
             locSum += iVar > 0 ? -middle : middle;
           }
@@ -139,8 +139,8 @@ struct CpuSolver {
     //settings->time_limit = 500;
     settings->max_iter = 1000 * 1000 * 1000;
     settings->rho = 1.49e+2; //1.87;
-    settings->eps_abs = 1e-4; //1.0 / pFormula_->nClauses_;
-    settings->eps_rel = 1e-4; //1.0 / pFormula_->nClauses_;
+    settings->eps_abs = 1.0 / pFormula_->nClauses_;
+    settings->eps_rel = 1.0 / pFormula_->nClauses_;
     //settings->rho
     settings->polishing = 1;
 
