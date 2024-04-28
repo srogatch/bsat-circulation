@@ -173,8 +173,8 @@ struct CpuSolver {
     //settings->time_limit = 500;
     settings->max_iter = 2 * 1000 * OSQPInt(1000) * 1000;
     settings->rho = 1.49e+2; //1.87;
-    settings->eps_abs = eps / 10; //exp2(-cnVarsAtOnce);
-    settings->eps_rel = eps / 10; //exp2(-cnVarsAtOnce);
+    settings->eps_abs = 1e-9; //exp2(-cnVarsAtOnce);
+    settings->eps_rel = 1e-9; //exp2(-cnVarsAtOnce);
     //settings->rho
     settings->polishing = 1;
 
