@@ -173,8 +173,8 @@ struct CpuSolver {
     //settings->time_limit = 500;
     settings->max_iter = 2 * 1000 * OSQPInt(1000) * 1000;
     settings->rho = 1.49e+2; //1.87;
-    settings->eps_abs = 1e-9; //exp2(-cnVarsAtOnce);
-    settings->eps_rel = 1e-9; //exp2(-cnVarsAtOnce);
+    settings->eps_abs = 1e-6; //exp2(-cnVarsAtOnce);
+    settings->eps_rel = 1e-6; //exp2(-cnVarsAtOnce);
     //settings->rho
     settings->polishing = 1;
 
@@ -191,6 +191,13 @@ struct CpuSolver {
     osqp_warm_start(solver, initX.data(), nullptr);
     osqp_solve(solver);
 
+    std::unordered_map<VCIndex, double> cnfToSol;
+    auto absLess = [&](const VCIndex a, const VCIndex b) -> bool {
+      if(abs(cnfToSol[a]) != abs(cnfToSol[b])) {
+        return abs(cnfToSol[a]) < abs(cnfToSol[b]);
+      }
+      return a < b;
+    };
     bool maybeSat = true;
     if (solver->info->status_val != OSQP_SOLVED && solver->info->status_val != OSQP_SOLVED_INACCURATE) {
       maybeSat = false;
@@ -217,6 +224,7 @@ struct CpuSolver {
         setTrue = val > -0;
       }
       const VCIndex aVar = vUnknowns[i];
+      cnfToSol[aVar] = val;
       if(pFormula_->ans_[aVar] != setTrue) {
         pFormula_->ans_.Flip(aVar);
       }
@@ -225,6 +233,8 @@ struct CpuSolver {
         nUndef++;
       }
     }
+    std::sort(vUnknowns.begin(), vUnknowns.begin()+nUndef, absLess);
+    std::sort(vUnknowns.begin()+nUndef, vUnknowns.end(), absLess);
 
 cleanup:
     osqp_cleanup(solver);
