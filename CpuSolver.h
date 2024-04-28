@@ -79,13 +79,13 @@ struct CpuSolver {
       for(VCIndex i=0; i<pFormula_->nVars_; i++) {
         const VCIndex aVar = i+1;
         smtA.emplace_back(nConstraints, nUnknowns, 1);
-        optL.emplace_back( pow(k, i+1) );
-        optH.emplace_back( pow(k, i+1.5) );
+        optL.emplace_back( 0 );
+        optH.emplace_back( 1 );
         // Make sure it distinguishes
-        const double middle = pow(k, i+1.25);
+        const double middle = 0.5;
         assert(optL.back() < middle && middle < optH.back());
         initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
-        optQ.emplace_back(1.0 / middle);
+        optQ.emplace_back(1);
         nUnknowns++;
         nConstraints++;
       }
@@ -98,13 +98,13 @@ struct CpuSolver {
           for(VCIndex j=0; j<nArcs; j++) {
             const VCIndex iVar = pFormula_->clause2var_.GetTarget(aClause, sign, j);
             const VCIndex aVar = llabs(iVar);
-            const double middle = pow(k, aVar + 0.25);
-            smtA.emplace_back(nConstraints, aVar-1, Signum(iVar));
-            locSum += iVar > 0 ? -middle : middle;
+            const double coeff = pow(k, aVar);
+            smtA.emplace_back(nConstraints, aVar-1, coeff * Signum(iVar));
+            locSum += iVar > 0 ? 0 : coeff;
           }
           clauseSum += locSum;
         }
-        optL.emplace_back(clauseSum);
+        optL.emplace_back(clauseSum + 0.5);
         optH.emplace_back(INFINITY);
         nConstraints++;
       }
