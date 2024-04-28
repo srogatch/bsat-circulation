@@ -243,6 +243,7 @@ cleanup:
         return false; // unsatisfiable
       }
     }
+    std::cout << "!!!SATISFIED!!!" << std::endl;
 
     std::atomic<VCIndex> totSat = 0;
     // This is just for debugging, otherwise Formula::CountUnsat() would work
