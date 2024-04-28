@@ -10,9 +10,9 @@ struct SpMatTriple {
   VCIndex col_;
   double val_;
 
-  SpMatTriple(const VCIndex aClause, const VCIndex aVar, const double val) {
-    row_ = aClause;
-    col_ = aVar;
+  SpMatTriple(const VCIndex row, const VCIndex col, const double val) {
+    row_ = row;
+    col_ = col;
     val_ = val;
   }
 };
@@ -59,54 +59,70 @@ CSCMatrix triplesToCSC(std::vector<SpMatTriple> &triples, OSQPInt rows, OSQPInt 
 }
 
 struct CpuSolver {
+  static constexpr const VCIndex cnVarsAtOnce = 1;
   Formula *pFormula_;
 
   explicit CpuSolver(Formula& formula) : pFormula_(&formula) { }
 
-  bool Solve() {
-    std::cout << "Populating the Quadratic solver" << std::endl;
+  bool TailSolve(const VCIndex iFirstUnknown, VCIndex& nextVar) {
+    const VCIndex limVar = std::min(iFirstUnknown+cnVarsAtOnce, pFormula_->nVars_);
+    std::cout << "Known vars: " << iFirstUnknown << std::endl;
 
     VCIndex nConstraints = 0;
     VCIndex nUnknowns = 0;
 
     std::vector<OSQPFloat> optL, optH, optQ, initX;
-    const double k = pow(exp2(40), 1.0 / pFormula_->nVars_);
-
     CSCMatrix optA, optP;
     {
       std::vector<SpMatTriple> smtA, smtP;
       // x
-      for(VCIndex i=0; i<pFormula_->nVars_; i++) {
+      for(VCIndex i=iFirstUnknown; i<pFormula_->nVars_; i++) {
         const VCIndex aVar = i+1;
         smtA.emplace_back(nConstraints, nUnknowns, 1);
-        optL.emplace_back( 0 );
+        optL.emplace_back( -1 );
         optH.emplace_back( 1 );
-        // Make sure it distinguishes
-        const double middle = 0.5;
-        assert(optL.back() < middle && middle < optH.back());
         initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
-        optQ.emplace_back(1);
+        const VCIndex j = i - iFirstUnknown;
+        if(j < cnVarsAtOnce) {
+          optQ.emplace_back(exp2(cnVarsAtOnce-j-1));
+        } else {
+          optQ.emplace_back(0);
+        }
         nUnknowns++;
         nConstraints++;
       }
 
       for(VCIndex aClause=1; aClause<=pFormula_->nClauses_; aClause++) {
-        double clauseSum = 0;
-        for(int8_t sign=-1; sign<=1; sign+=2) {
-          double locSum = 0;
+        bool satisfied = false;
+        int64_t nActive = 0;
+        for(int8_t sign=-1; sign<=1 && !satisfied; sign+=2) {
           const VCIndex nArcs = pFormula_->clause2var_.ArcCount(aClause, sign);
           for(VCIndex j=0; j<nArcs; j++) {
             const VCIndex iVar = pFormula_->clause2var_.GetTarget(aClause, sign, j);
             const VCIndex aVar = llabs(iVar);
-            const double coeff = pow(k, aVar);
-            smtA.emplace_back(nConstraints, aVar-1, coeff * Signum(iVar));
-            locSum += iVar > 0 ? 0 : coeff;
+            const VCIndex iUnknown = aVar - 1 - iFirstUnknown;
+            assert(Signum(iVar) == sign);
+            if(iUnknown >= 0) {
+              smtA.emplace_back(nConstraints, iUnknown, sign);
+              nActive++;
+            } else {
+              if( (pFormula_->ans_[aVar] ? 1 : -1) == sign ) {
+                satisfied = true;
+                break;
+              }
+            }
           }
-          clauseSum += locSum;
         }
-        optL.emplace_back(clauseSum + 0.5);
-        optH.emplace_back(INFINITY);
-        nConstraints++;
+        if(satisfied) {
+          while(!smtA.empty() && smtA.back().row_ == nConstraints) {
+            smtA.pop_back();
+          }
+        }
+        else {
+          optL.emplace_back(2 - nActive);
+          optH.emplace_back(INFINITY);
+          nConstraints++;
+        }
       }
 
       optA = triplesToCSC(smtA, nConstraints, nUnknowns);
@@ -132,15 +148,17 @@ struct CpuSolver {
     osqpA->i = optA.row_indices.data();
     osqpA->p = optA.col_ptrs.data();
 
+    constexpr const double eps = 1e-3;
+
     // Problem settings
     std::unique_ptr<OSQPSettings> settings(new OSQPSettings);
     osqp_set_default_settings(settings.get());
     settings->alpha = 1.0; // Over-relaxation parameter (you can tune this)
     //settings->time_limit = 500;
-    settings->max_iter = 1000 * 1000 * 1000;
+    settings->max_iter = 2 * 1000 * OSQPInt(1000) * 1000;
     settings->rho = 1.49e+2; //1.87;
-    settings->eps_abs = 1.0 / pFormula_->nClauses_;
-    settings->eps_rel = 1.0 / pFormula_->nClauses_;
+    settings->eps_abs = eps / 10;
+    settings->eps_rel = eps / 10;
     //settings->rho
     settings->polishing = 1;
 
@@ -158,30 +176,42 @@ struct CpuSolver {
     osqp_warm_start(solver, initX.data(), nullptr);
 
     osqp_solve(solver);
-    constexpr const double eps = 1e-3;
     VCIndex nUnint = 0;
-    std::atomic<VCIndex> totSat = 0;
 
+    bool maybeSat = true;
     if (solver->info->status_val != OSQP_SOLVED && solver->info->status_val != OSQP_SOLVED_INACCURATE) {
-      std::cout << "UNSATISFIABLE" << std::endl;
+      maybeSat = false;
       goto cleanup;
     }
-    for(VCIndex i=0; i<pFormula_->nVars_; i++) {
-      const double val = solver->solution->x[i] - pow(k, i+0.25);
-      const bool setTrue = (val > -0);
+    nextVar = limVar;
+    for(VCIndex i=iFirstUnknown; i<limVar; i++) {
+      const double val = solver->solution->x[i-iFirstUnknown];
+      const bool setTrue = (val > -1 + eps);
       VCIndex aVar = i+1;
       if(pFormula_->ans_[aVar] != setTrue) {
         pFormula_->ans_.Flip(aVar);
       }
+      if(setTrue) {
+        nextVar = i+1;
+        break;
+      }
     }
-    if(nUnint == 0) {
-      std::cout << "SATISFIABLE" << std::endl;
-    }
-    else {
-      std::cout << "\nnUnint=" << nUnint << std::endl;
-      std::cout << "UNKNOWN" << std::endl;
-    }
+cleanup:
+    osqp_cleanup(solver);
+    return maybeSat;
+  }
 
+  bool Solve() {
+    VCIndex nextVar = 0;
+    for(VCIndex i=0; i<pFormula_->nVars_; i=nextVar) {
+      if(!TailSolve(i, nextVar)) {
+        std::cout << "UNSATISFIABLE" << std::endl;
+        return false; // unsatisfiable
+      }
+      assert(nextVar > i);
+    }
+    std::atomic<VCIndex> totSat = 0;
+    // This is just for debugging, otherwise Formula::CountUnsat() would work
     #pragma omp parallel for schedule(guided, kRamPageBytes)
     for(VCIndex iClause=1; iClause<=pFormula_->nClauses_; iClause++) {
       if(pFormula_->dummySat_[iClause]) {
@@ -210,8 +240,6 @@ struct CpuSolver {
       std::cout << "Verification failed: " << nUnsat << " unsatisfied clauses." << std::endl;
     }
 
-cleanup:
-    osqp_cleanup(solver);
     return true;
   }
 };
