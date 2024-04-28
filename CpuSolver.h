@@ -78,6 +78,7 @@ struct CpuSolver {
       // x
       for(VCIndex i=iFirstUnknown; i<pFormula_->nVars_; i++) {
         const VCIndex aVar = i+1;
+        smtP.emplace_back(nUnknowns, nUnknowns, 0);
         smtA.emplace_back(nConstraints, nUnknowns, 1);
         optL.emplace_back( -1 );
         optH.emplace_back( 1 );
