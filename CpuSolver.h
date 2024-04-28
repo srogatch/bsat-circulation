@@ -63,8 +63,8 @@ struct CpuSolver {
 
   explicit CpuSolver(Formula& formula) : pFormula_(&formula) { }
 
-  bool TailSolve(VCTrackingSet& unknowns) {
-    std::cout << "Unknown vars: " << unknowns.Size() << std::endl;
+  bool TailSolve(std::vector<VCIndex> &vUnknowns, VCIndex& nUndef) {
+    std::cout << "Undefined vars: " << nUndef << std::endl;
 
     VCIndex nConstraints = 0;
     VCIndex nUnknowns = 0;
@@ -73,7 +73,6 @@ struct CpuSolver {
     CSCMatrix optA, optP;
     int64_t nUnsatClauses = 0;
     std::unordered_map<VCIndex, VCIndex> cnfToIneqVars;
-    std::vector<VCIndex> vUnknowns = unknowns.ToVector();
 
     {
       std::vector<SpMatTriple> smtA, smtP;
@@ -86,8 +85,8 @@ struct CpuSolver {
         optL.emplace_back( -1 );
         optH.emplace_back( 1 );
         initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
-        //optQ.emplace_back(exp2(-2*i));
-        optQ.emplace_back(0);
+        optQ.emplace_back(exp2(-2*i) * (pFormula_->ans_[aVar] ? -1 : 1));
+        //optQ.emplace_back(0);
         nUnknowns++;
         nConstraints++;
       }
@@ -133,8 +132,10 @@ struct CpuSolver {
           optH.emplace_back(INFINITY);
           nConstraints++;
 
-          smtP.emplace_back(nUnknowns, nUnknowns, 2);
-          optQ.emplace_back(-2 * lowBound);
+          //smtP.emplace_back(nUnknowns, nUnknowns, 2);
+          //optQ.emplace_back(-2 * lowBound);
+          smtP.emplace_back(nUnknowns, nUnknowns, 0);
+          optQ.emplace_back(0);
           initX.emplace_back(0);
           nUnknowns++;
         }
@@ -201,14 +202,14 @@ struct CpuSolver {
       const double val = solver->solution->x[i];
       std::cout << " v" << vUnknowns[i] << "=" << val << " ";
     }
-
+    nUndef = 0;
     for(VCIndex i=0; i<vUnknowns.size(); i++) {
       const double val = solver->solution->x[i];
       bool isDef, setTrue;
-      if(val > eps) {
+      if(val >= 1-eps) {
         isDef = true;
         setTrue = true;
-      } else if(val < -eps) {
+      } else if(val <= -1+eps) {
         isDef = true;
         setTrue = false;
       } else {
@@ -219,8 +220,9 @@ struct CpuSolver {
       if(pFormula_->ans_[aVar] != setTrue) {
         pFormula_->ans_.Flip(aVar);
       }
-      if(isDef) {
-        unknowns.Remove(aVar);
+      if(!isDef) {
+        std::swap(vUnknowns[i], vUnknowns[nUndef]);
+        nUndef++;
       }
     }
 
@@ -230,13 +232,13 @@ cleanup:
   }
 
   bool Solve() {
-    VCTrackingSet unknowns;
+    std::vector<VCIndex> unknowns;
     for(VCIndex i=1; i<=pFormula_->nVars_; i++) {
-      unknowns.Add(i);
+      unknowns.emplace_back(i);
     }
-    while(unknowns.Size() > 0) {
-      VCIndex oldSize = unknowns.Size();
-      if(!TailSolve(unknowns) || oldSize <= unknowns.Size()) {
+    VCIndex nUndef = unknowns.size();
+    while(nUndef > 0) {
+      if(!TailSolve(unknowns, nUndef)) {
         std::cout << "UNSATISFIABLE" << std::endl;
         return false; // unsatisfiable
       }
