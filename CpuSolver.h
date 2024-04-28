@@ -81,12 +81,13 @@ struct CpuSolver {
       for(VCIndex i=0; i<vUnknowns.size(); i++) {
         const VCIndex aVar = vUnknowns[i];
         cnfToIneqVars[aVar] = i;
-        smtP.emplace_back(nUnknowns, nUnknowns, 0);
+        smtP.emplace_back(nUnknowns, nUnknowns, 2);
         smtA.emplace_back(nConstraints, nUnknowns, 1);
         optL.emplace_back( -1 );
         optH.emplace_back( 1 );
         initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
-        optQ.emplace_back(exp2(-2*i));
+        //optQ.emplace_back(exp2(-2*i));
+        optQ.emplace_back(-2);
         nUnknowns++;
         nConstraints++;
       }
@@ -191,10 +192,10 @@ struct CpuSolver {
     for(VCIndex i=0; i<vUnknowns.size(); i++) {
       const double val = solver->solution->x[i];
       bool isDef, setTrue;
-      if(val >= 1.0 - eps) {
+      if(val > eps) {
         isDef = true;
         setTrue = true;
-      } else if(val <= -1.0+eps) {
+      } else if(val < -eps) {
         isDef = true;
         setTrue = false;
       } else {
