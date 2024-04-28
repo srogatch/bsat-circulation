@@ -81,13 +81,13 @@ struct CpuSolver {
       for(VCIndex i=0; i<vUnknowns.size(); i++) {
         const VCIndex aVar = vUnknowns[i];
         cnfToIneqVars[aVar] = i;
-        smtP.emplace_back(nUnknowns, nUnknowns, 2);
+        smtP.emplace_back(nUnknowns, nUnknowns, 0);
         smtA.emplace_back(nConstraints, nUnknowns, 1);
         optL.emplace_back( -1 );
         optH.emplace_back( 1 );
         initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
         //optQ.emplace_back(exp2(-2*i));
-        optQ.emplace_back(-2);
+        optQ.emplace_back(0);
         nUnknowns++;
         nConstraints++;
       }
@@ -120,10 +120,23 @@ struct CpuSolver {
           }
         }
         else {
-          optL.emplace_back(2 - nActive);
+          nUnsatClauses++;
+
+          smtA.emplace_back(nConstraints, nUnknowns, -1);
+          optL.emplace_back(0);
+          optH.emplace_back(0);
+          nConstraints++;
+
+          const double lowBound = 2 - nActive;
+          smtA.emplace_back(nConstraints, nUnknowns, 1);
+          optL.emplace_back(lowBound);
           optH.emplace_back(INFINITY);
           nConstraints++;
-          nUnsatClauses++;
+
+          smtP.emplace_back(nUnknowns, nUnknowns, 2);
+          optQ.emplace_back(-2 * lowBound);
+          initX.emplace_back(0);
+          nUnknowns++;
         }
       }
 
