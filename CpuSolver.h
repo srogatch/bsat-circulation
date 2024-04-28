@@ -59,12 +59,12 @@ CSCMatrix triplesToCSC(std::vector<SpMatTriple> &triples, OSQPInt rows, OSQPInt 
 }
 
 struct CpuSolver {
-  static constexpr const VCIndex cnVarsAtOnce = 1;
+  static constexpr const VCIndex cnVarsAtOnce = 20;
   Formula *pFormula_;
 
   explicit CpuSolver(Formula& formula) : pFormula_(&formula) { }
 
-  bool TailSolve(const VCIndex iFirstUnknown, VCIndex& nextVar) {
+  bool TailSolve(const VCIndex iFirstUnknown, bool& negFirst, VCIndex& nextVar) {
     const VCIndex limVar = std::min(iFirstUnknown+cnVarsAtOnce, pFormula_->nVars_);
     std::cout << "Known vars: " << iFirstUnknown << std::endl;
 
@@ -73,6 +73,7 @@ struct CpuSolver {
 
     std::vector<OSQPFloat> optL, optH, optQ, initX;
     CSCMatrix optA, optP;
+    int64_t nUnsatClauses = 0;
     {
       std::vector<SpMatTriple> smtA, smtP;
       // x
@@ -85,12 +86,15 @@ struct CpuSolver {
         initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
         const VCIndex j = i - iFirstUnknown;
         if(j < cnVarsAtOnce) {
-          optQ.emplace_back(exp2(cnVarsAtOnce-j-1));
+          optQ.emplace_back(exp2(2*(cnVarsAtOnce-j-1)));
         } else {
           optQ.emplace_back(0);
         }
         nUnknowns++;
         nConstraints++;
+      }
+      if(negFirst) {
+        optQ[0] = -optQ[0];
       }
 
       for(VCIndex aClause=1; aClause<=pFormula_->nClauses_; aClause++) {
@@ -123,12 +127,15 @@ struct CpuSolver {
           optL.emplace_back(2 - nActive);
           optH.emplace_back(INFINITY);
           nConstraints++;
+          nUnsatClauses++;
         }
       }
 
       optA = triplesToCSC(smtA, nConstraints, nUnknowns);
       optP = triplesToCSC(smtP, nUnknowns, nUnknowns);
     }
+
+    const double eps = 1e-3; // 0.5 / nUnsatClauses;
 
     // Create CSC matrices for P and A
     std::unique_ptr<OSQPCscMatrix> osqpP(new OSQPCscMatrix);
@@ -149,8 +156,6 @@ struct CpuSolver {
     osqpA->i = optA.row_indices.data();
     osqpA->p = optA.col_ptrs.data();
 
-    constexpr const double eps = 1e-3;
-
     // Problem settings
     std::unique_ptr<OSQPSettings> settings(new OSQPSettings);
     osqp_set_default_settings(settings.get());
@@ -158,8 +163,8 @@ struct CpuSolver {
     //settings->time_limit = 500;
     settings->max_iter = 2 * 1000 * OSQPInt(1000) * 1000;
     settings->rho = 1.49e+2; //1.87;
-    settings->eps_abs = eps / 10;
-    settings->eps_rel = eps / 10;
+    settings->eps_abs = eps / 10; //exp2(-cnVarsAtOnce);
+    settings->eps_rel = eps / 10; //exp2(-cnVarsAtOnce);
     //settings->rho
     settings->polishing = 1;
 
@@ -179,22 +184,43 @@ struct CpuSolver {
     osqp_solve(solver);
     VCIndex nUnint = 0;
 
+    bool prevNegFirst = negFirst;
     bool maybeSat = true;
     if (solver->info->status_val != OSQP_SOLVED && solver->info->status_val != OSQP_SOLVED_INACCURATE) {
       maybeSat = false;
       goto cleanup;
     }
-    nextVar = limVar;
+    // DEBUG
     for(VCIndex i=iFirstUnknown; i<limVar; i++) {
       const double val = solver->solution->x[i-iFirstUnknown];
-      const bool setTrue = (val > -1 + eps);
+      std::cout << " v" << i+1 << "=" << val << " ";
+    }
+    nextVar = limVar;
+    negFirst = false;
+    for(VCIndex i=iFirstUnknown; i<limVar; i++) {
+      const double val = solver->solution->x[i-iFirstUnknown];
+      bool isDef, setTrue;
+      if(i > iFirstUnknown || (i == iFirstUnknown && !prevNegFirst)) {
+        isDef = (val <= -1 + eps);
+        setTrue = false;
+      } else {
+        isDef = (val >= 1 - eps);
+        setTrue = true;
+      }
       VCIndex aVar = i+1;
+      if(!isDef) {
+        std::cout << "v[" << aVar << "] is not definite." << std::endl;
+        if(prevNegFirst && i == iFirstUnknown) {
+          maybeSat = false; // consider unsatisfiable
+        }
+        else {
+          negFirst = true;
+          nextVar = i;
+        }
+        goto cleanup;
+      }
       if(pFormula_->ans_[aVar] != setTrue) {
         pFormula_->ans_.Flip(aVar);
-      }
-      if(setTrue) {
-        nextVar = i+1;
-        break;
       }
     }
 cleanup:
@@ -204,12 +230,12 @@ cleanup:
 
   bool Solve() {
     VCIndex nextVar = 0;
+    bool negFirst = false;
     for(VCIndex i=0; i<pFormula_->nVars_; i=nextVar) {
-      if(!TailSolve(i, nextVar)) {
+      if(!TailSolve(i, negFirst, nextVar)) {
         std::cout << "UNSATISFIABLE" << std::endl;
         return false; // unsatisfiable
       }
-      assert(nextVar > i);
     }
     std::atomic<VCIndex> totSat = 0;
     // This is just for debugging, otherwise Formula::CountUnsat() would work
