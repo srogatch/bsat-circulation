@@ -59,14 +59,12 @@ CSCMatrix triplesToCSC(std::vector<SpMatTriple> &triples, OSQPInt rows, OSQPInt 
 }
 
 struct CpuSolver {
-  static constexpr const VCIndex cnVarsAtOnce = 20;
   Formula *pFormula_;
 
   explicit CpuSolver(Formula& formula) : pFormula_(&formula) { }
 
-  bool TailSolve(const VCIndex iFirstUnknown, bool& negFirst, VCIndex& nextVar) {
-    const VCIndex limVar = std::min(iFirstUnknown+cnVarsAtOnce, pFormula_->nVars_);
-    std::cout << "Known vars: " << iFirstUnknown << std::endl;
+  bool TailSolve(VCTrackingSet& unknowns) {
+    std::cout << "Unknown vars: " << unknowns.Size() << std::endl;
 
     VCIndex nConstraints = 0;
     VCIndex nUnknowns = 0;
@@ -74,27 +72,23 @@ struct CpuSolver {
     std::vector<OSQPFloat> optL, optH, optQ, initX;
     CSCMatrix optA, optP;
     int64_t nUnsatClauses = 0;
+    std::unordered_map<VCIndex, VCIndex> cnfToIneqVars;
+    std::vector<VCIndex> vUnknowns = unknowns.ToVector();
+
     {
       std::vector<SpMatTriple> smtA, smtP;
       // x
-      for(VCIndex i=iFirstUnknown; i<pFormula_->nVars_; i++) {
-        const VCIndex aVar = i+1;
+      for(VCIndex i=0; i<vUnknowns.size(); i++) {
+        const VCIndex aVar = vUnknowns[i];
+        cnfToIneqVars[aVar] = i;
         smtP.emplace_back(nUnknowns, nUnknowns, 0);
         smtA.emplace_back(nConstraints, nUnknowns, 1);
         optL.emplace_back( -1 );
         optH.emplace_back( 1 );
         initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
-        const VCIndex j = i - iFirstUnknown;
-        if(j < cnVarsAtOnce) {
-          optQ.emplace_back(exp2(2*(cnVarsAtOnce-j-1)));
-        } else {
-          optQ.emplace_back(0);
-        }
+        optQ.emplace_back(exp2(-2*i));
         nUnknowns++;
         nConstraints++;
-      }
-      if(negFirst) {
-        optQ[0] = -optQ[0];
       }
 
       for(VCIndex aClause=1; aClause<=pFormula_->nClauses_; aClause++) {
@@ -104,17 +98,18 @@ struct CpuSolver {
           const VCIndex nArcs = pFormula_->clause2var_.ArcCount(aClause, sign);
           for(VCIndex j=0; j<nArcs; j++) {
             const VCIndex iVar = pFormula_->clause2var_.GetTarget(aClause, sign, j);
-            const VCIndex aVar = llabs(iVar);
-            const VCIndex iUnknown = aVar - 1 - iFirstUnknown;
             assert(Signum(iVar) == sign);
-            if(iUnknown >= 0) {
-              smtA.emplace_back(nConstraints, iUnknown, sign);
-              nActive++;
-            } else {
+            const VCIndex aVar = llabs(iVar);
+            auto it = cnfToIneqVars.find(aVar);
+            if(it == cnfToIneqVars.end()) {
               if( (pFormula_->ans_[aVar] ? 1 : -1) == sign ) {
                 satisfied = true;
                 break;
               }
+            } else {
+              const VCIndex iUnknown = it->second;
+              smtA.emplace_back(nConstraints, iUnknown, sign);
+              nActive++;
             }
           }
         }
@@ -177,66 +172,62 @@ struct CpuSolver {
       std::cout << "Inequations solver failed to initialize." << std::endl;
       return false;
     }
-
     assert(initX.size() == nUnknowns);
     osqp_warm_start(solver, initX.data(), nullptr);
-
     osqp_solve(solver);
-    VCIndex nUnint = 0;
 
-    bool prevNegFirst = negFirst;
     bool maybeSat = true;
     if (solver->info->status_val != OSQP_SOLVED && solver->info->status_val != OSQP_SOLVED_INACCURATE) {
       maybeSat = false;
       goto cleanup;
     }
-    // DEBUG
-    for(VCIndex i=iFirstUnknown; i<limVar; i++) {
-      const double val = solver->solution->x[i-iFirstUnknown];
-      std::cout << " v" << i+1 << "=" << val << " ";
+
+    // DEBUG-PRINT
+    for(VCIndex i=0; i<vUnknowns.size(); i++) {
+      const double val = solver->solution->x[i];
+      std::cout << " v" << vUnknowns[i] << "=" << val << " ";
     }
-    nextVar = limVar;
-    negFirst = false;
-    for(VCIndex i=iFirstUnknown; i<limVar; i++) {
-      const double val = solver->solution->x[i-iFirstUnknown];
+
+    for(VCIndex i=0; i<vUnknowns.size(); i++) {
+      const double val = solver->solution->x[i];
       bool isDef, setTrue;
-      if(i > iFirstUnknown || (i == iFirstUnknown && !prevNegFirst)) {
-        isDef = (val <= -1 + eps);
+      if(val >= 1.0 - eps) {
+        isDef = true;
+        setTrue = true;
+      } else if(val <= -1.0+eps) {
+        isDef = true;
         setTrue = false;
       } else {
-        isDef = (val >= 1 - eps);
-        setTrue = true;
+        isDef = false;
+        setTrue = val > -0;
       }
-      VCIndex aVar = i+1;
-      if(!isDef) {
-        std::cout << "v[" << aVar << "] is not definite." << std::endl;
-        if(prevNegFirst && i == iFirstUnknown) {
-          maybeSat = false; // consider unsatisfiable
-        }
-        else {
-          negFirst = true;
-          nextVar = i;
-        }
-        goto cleanup;
-      }
+      const VCIndex aVar = vUnknowns[i];
       if(pFormula_->ans_[aVar] != setTrue) {
         pFormula_->ans_.Flip(aVar);
       }
+      if(isDef) {
+        unknowns.Remove(aVar);
+      }
     }
+
 cleanup:
     osqp_cleanup(solver);
     return maybeSat;
   }
 
   bool Solve() {
-    VCIndex nextVar = 0;
-    bool negFirst = false;
-    for(VCIndex i=0; i<pFormula_->nVars_; i=nextVar) {
-      if(!TailSolve(i, negFirst, nextVar)) {
+    VCTrackingSet unknowns;
+    for(VCIndex i=1; i<=pFormula_->nVars_; i++) {
+      unknowns.Add(i);
+    }
+    while(unknowns.Size() > 0) {
+      VCIndex oldSize = unknowns.Size();
+      if(!TailSolve(unknowns) || oldSize <= unknowns.Size()) {
         std::cout << "UNSATISFIABLE" << std::endl;
         return false; // unsatisfiable
       }
     }
+
     std::atomic<VCIndex> totSat = 0;
     // This is just for debugging, otherwise Formula::CountUnsat() would work
     #pragma omp parallel for schedule(guided, kRamPageBytes)
