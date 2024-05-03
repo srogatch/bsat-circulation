@@ -85,7 +85,7 @@ struct CpuSolver {
         optL.emplace_back( -1 );
         optH.emplace_back( 1 );
         initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
-        optQ.emplace_back(exp2(-i) * (pFormula_->ans_[aVar] ? -1 : 1));
+        optQ.emplace_back( pow(1.5, -i) * (pFormula_->ans_[aVar] ? -1 : 1) );
         //optQ.emplace_back(0);
         nUnknowns++;
         nConstraints++;
@@ -173,8 +173,8 @@ struct CpuSolver {
     //settings->time_limit = 500;
     settings->max_iter = 2 * 1000 * OSQPInt(1000) * 1000;
     settings->rho = 1.49e+2; //1.87;
-    settings->eps_abs = 1e-5; //exp2(-cnVarsAtOnce);
-    settings->eps_rel = 1e-5; //exp2(-cnVarsAtOnce);
+    settings->eps_abs = 1e-4; //exp2(-cnVarsAtOnce);
+    settings->eps_rel = 1e-4; //exp2(-cnVarsAtOnce);
     //settings->rho
     settings->polishing = 1;
 
