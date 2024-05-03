@@ -2,13 +2,13 @@
 
 #include "SatTracker.h"
 #include "Traversal.h"
-#include "extern/eigen/Eigen/Sparse"
+//#include "extern/eigen/Eigen/Sparse"
 #include <osqp/osqp.h>
 
 struct SpMatTriple {
   VCIndex row_;
   VCIndex col_;
-  double val_;
+  OSQPFloat val_;
 
   SpMatTriple(const VCIndex row, const VCIndex col, const double val) {
     row_ = row;
@@ -85,7 +85,7 @@ struct CpuSolver {
         optL.emplace_back( -1 );
         optH.emplace_back( 1 );
         initX.emplace_back( pFormula_->ans_[aVar] ? optH.back() : optL.back() );
-        optQ.emplace_back(exp2(-2*i) * (pFormula_->ans_[aVar] ? -1 : 1));
+        optQ.emplace_back(exp2(-i) * (pFormula_->ans_[aVar] ? -1 : 1));
         //optQ.emplace_back(0);
         nUnknowns++;
         nConstraints++;
@@ -173,8 +173,8 @@ struct CpuSolver {
     //settings->time_limit = 500;
     settings->max_iter = 2 * 1000 * OSQPInt(1000) * 1000;
     settings->rho = 1.49e+2; //1.87;
-    settings->eps_abs = 1e-6; //exp2(-cnVarsAtOnce);
-    settings->eps_rel = 1e-6; //exp2(-cnVarsAtOnce);
+    settings->eps_abs = 1e-5; //exp2(-cnVarsAtOnce);
+    settings->eps_rel = 1e-5; //exp2(-cnVarsAtOnce);
     //settings->rho
     settings->polishing = 1;
 
@@ -225,10 +225,12 @@ struct CpuSolver {
       }
       const VCIndex aVar = vUnknowns[i];
       cnfToSol[aVar] = val;
-      if(pFormula_->ans_[aVar] != setTrue) {
-        pFormula_->ans_.Flip(aVar);
+      if(isDef) {
+        if(pFormula_->ans_[aVar] != setTrue) {
+          pFormula_->ans_.Flip(aVar);
+        }
       }
-      if(!isDef) {
+      else {
         std::swap(vUnknowns[i], vUnknowns[nUndef]);
         nUndef++;
       }
@@ -247,13 +249,15 @@ cleanup:
       unknowns.emplace_back(i);
     }
     VCIndex nUndef = unknowns.size();
+    uint64_t nIts = 0;
     while(nUndef > 0) {
+      nIts++;
       if(!TailSolve(unknowns, nUndef)) {
-        std::cout << "UNSATISFIABLE" << std::endl;
+        std::cout << "UNSATISFIABLE in " << nIts << " iterations. " << std::endl;
         return false; // unsatisfiable
       }
     }
-    std::cout << "!!!SATISFIED!!!" << std::endl;
+    std::cout << "!!!SATISFIED!!! in " << nIts << " iterations. " << std::endl;
 
     std::atomic<VCIndex> totSat = 0;
     // This is just for debugging, otherwise Formula::CountUnsat() would work
