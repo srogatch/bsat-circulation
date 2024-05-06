@@ -2,7 +2,7 @@ function parse_dimacs(filepath::String)
   # Open the file for reading
   open(filepath, "r") do file
       n_variables = 0
-      clauses = 0
+      n_clauses = 0
       clause_list = []
 
       # Process each line in the file
@@ -17,7 +17,7 @@ function parse_dimacs(filepath::String)
                   error("Invalid DIMACS header format")
               end
               n_variables = parse(Int, tokens[3])
-              clauses = parse(Int, tokens[4])
+              n_clauses = parse(Int, tokens[4])
           elseif startswith(line, "%")
             break
           else
@@ -32,7 +32,7 @@ function parse_dimacs(filepath::String)
       end
 
       # Verify that the number of clauses matches the header
-      if length(clause_list) != clauses
+      if length(clause_list) != n_clauses
           error("The number of clauses does not match the header.")
       end
 
