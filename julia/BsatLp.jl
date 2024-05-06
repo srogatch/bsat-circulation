@@ -149,3 +149,19 @@ while maybe_sat
 end
 
 println("Number of top-level iterations: ", tot_its)
+if maybe_sat
+  for clause in clauses
+    satisfied = false
+    for i_var in clause
+      a_var = abs(i_var)
+      if (asgs[a_var] && sign(i_var) == 1) || (!asgs[a_var] && sign(i_var) == -1)
+        satisfied = true
+        break
+      end
+    end
+    if !satisfied
+      println("VERIFICATION FAILED")
+      break
+    end
+  end
+end
