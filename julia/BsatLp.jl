@@ -1,3 +1,5 @@
+using COSMO, LinearAlgebra, SparseArrays
+
 function parse_dimacs(filepath::String)
   # Open the file for reading
   open(filepath, "r") do file
@@ -40,12 +42,64 @@ function parse_dimacs(filepath::String)
   end
 end
 
-# Example usage
+n_variables = 0
+clauses = []
 input_filepath = "bin/uf20-01.cnf"
 try
+  global n_variables, clauses
   n_variables, clauses = parse_dimacs(input_filepath)
-  println("Number of variables: ", n_variables)
-  println("Clauses: ", clauses)
 catch e
   println("Error parsing DIMACS file: ", e)
 end
+
+println("Number of variables: ", n_variables)
+println("Clauses: ", clauses)
+setprecision(BigFloat, n_variables*2)
+
+var_order = collect(1:n_variables)
+A_rows = Int[]
+A_cols = Int[]
+A_vals = BigFloat[]
+l = Vector{BigFloat}(undef, length(clauses) + n_variables)
+u = Vector{BigFloat}(undef, length(clauses) + n_variables)
+P = spzeros(BigFloat, n_variables, n_variables)
+q = Vector{BigFloat}(undef, n_variables)
+asgs = falses(n_variables)
+
+i_constr = 0
+
+for a_var in 1:n_variables
+  global i_constr
+  i_constr += 1
+
+  push!(A_rows, i_constr)
+  push!(A_cols, a_var)
+  push!(A_vals, BigFloat(1))
+  l[i_constr] = -1
+  u[i_constr] = 1
+  q[i_constr] = 2.0^(-i_constr)
+end
+
+for clause in clauses
+  global i_constr
+  i_constr += 1
+  for i_var in clause
+    push!(A_rows, i_constr)
+    push!(A_cols, abs(i_var))
+    push!(A_vals, sign(i_var))
+  end
+  l[i_constr] = 2.0 - length(clause)
+  u[i_constr] = Inf
+end
+
+A = sparse(A_rows, A_cols, A_vals)
+@show q
+@show l
+@show u
+
+model = COSMO.Model{BigFloat}()
+constraint = COSMO.Constraint(A, zeros(BigFloat, n_variables+length(clauses)), COSMO.Box(l, u))
+settings = COSMO.Settings{BigFloat}(verbose = true)
+assemble!(model, P, q, constraint, settings = settings)
+result = COSMO.optimize!(model);
+# println(result)
