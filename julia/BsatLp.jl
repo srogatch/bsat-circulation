@@ -1,4 +1,4 @@
-using COSMO, LinearAlgebra, SparseArrays
+using COSMO, LinearAlgebra, SparseArrays, Printf
 
 function parse_dimacs(filepath::String)
   # Open the file for reading
@@ -44,7 +44,7 @@ end
 
 n_variables = 0
 clauses = []
-input_filepath = "bin/uf20-01.cnf"
+input_filepath = "bin/uf50-01000.cnf"
 try
   global n_variables, clauses
   n_variables, clauses = parse_dimacs(input_filepath)
@@ -54,8 +54,9 @@ end
 
 println("Number of variables: ", n_variables)
 println("Clauses: ", clauses)
-setprecision(BigFloat, n_variables*2)
+setprecision(BigFloat, n_variables*4 + 20)
 
+base = BigFloat(1.5)
 A_rows = Int[]
 A_cols = Int[]
 A_vals = BigFloat[]
@@ -76,7 +77,7 @@ for a_var in 1:n_variables
   push!(A_vals, BigFloat(1))
   l[i_constr] = -1
   u[i_constr] = 1
-  q[i_constr] = BigFloat(2.0) ^ (-i_constr)
+  q[i_constr] = base ^ (-i_constr)
 end
 
 for clause in clauses
@@ -95,7 +96,7 @@ A = sparse(A_rows, A_cols, A_vals)
 
 model = COSMO.Model{BigFloat}()
 constraint = COSMO.Constraint(A, zeros(BigFloat, n_variables+length(clauses)), COSMO.Box(l, u))
-settings = COSMO.Settings{BigFloat}(verbose = true, max_iter=Int(1e10))
+settings = COSMO.Settings{BigFloat}(verbose = true, max_iter=Int(1e10), eps_abs=5e-5, eps_rel=5e-5)
 assemble!(model, P, q, constraint, settings = settings)
 
 const eps = 1e-3
@@ -135,15 +136,19 @@ while maybe_sat
       end
     end
   end
+  println("Top its: ", tot_its, ", undef vars: ", length(undef_vars))
   if length(undef_vars) == 0
     println("SATISFIED")
     break
   end
-  sort!(undef_vars, lt=(a, b) -> abs(x_sol[a]) < abs(x_sol[b]))
+  sort!(undef_vars, lt=(a, b) -> abs(x_sol[a]) > abs(x_sol[b]))
   sort!(def_vars, lt=(a, b) -> abs(x_sol[a]) < abs(x_sol[b]))
   var_ord = [undef_vars; def_vars]
   for i in 1:n_variables
-    q[var_ord[i]] = BigFloat(2.0) ^ (-i)
+    @printf(" v%d=%.7g ", var_ord[i], x_sol[var_ord[i]])
+  end
+  for i in 1:n_variables
+    q[var_ord[i]] = (base ^ (-i)) * (asgs[var_ord[i]] ? -1 : 1)
   end
   update!(model, q = q)
 end
